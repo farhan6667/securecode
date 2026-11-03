@@ -24,6 +24,9 @@ LOCK = APP / "update.lock"
 STATE = APP / "update-state.json"   # last check time and result, and a rate-limit back-off; read by verify-global.py
 MAX_ZIP = 50 * 1024 * 1024
 MAX_BACKOFF = 24 * 3600             # a reset time further away than this is not trusted
+# install-global.py exit code when everything installed but the daily update task could not be (re)created
+# (for example schtasks failed). The update itself worked, so it is reported as "updated" with a schedule warning.
+INSTALL_SCHEDULE_ONLY = 4
 
 
 class RateLimited(Exception):
@@ -165,6 +168,9 @@ def result_line(status: str = None, error: BaseException = None) -> str:
         return f"update check failed ({type(error).__name__}), nothing installed; see update.log"
     if status == "updated":
         return f"updated to {_ver(parse_version(LAST_RELEASE.get('tag', '')))}"
+    if status == "updated-schedule-warning":
+        return (f"updated to {_ver(parse_version(LAST_RELEASE.get('tag', '')))} (schedule warning: the daily update task "
+                "could not be renewed; run the installer again)")
     if status == "up-to-date":
         return f"already up to date ({_ver(installed_version())})"
     if status == "SIGNATURE-INVALID":
@@ -412,6 +418,8 @@ def check_and_update(cfg: dict, tok: str | None, *, fetch=None, workdir: Path | 
             p = subprocess.run([py, "-I", str(inst)], capture_output=True, text=True, timeout=600, encoding="utf-8", errors="replace")
         finally:
             org_owned_restore(kept)   # an update never renames the product or drops org files
+        if p.returncode == INSTALL_SCHEDULE_ONLY:
+            return "updated-schedule-warning"
         return "updated" if p.returncode == 0 else f"install-failed rc={p.returncode}"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -453,7 +461,7 @@ def main() -> int:
         cfg = json.loads((APP / "config" / "update.json").read_text(encoding="utf-8-sig"))
         status = check_and_update(cfg, token())
         log(f"update check: {status}")
-        ok = status in ("updated", "up-to-date", "not-configured")
+        ok = status in ("updated", "updated-schedule-warning", "up-to-date", "not-configured")
         write_state(status, ok)
         say(result_line(status))
         return 0 if ok else 1

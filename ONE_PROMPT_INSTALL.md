@@ -37,7 +37,7 @@ Follow these steps in order and stop and tell me if any check fails.
    ~/.codex/AGENTS.md; Gemini CLI and Antigravity: ~/.gemini/AGENTS.md; Cursor: User Rules, plus .env files in
    .cursorignore) and install your guard hook with the installer, which backs up and merges your existing
    config: py -I install-global.py --agent cursor (or codex, gemini, antigravity; repeat --agent for several).
-   docs/AI-AGENT-SECURITY.md has the details.
+   On Windows it writes the Windows forms of the hooks by itself. docs/AI-AGENT-SECURITY.md has the details.
 10. Tell me to restart this AI tool, because rules and hooks load at start.
 11. Explain auto-update: a daily task checks GitHub for newer signed releases and installs them by itself; an
     unsigned, tampered or older release is refused. Show me how to turn it off (ENTERPRISE_DEPLOYMENT.md). The

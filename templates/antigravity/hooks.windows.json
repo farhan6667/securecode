@@ -1,0 +1,12 @@
+{
+  "org-ai-agent-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "<PYTHON> -I \"<APP>/scripts/adapters/antigravity_hook.py\"", "timeout": 20 }
+        ]
+      }
+    ]
+  }
+}

@@ -647,11 +647,50 @@ def _is_ours(cmd) -> bool:
     # Our hook commands always run a script from the OrgAISecureAppSec runtime folder.
     return isinstance(cmd,str) and "/OrgAISecureAppSec/scripts/" in cmd.replace("\\","/")
 
-def _fill(obj, py: str, app: str):
-    if isinstance(obj,dict): return {k:_fill(v,py,app) for k,v in obj.items()}
-    if isinstance(obj,list): return [_fill(v,py,app) for v in obj]
-    if isinstance(obj,str): return obj.replace("<PYTHON>",py).replace("<APP>",app)
+import re as _re
+_UNQUOTED_PY=_re.compile(r'(?<!")<PYTHON>')
+
+def _fill(obj, py: str, app: str, bare_py=None):
+    """<PYTHON> inside double quotes gets py; an unquoted <PYTHON> (a Windows line that must run in PowerShell, cmd
+    and bash alike, V7L-02) gets bare_py(), which is only computed when such a line exists."""
+    if isinstance(obj,dict): return {k:_fill(v,py,app,bare_py) for k,v in obj.items()}
+    if isinstance(obj,list): return [_fill(v,py,app,bare_py) for v in obj]
+    if isinstance(obj,str):
+        if bare_py is not None and _UNQUOTED_PY.search(obj):
+            obj=_UNQUOTED_PY.sub(lambda m: bare_py(),obj)
+        return obj.replace("<PYTHON>",py).replace("<APP>",app)
     return obj
+
+def _get_short_path_name(path: str) -> str:
+    """Windows 8.3 short form of an existing path ("" when there is none, e.g. 8.3 names are off on that drive)."""
+    try:
+        import ctypes
+        buf=ctypes.create_unicode_buffer(32768)
+        n=ctypes.windll.kernel32.GetShortPathNameW(str(path),buf,32768)
+        return buf.value if 0<n<32768 else ""
+    except Exception:
+        return ""
+
+def _bare_ok(s: str) -> bool:
+    # An unquoted first word has to mean the same in PowerShell, cmd and bash: letters and digits (any script) and
+    # _ . ~ - / : only. No space, & ^ % " and nothing else a shell treats as syntax.
+    return bool(s) and all(c.isalnum() or c in "_.~-/:" for c in s) and not s.startswith(("-","~"))
+
+def bare_python(exe: str|None=None, get_short=None) -> str:
+    """The Python path for an unquoted Windows hook line: forward slashes, the 8.3 short form when the real path has
+    a space or another special character. RuntimeError, never a broken line, when no such form exists."""
+    real=console_python(exe)
+    cand=real.replace("\\","/")
+    if not _bare_ok(cand):
+        short=(get_short or _get_short_path_name)(real)
+        cand=short.replace("\\","/") if short else ""
+    if not _bare_ok(cand):
+        raise RuntimeError(
+            f"this tool runs the hook line on Windows without quotes, so the Python path must have no spaces and none of "
+            f"& ^ % \" or other special characters, and Windows gave no usable short (8.3) name for {real} (short names "
+            f"can be turned off for a drive; 'fsutil 8dot3name query C:' shows it). Install Python to a folder without "
+            f"spaces, for example C:\\Python312, and run the installer with that Python. Nothing was written.")
+    return cand
 
 def agent_template_file(agent: str, pkg: Path|None=None, system: str|None=None) -> Path:
     """The template for this OS. On Windows a "<name>.windows.json" next to the template wins when it exists:
@@ -661,9 +700,10 @@ def agent_template_file(agent: str, pkg: Path|None=None, system: str|None=None) 
     win=base.with_name(base.stem+".windows.json")
     return win if (system or SYSTEM)=="windows" and win.is_file() else base
 
-def agent_template(agent: str, ad: Path, exe: str|None=None, pkg: Path|None=None) -> dict:
+def agent_template(agent: str, ad: Path, exe: str|None=None, pkg: Path|None=None, get_short=None) -> dict:
     """The tool's template with <PYTHON> and <APP> filled in. Paths use forward slashes and are refused when they
-    hold characters a shell would expand inside double quotes."""
+    hold characters a shell would expand inside double quotes. On Windows an unquoted <PYTHON> (Codex's
+    commandWindows, Antigravity's hooks.windows.json) gets the space-free 8.3 form, or the adapter is refused."""
     tpl=json.loads(agent_template_file(agent,pkg).read_text(encoding="utf-8-sig"))
     tpl.pop("description",None)   # a how-to-fill-in note for people, not a setting
     try:
@@ -671,7 +711,15 @@ def agent_template(agent: str, ad: Path, exe: str|None=None, pkg: Path|None=None
     except ValueError as e:
         raise RuntimeError(f"cannot write the {agent} hook: {e}. Install Python and SecureCode under a plain path, "
                            "or fill in the template by hand (docs/AI-AGENT-SECURITY.md).")
-    return _fill(tpl,py,app)
+    if SYSTEM=="windows":
+        def bare():
+            try:
+                return bare_python(exe,get_short)
+            except RuntimeError as e:
+                raise RuntimeError(f"cannot write the {agent} hook: {e}") from None
+    else:
+        bare=lambda: py   # commandWindows is not used off Windows; the quoted-safe path keeps the file readable
+    return _fill(tpl,py,app,bare)
 
 def _strip_ours(items: list) -> list:
     out=[]
@@ -897,7 +945,17 @@ def main(argv=None):
     rpt=ad/"install-report.json"
     rpt.write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(report,indent=2))
-    return 0 if report["success"] else 1
+    return exit_code(report["checks"],agents)
+
+EXIT_SCHEDULE_ONLY=4   # everything installed, only the daily update task failed (scripts/updater.py knows this code)
+
+def exit_code(checks: dict, agents=()) -> int:
+    """0 all good; 4 when the only failure is the update schedule (the updater then reports "updated" with a schedule
+    warning instead of "install-failed"); 1 for anything else."""
+    others=all(v for k,v in checks.items() if k!="auto_update") and not any(x.startswith("FAILED") for x in agents)
+    if others and checks.get("auto_update",True):
+        return 0
+    return EXIT_SCHEDULE_ONLY if others else 1
 
 if __name__=="__main__":
     try:

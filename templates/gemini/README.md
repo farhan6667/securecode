@@ -60,11 +60,15 @@ quote fails before the adapter runs, and Gemini CLI then lets the tool run. Proj
 trusted folder. Quick check after installing: ask Gemini CLI to read `.env` in a test folder; it must answer that
 the agent guard blocked it, not that the file is missing.
 
-**Antigravity.** Copy `../antigravity/hooks.json` to `~/.gemini/config/hooks.json` (all workspaces) or to
-`.agents/hooks.json` in one workspace, then check it with `/hooks` in the Antigravity CLI. It runs
+**Antigravity.** Copy `../antigravity/hooks.json` (macOS, Linux) or `../antigravity/hooks.windows.json` (Windows)
+to `~/.gemini/config/hooks.json` (all workspaces) or to `.agents/hooks.json` in one workspace, then check it with `/hooks` in the Antigravity CLI. It runs
 `scripts/adapters/antigravity_hook.py` as a `PreToolUse` hook. Antigravity supports allow, deny and ask, so owner
 mode asks there (as `force_ask`, which a cached "Always Allow" cannot skip). The docs do not say what happens when a
 hook crashes or times out; the adapter always answers with an explicit decision, but whether Antigravity blocks a
-call when the hook itself fails is untested. Source: https://antigravity.google/docs/hooks/
+call when the hook itself fails is untested. The docs do not say which shell runs the hook line, so on Windows
+`<PYTHON>` goes in without quotes and must have no spaces (use the 8.3 short path, for example from
+`for %I in ("C:\Program Files\Python314\python.exe") do @echo %~sI` in cmd). That line runs the same in PowerShell,
+Windows PowerShell and cmd; a quoted first word does not run in PowerShell (V7L-02).
+Source: https://antigravity.google/docs/hooks/
 
 The per-edit gate check and the injection watch are still Claude Code only.

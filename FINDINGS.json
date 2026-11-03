@@ -883,11 +883,11 @@
     },
     {
       "id": "V7L-02",
-      "severity": "medium",
-      "where": "templates/codex/hooks.json, templates/antigravity/hooks.json",
-      "what": "Same '\"<PYTHON>\" -I ...' line shape as V7L-01. Not verified live: the Codex live run was stopped before a hook fired, and Antigravity is a GUI. If either runs hook commands through PowerShell on Windows, the guard fails open there too. Codex documents a commandWindows override that could carry a Windows form",
-      "check": "live test still to do: one blocked action per tool on Windows, with hook log evidence",
-      "status": "open"
+      "severity": "high",
+      "where": "templates/codex/hooks.json, scripts/adapters/codex_hook.py, templates/antigravity/hooks.windows.json",
+      "what": "Codex source (codex-rs/core/src/session/mod.rs build_hooks_config, core/src/shell.rs, hooks/src/engine/command_runner.rs, hooks/src/events/pre_tool_use.rs at 75a4146): on Windows Codex runs the hook line in the session shell, 'pwsh -NoProfile -Command <line>', 'cmd /c \"<line>\"' or 'bash -c', and any exit other than 0 or 2 is a failed hook and the tool runs. The old line ('\"<PYTHON>\" -I ...') is a parse error in PowerShell, and in PowerShell even a working line turns the adapter's exit 2 into 1. So in a PowerShell session no Codex deny could block (matches the live run where the hook log stayed empty). Fix: commandWindows for PreToolUse and Stop with an unquoted, space-free <PYTHON> (the only first word that runs in pwsh, Windows PowerShell and cmd; '&' breaks cmd), and codex_hook.py answers a deny with exit 0 + hookSpecificOutput.permissionDecision deny (exit 0 survives every shell). Antigravity does not document its shell; its adapter already answers exit 0 + JSON, and hooks.windows.json uses the same unquoted line",
+      "check": "tests/test_v7_guard.py::test_codex_template_lines_really_block_in_every_shell, ::test_antigravity_template_line_really_blocks_in_every_shell, ::test_codex_hook_process_end_to_end (each runs the filled-in line through pwsh, powershell and cmd as Codex spawns them). Still unverified in a live Codex or Antigravity session",
+      "status": "fixed"
     },
     {
       "id": "V7GAP-1",
@@ -991,6 +991,22 @@
       "where": "scripts/mcp_scan.py read_configs / _line_of",
       "what": "Algorithmic DoS: the MCP config scan called _line_of per server, and _line_of re-read and re-split the whole config file each time, so N servers in an N-line file was O(N^2). secgate full and ci run this scan on the scanned (untrusted) repo's project configs, so a hostile .mcp.json near the 5 MB cap could make the gate spend minutes (20000 servers measured at 12.6 s before the fix, 46 ms after). Replaced with one shared single-pass line index built per file.",
       "check": "pytest tests/test_mcp_scan.py -k v7p (test_v7p_line_index_is_single_pass_not_quadratic asserts <3 s for 20000 servers; test_v7p_line_numbers_still_resolve checks line numbers are still correct)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-H",
+      "severity": "high",
+      "where": "install-global.py agent_template, bare_python (--agent codex, --agent antigravity on Windows)",
+      "what": "The Windows hook lines (Codex commandWindows, Antigravity hooks.windows.json) start with an unquoted Python, so a path with a space or & ^ % \" would make the line fail and the tool run. The installer now writes the 8.3 short path (GetShortPathNameW) and refuses the adapter with a plain message, writing nothing, when no safe form exists",
+      "check": "tests/test_v7_gapfix_install.py::test_bare_python_shortens_a_path_with_spaces; tests/test_v7_gapfix_install.py::test_bare_python_refuses_when_no_safe_short_form_exists; tests/test_v7_gapfix_install.py::test_windows_lines_get_the_short_path_and_quoted_lines_the_full_one; tests/test_v7_gapfix_install.py::test_windows_adapter_is_refused_and_nothing_written_without_a_short_path; tests/test_v7_gapfix_install.py::test_installer_filled_windows_lines_really_deny_in_every_shell",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-I",
+      "severity": "low",
+      "where": "install-global.py exit_code, scripts/updater.py check_and_update",
+      "what": "After an auto-update where only schtasks failed, the updater logged install-failed although the files were updated. The installer now exits 4 for a schedule-only failure and the updater reports updated (schedule warning)",
+      "check": "tests/test_v7_gapfix_install.py::test_exit_code_is_4_only_when_the_schedule_alone_failed; tests/test_v7_gapfix_install.py::test_updater_reports_a_schedule_only_failure_as_updated_with_a_warning",
       "status": "fixed"
     }
   ]
