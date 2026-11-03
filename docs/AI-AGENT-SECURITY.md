@@ -26,7 +26,7 @@ Sources: see `docs/SOURCES.md`.
 | Control | Claude Code | Cursor | Codex | Gemini CLI | Antigravity |
 |---|---|---|---|---|---|
 | Org rules (`AGENTS.md` / global CLAUDE.md block) | yes, auto | User Rules (paste) | `~/.codex/AGENTS.md` | `~/.gemini/AGENTS.md` + `context.fileName` | `~/.gemini/AGENTS.md` (read natively) |
-| PreToolUse agent guard (secrets, pipe-to-shell, force push, startup files) | yes, every tool | shell, MCP and file reads through `scripts/adapters/cursor_hook.py`, installed by hand (no hook exists before Cursor's own edits) | shell, `apply_patch` and MCP through `scripts/adapters/codex_hook.py`, installed by hand ("ask" becomes deny: Codex hooks cannot ask yet), plus `templates/codex/rules/org.rules` | not yet (`BeforeTool` hooks exist; future work) | not yet (`PreToolUse` hooks exist; future work) |
+| PreToolUse agent guard (secrets, pipe-to-shell, force push, startup files) | yes, every tool | shell, MCP and file reads through `scripts/adapters/cursor_hook.py`, installed by hand. Cursor's generic preToolUse hook is not wired to the guard yet, so Cursor's own file edits are not checked | shell, `apply_patch` and MCP through `scripts/adapters/codex_hook.py`, installed by hand ("ask" becomes deny: Codex hooks cannot ask yet), plus `templates/codex/rules/org.rules` | every tool through `scripts/adapters/gemini_hook.py` (`BeforeTool`), installed by hand ("ask" becomes deny: Gemini CLI hooks have no ask) | every tool through `scripts/adapters/antigravity_hook.py` (`PreToolUse`), installed by hand; asks work; what happens when the hook itself fails is untested |
 | End-of-task "Run Security Test" offer | Stop hook + rule | rule only | Stop hook (`stop_gate.py`) + rule | rule only | rule only |
 | Deny/ask permissions | yes (`config/agent-permissions.json`) | `.cursorignore` for `.env*`, approval prompts | `approval_policy`, execpolicy rules | tool approval prompts | permission settings |
 | Per-edit heuristic scan | yes | no | no | no | no |
@@ -59,10 +59,17 @@ Sources: see `docs/SOURCES.md`.
   Docs: https://geminicli.com/docs/cli/gemini-md/ and https://geminicli.com/docs/reference/memport/
 - **Antigravity**: copy `AGENTS.md` to `~/.gemini/AGENTS.md`; Antigravity reads it (and project
   `AGENTS.md`, `GEMINI.md`, `.agents/rules/*.md`) without a setting. Docs: https://antigravity.google/docs/rules/
-- Gemini CLI (`BeforeTool`, https://geminicli.com/docs/hooks/) and Antigravity (`PreToolUse` in
-  `.agents/hooks.json`, https://antigravity.google/docs/hooks/) both have pre-tool hooks today. Porting the
-  agent guard to them is future work; Antigravity's docs do not say whether a failing hook blocks the call,
-  so that has to be tested first. Details: `templates/gemini/README.md`.
+- Guard hooks for Gemini CLI: merge `templates/gemini/settings.hooks.json` into `~/.gemini/settings.json` and
+  fill in `<PYTHON>` and `<APP>`. It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every
+  tool (https://geminicli.com/docs/hooks/reference/). Gemini CLI lets a tool run when a hook exits with any code
+  other than 0 or 2 or prints text that is not JSON, so the adapter only exits 0 (allow) or 2 (deny) and denies
+  on every error. There is no "ask" decision, so an ask becomes a deny with the reason.
+- Guard hooks for Antigravity: copy `templates/antigravity/hooks.json` to `~/.gemini/config/hooks.json` (or
+  `.agents/hooks.json` in one workspace), fill in `<PYTHON>` and `<APP>`, and check it with `/hooks`. It runs
+  `scripts/adapters/antigravity_hook.py` as a `PreToolUse` hook (https://antigravity.google/docs/hooks/). Asks
+  are sent as `force_ask`, so a cached "Always Allow" cannot skip them. The docs describe only the JSON decision,
+  not exit codes or timeouts, so the adapter always prints an explicit decision; whether Antigravity blocks a
+  call when the hook itself crashes or times out is untested. Details: `templates/gemini/README.md`.
 
 ## Owner mode and managed mode
 

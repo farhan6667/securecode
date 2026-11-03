@@ -71,7 +71,8 @@ CLAUDE_DIR = r"(?:\.claude(?![\w-])|claude~\d)"
 _TOOLS_RX = r"|nexaforgetools|nexaforge-tools(?![\w-])|nexafo~\d"
 PROTECTED = re.compile(USER_HOME + r"[/\\]+" + CLAUDE_DIR + r"|managed-settings\.json|allowed_signers|orgaisecureappsec"
                        r"|orgais~\d|orgai[*?]|site-packages[/\\]+[^\s\"']*\.pth\b|(?<![\w-])sitecustomize\.py|(?<![\w-])usercustomize\.py"
-                       r"|\bpy\.ini\b|(?<![\w-])guard-policy\.json|(?<![\w-])guard-audit\.jsonl" + _TOOLS_RX +
+                       r"|\bpy\.ini\b|(?<![\w-])guard-policy\.json|(?<![\w-])guard-audit\.jsonl|(?<![\w-])shield-audit\.jsonl"
+                       r"|(?<![\w-])mcp-lock\.json" + _TOOLS_RX +
                        r"|(?<![\w.-])\.git[/\\]+(?:config|hooks)(?![\w.-])", re.I)
 HOME_PROTECTED = re.compile(USER_HOME + r"[/\\]+" + CLAUDE_DIR + r"|managed-settings\.json|orgaisecureappsec|orgais~\d|orgai[*?]"
                             + _TOOLS_RX, re.I)
@@ -319,8 +320,13 @@ def could_be_dotdot(seg: str) -> bool:
         fnmatch.fnmatchcase("..", seg.replace("[^", "[!"))
 
 
+# .security/shield-audit.jsonl (output secret shield log) and .security/mcp-lock.json (approved MCP tool manifest)
+# are protected like guard-audit.jsonl: the agent could otherwise erase the audit or approve a changed MCP tool.
+SECURITY_DIR = ".security"
+FOLDER_REMOVERS = {"rm", "rmdir", "rd", "del", "erase", "remove-item", "ri", "mv", "move", "move-item", "mi", "rename-item",
+                   "ren", "rni", "unlink", "shred", "trash", "srm"}
 PROTECTED_NAMES = {APP_FOLDER, "managed-settings.json", "allowed_signers", "guard-policy.json", "guard-audit.jsonl",
-                   "sitecustomize.py", "usercustomize.py", "sitecustomize", "usercustomize", "py.ini", *TOOLS_FOLDER_NAMES}
+                   "shield-audit.jsonl", "mcp-lock.json", "sitecustomize.py", "usercustomize.py", "sitecustomize", "usercustomize", "py.ini", *TOOLS_FOLDER_NAMES}
 SECRET_DIR_SAFE = re.compile(r"^(?:.+\.pub|known_hosts(?:\.old)?|config|authorized_keys)$")
 
 
@@ -1507,6 +1513,11 @@ class Shell:
             self.res(("ask", "this command touches a tool credential file (.npmrc, docker/kube/gh config). Approve only if it does not expose tokens."))
         if role == "write":
             prot = protected_hit(self.env, segs, git) or (None if git else (PROTECTED.search(squeeze(p)) and "name"))
+            # Removing or moving the whole .security folder would erase the guard and shield audit logs and the MCP
+            # lock, so it counts as touching them. Writing files inside .security (reports, the authz matrix) stays allowed.
+            if not git and getattr(self, "cur_name", "") in FOLDER_REMOVERS and segs and seg_match(segs[-1], SECURITY_DIR) \
+                    and (segs[-1].startswith(".") or not GLOB_CHARS.search(segs[-1])):   # a bare * skips dot folders
+                prot = "name"
             if prot in ("inside", "name"):
                 self.res(R_PROTECTED)
             elif prot == "ancestor":
@@ -1801,7 +1812,8 @@ class Shell:
 
     # ---- generic argument scanning
     def scan(self, args: list, role: str, vals: dict | None = None, nonpath_first: int = 0, last_role: str | None = None,
-             cwd=None, git: bool = False, nonpath_all: bool = False):
+             cwd=None, git: bool = False, nonpath_all: bool = False, cs: bool = False):
+        """cs: option names are case sensitive (POSIX tools whose upper and lower case options differ, like grep)."""
         vals = vals or {}
         pos: list = []
         i, end_opts = 0, False
@@ -1816,7 +1828,32 @@ class Shell:
                 key, sep, val = t.partition("=")
                 if not sep and self.d == "ps" and ":" in t[1:]:
                     key, sep, val = t.partition(":")
-                r = opt_lookup(vals, key.lower())
+                r = opt_lookup_exact(vals, key) if cs else opt_lookup(vals, key.lower())
+                if r is MISSING and cs and not sep and key.startswith("--") and \
+                        any(k.startswith(key) and k.startswith("--") for k in vals):
+                    # An abbreviation of an option that takes a value (--exclude-fr FILE): which word it eats depends on
+                    # the tool's own option list, so it is not guessed.
+                    self.unk(f"the abbreviated option {key[:40]} is not modelled; spell it out")
+                if r is MISSING and cs and not sep and re.fullmatch(r"-[A-Za-z0-9]{2,}", t):
+                    # A cluster of short options (-nE, -inf FILE, -A3): getopt reads letters until one takes a value; the
+                    # rest of the cluster, or the next word, is that value. Case matters: grep -E is a flag, rg -E takes one.
+                    for ci in range(1, len(t)):
+                        rc = vals.get("-" + t[ci], MISSING)
+                        if rc is MISSING:
+                            continue
+                        if ci + 1 < len(t):
+                            vs = [t[ci + 1:]]
+                        elif i + 1 < len(args):
+                            i += 1
+                            vs = args[i].cands
+                        else:
+                            vs = []
+                        if rc:
+                            for v in vs:
+                                self.path(v, rc, cwd, git)
+                        break
+                    i += 1
+                    continue
                 if r is not MISSING:
                     if sep:
                         vs = [c.partition(sep)[2] if c is not None else None for c in a.cands]
@@ -1855,6 +1892,7 @@ class Shell:
     # ---- dispatch
     def dispatch(self, name: str, args: list, st: Stage, idx: int, pipe: list):
         st.name = name
+        self.cur_name = name
         texts = [(a.t or "") for a in args]
         if name in WRAPPER_NAMES or name in ("env", "command") or name in PRIV_NAMES or name == "xargs":
             return self.wrapper(name, args, st, idx, pipe)
@@ -2028,20 +2066,35 @@ class Shell:
                                             "-path": "meta", "-literalpath": "meta", "-c": None, "--format": None, "-I": None,
                                             "-P": None, "-L": None, "--ignore": None, "--hide": None, "-w": None, "--block-size": None})
         if name in ("grep", "egrep", "fgrep", "rg", "ag", "ack"):
-            if any(x == "--pre" or x.startswith("--pre=") for x in tl) or any(x.startswith("--search-zip") for x in tl) and False:
+            if any(x in ("--pre", "--hostname-bin") or x.startswith(("--pre=", "--hostname-bin=")) for x in tl):
                 st.modelled = False
-                return self.unk("rg --pre runs a program for every file")
-            explicit = any(x in ("-e", "-f", "--regexp", "--file") or x.startswith(("--regexp=", "--file=")) or
-                           (re.fullmatch(r"-[a-z]*[ef]", x) is not None and len(x) > 2) for x in t)
-            vals = {"-e": None, "--regexp": None, "-f": "read", "--file": "read", "--include": None, "--exclude": None,
-                    "--exclude-dir": None, "-m": None, "--max-count": None, "-A": None, "-B": None, "-C": None, "-g": None,
-                    "--glob": None, "-t": None, "-T": None, "--type": None, "--type-not": None, "--ignore-file": "read",
-                    "--pre-glob": None, "-M": None, "--max-columns": None, "-d": None, "-D": None, "--color": None,
-                    "--colors": None, "--sort": None, "--sortr": None, "-j": None, "--threads": None, "--max-depth": None,
-                    "--context": None, "--after-context": None, "--before-context": None, "--label": None, "-E": None,
-                    "--encoding": None, "--type-add": None, "-r": None if name == "rg" else MISSING, "--replace": None}
-            vals = {k: v for k, v in vals.items() if v is not MISSING}
-            return self.scan(args, "read", vals, nonpath_first=0 if explicit else 1)
+                return self.unk("rg --pre and --hostname-bin run a program")
+            # Option names are case sensitive here: grep -E/-F/-P are flags, while -e/-f take the pattern or a pattern
+            # file. Folding case (as before 7.0.1) made "grep -E 'a|b' FILE" take 'a|b' as -e's value and FILE as the
+            # pattern, so a real path after a quoted pattern went unchecked, and "grep -F 'x' f" read 'x' as a file.
+            tool = "grep" if name in ("grep", "egrep", "fgrep") else name
+            vals, pat_short, pat_long, no_pattern, runs = SEARCH_TOOLS[tool]
+            if any(x.split("=", 1)[0] in runs for x in t):
+                st.modelled = False
+                return self.unk(f"{name} {', '.join(sorted(runs))} can run a program or code")
+            # "explicit": the pattern comes from an option, so every positional word is a path. A long option that is
+            # a prefix of a pattern option counts too (GNU getopt accepts --reg=x for --regexp=x); over-counting only
+            # makes the guard judge more words as paths, never fewer.
+            explicit = False
+            for x in t:
+                if x == "--":
+                    break
+                key = x.split("=", 1)[0]
+                if key in no_pattern or (key.startswith("--") and len(key) >= 4 and any(p.startswith(key) for p in pat_long)):
+                    explicit = True
+                elif re.fullmatch(r"-[A-Za-z0-9]+", x):
+                    for ch in x[1:]:
+                        if ch in pat_short:
+                            explicit = True
+                            break
+                        if ("-" + ch) in vals:
+                            break
+            return self.scan(args, "read", vals, nonpath_first=0 if explicit else 1, cs=True)
         if name in ("select-string", "sls"):
             explicit = any(x in ("-pattern",) for x in tl)
             return self.scan(args, "read", {"-pattern": None, "-path": "read", "-literalpath": "read", "-context": None,
@@ -2202,24 +2255,35 @@ class Shell:
                 self.path(c, "write" if inplace else "read")
 
     def awk(self, args: list, st: Stage, idx: int):
-        k, prog, files, explicit = 0, None, [], False
+        k, prog, files, end_opts = 0, None, [], False
         while k < len(args):
             tx = args[k].t or ""
-            if tx in ("-f", "--file") or tx.startswith("-f"):
-                st.modelled = False
-                return self.unk("awk programs from a file are not modelled")
-            if tx in ("-F", "-v", "--assign", "--field-separator") and k + 1 < len(args):
-                k += 2
-                continue
-            if tx.startswith("-") and len(tx) > 1:
+            if prog is None and not end_opts and tx == "--":
+                end_opts = True
                 k += 1
                 continue
+            if prog is None and not end_opts and tx.startswith("-") and len(tx) > 1:
+                # Only -F and -v are modelled. Everything else (-f/--file/-E/--exec program files, gawk -i/--include
+                # libraries such as "inplace" that rewrite the input files, -l extensions) changes what runs or writes.
+                if tx in ("-F", "-v", "--assign", "--field-separator") and k + 1 < len(args):
+                    k += 2
+                    continue
+                if re.fullmatch(r"-F.+|-v[A-Za-z_]\w*=.*|--(?:assign|field-separator)=.*", tx, re.S):
+                    k += 1
+                    continue
+                st.modelled = False
+                return self.unk(f"the awk option {tx[:40]} is not modelled (program files, libraries and in-place editing are not checked)")
             if prog is None:
                 prog = tx
             else:
                 files.append(args[k])
             k += 1
-        if prog is None or re.search(r"system|\||getline|>|close|fflush|ENVIRON|printf\s*\(?\s*\"[^\"]*\"\s*>", prog):
+        code = awk_code_only(prog) if prog is not None else None
+        # Keywords are checked on the raw program, so a mis-read string or regex can never hide them; only "|" and ">"
+        # use the blanked text (where /a|b/ and "x>y" are not code). "@" covers gawk indirect calls and @include/@load;
+        # ARGV and ARGC can name files that are not on the command line.
+        if code is None or re.search(r"system|getline|close|fflush|ENVIRON|PROCINFO|ARGV|ARGC|@", prog) or \
+                re.search(r"\||>|printf\s*\(?\s*\"[^\"]*\"\s*>", code):
             st.modelled = False
             if idx > 0:
                 st.stdin_code = True
@@ -2973,6 +3037,103 @@ MISSING = _Missing()
 MISSING_ROLE = MISSING
 
 
+def awk_code_only(prog: str) -> str | None:
+    """The awk program with regex literals and string contents blanked and "||" removed, so a "|" or ">" inside
+    /a|b/ or "x>y" is not read as a pipe or a redirect (V7F-S2). A "/" is a regex wherever no operand (a name, a
+    number, ")", "]", "$" or a string) stands before it, as in awk's grammar (x = /re/), and a division otherwise;
+    after print, return and similar keywords it is unclear and the program is not modelled. # comments are dropped.
+    The caller checks keywords (system, getline, @...) on the raw text, so a mis-read here cannot hide them.
+    None for anything it cannot read (an unterminated string or regex), which stays unmodelled."""
+    if len(prog) > 4000:
+        return None
+    out, i, n = [], 0, len(prog)
+    while i < n:
+        ch = prog[i]
+        if ch == '"':
+            j = i + 1
+            while j < n and prog[j] != '"':
+                j += 2 if prog[j] == "\\" else 1
+            if j >= n:
+                return None
+            out.append('""')
+            i = j + 1
+            continue
+        if ch == "#":                                   # a comment runs to the end of the line, as in awk
+            while i < n and prog[i] != "\n":
+                i += 1
+            continue
+        if ch == "/":
+            done = "".join(out).rstrip(" \t")
+            prev = done[-1:]
+            word = re.search(r"[A-Za-z_]\w*$", done)
+            if word and word.group(0) in ("print", "printf", "return", "in", "getline", "case", "do", "else"):
+                return None                             # "print /x/": regex or division is unclear, so not modelled
+            if prev == "" or not re.match(r"[\w)\]$\".]", prev):
+                j, in_class = i + 1, False
+                while j < n and (in_class or prog[j] != "/"):
+                    if prog[j] == "\n":
+                        return None
+                    if prog[j] == "\\":
+                        j += 2
+                        continue
+                    if prog[j] == "[":
+                        in_class = True
+                    elif prog[j] == "]":
+                        in_class = False
+                    j += 1
+                if j >= n:
+                    return None
+                out.append("/R/")
+                i = j + 1
+                continue
+            # Read as a division. If the same text read as a regex up to the next "/" on this line would hold a quote,
+            # the two readings disagree about where strings start, so the program is not modelled.
+            rest = prog[i + 1:].split("\n", 1)[0]
+            if "/" in rest and '"' in rest.split("/", 1)[0]:
+                return None
+        out.append(ch)
+        i += 1
+    return "".join(out).replace("||", " or ")
+
+
+# Options that take a value, case sensitive. None: a non-path value; "read": a file it reads.
+GREP_VALS = {"-e": None, "--regexp": None, "-f": "read", "--file": "read", "-m": None, "--max-count": None,
+             "-A": None, "-B": None, "-C": None, "--context": None, "--after-context": None, "--before-context": None,
+             "-d": None, "--directories": None, "-D": None, "--devices": None, "--include": None, "--exclude": None,
+             "--exclude-dir": None, "--exclude-from": "read", "--label": None, "--binary-files": None,
+             "--group-separator": None}
+RG_VALS = {"-e": None, "--regexp": None, "-f": "read", "--file": "read", "-m": None, "--max-count": None,
+           "-A": None, "-B": None, "-C": None, "--context": None, "--after-context": None, "--before-context": None,
+           "-g": None, "--glob": None, "--iglob": None, "-t": None, "--type": None, "-T": None, "--type-not": None,
+           "--type-add": None, "--type-clear": None, "--ignore-file": "read", "--pre-glob": None, "-M": None,
+           "--max-columns": None, "-d": None, "--max-depth": None, "-E": None, "--encoding": None, "-j": None,
+           "--threads": None, "--color": None, "--colors": None, "--sort": None, "--sortr": None, "-r": None,
+           "--replace": None, "--max-filesize": None, "--engine": None, "--path-separator": None,
+           "--context-separator": None, "--field-match-separator": None, "--field-context-separator": None,
+           "--dfa-size-limit": None, "--regex-size-limit": None, "--hyperlink-format": None}
+# ag and ack: only options that certainly take a value (an optional value, like ag -A [N], is left out: reading an
+# option as a flag only makes the guard judge more words as paths). -r, -t and -f are flags in both.
+AG_VALS = {"-m": None, "--max-count": None, "-G": None, "--file-search-regex": None, "-g": None, "--ignore": None,
+           "--ignore-dir": None, "-p": "read", "--path-to-ignore": "read", "--depth": None, "-W": None, "--width": None}
+ACK_VALS = {"-A": None, "-B": None, "--after-context": None, "--before-context": None, "-m": None, "--max-count": None,
+            "--ignore-dir": None, "--noignore-dir": None, "--ignore-file": None, "--type-set": None, "--type-add": None,
+            "--type-del": None, "--match": None, "-g": None, "--ackrc": "read"}
+# tool: (value options, short options that give the pattern, long options that give the pattern,
+#        options after which there is no pattern word, options that run a program or code)
+SEARCH_TOOLS = {
+    "grep": (GREP_VALS, "ef", ("--regexp", "--file"), (), ()),
+    "rg": (RG_VALS, "ef", ("--regexp", "--file"), ("--files", "--type-list"), ("--pre", "--hostname-bin")),
+    "ag": (AG_VALS, "", (), ("-g", "--list-file-types"), ("--pager",)),
+    "ack": (ACK_VALS, "", ("--match",), ("-f", "-g", "--help-types"), ("--pager", "--output")),
+}
+
+
+def opt_lookup_exact(vals: dict, key: str):
+    """Case-sensitive, exact option lookup. No prefix matching: GNU getopt would resolve --binary to grep's own
+    --binary flag, and guessing --binary-files instead made the guard skip a real file (review finding)."""
+    return vals.get(key, MISSING)
+
+
 def opt_lookup(vals: dict, key: str):
     if key in vals:
         v = vals[key]
@@ -3291,6 +3452,8 @@ def judge_tool_path(tool, key, s, p, env, writes, reads, is_mcp):
         return "deny", "the agent may not change its own Claude config, the org security runtime, its update keys, the scanner tools folder or Python startup files."
     if prot == "ancestor" and (writes or is_mcp):
         return "deny", "the agent may not write into the home folder itself or a folder above a protected one."
+    if is_mcp and segs and seg_match(segs[-1], SECURITY_DIR) and re.search(r"delete|remove|move|rename|write|trash|unlink", tool, re.I):
+        return "deny", "the .security folder holds the guard and shield audit logs and the MCP lock; the agent may not remove or replace it."
     if startup_file(p) or startup_file(s):
         return "deny", "editing shell startup files is not allowed (persistence route); ask the user."
     if python_startup(env, p, segs):

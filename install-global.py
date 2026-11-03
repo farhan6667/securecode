@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Org AI Secure AppSec Gate V6
+NexaForge SecureCode (Org AI Secure AppSec Gate), see VERSION below.
 Cross-platform, per-user global installer for Claude Code.
 
 Installs:

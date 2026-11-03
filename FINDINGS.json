@@ -557,8 +557,8 @@
       "id": "OPEN-02",
       "severity": "medium",
       "where": "scripts/adapters/cursor_hook.py",
-      "what": "Cursor has no permission hook before file edits, so file writes by the Cursor agent (including to its own hooks.json) are not checked by the guard; preToolUse takes only allow or deny and its Write input is not documented well enough to rely on",
-      "check": "docs/AI-AGENT-SECURITY.md (What runs where)",
+      "what": "Cursor's generic preToolUse hook is not wired to the guard yet, so file writes by the Cursor agent (including to its own hooks.json) are not checked. Re-checked on 2026-11-03: cursor.com/docs/agent/hooks lists preToolUse with Write and Delete matchers, but documents neither their tool_input fields nor whether the hook runs before the edit is applied, so it stays open until a live Cursor test confirms both",
+      "check": "docs/AI-AGENT-SECURITY.md (What runs where); scripts/adapters/cursor_hook.py docstring",
       "status": "open"
     },
     {
@@ -680,6 +680,94 @@
       "what": "First real ZAP run on Windows crashed: zap.sh was picked from PATH and CreateProcess cannot start a shell script; an OSError became a traceback. ZAP now runs as java -jar from PATH or the tools folder, and a start failure is a clear note",
       "check": "tests/test_v7_pentest.py::test_find_zap_uses_java_jar_from_the_tools_folder_not_a_shell_script, test_zap_that_cannot_start_is_a_note_not_a_traceback; real ZAP 2.17.0 run on 2026-11-03 found 9 alerts on a throwaway local site",
       "status": "fixed"
+    },
+    {
+      "id": "V7F-S2",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py file_cmd (grep, egrep, fgrep, rg, ag, ack), scan(), awk()",
+      "what": "From the outside product review and a live false positive: option names were folded to lower case, so grep -E/-F/-A/-C were read as -e/-f (pattern or pattern file) and the next word was taken as their value. A quoted pattern was then judged as a path (false positive), and a real path after the pattern was skipped (grep -E 'a|b' ~/.claude/settings.json was allowed in managed mode, a bypass of the outside-the-project check). awk regex literals like /a|b/ were read as a pipe to a command. Options are now case sensitive per tool, short clusters (-nE, -A3, -nf FILE) follow getopt, rg --hostname-bin is unmodelled like --pre, and awk regex and string contents are blanked before the pipe and redirect check",
+      "check": "tests/test_guard_positive_model.py::test_s2_quoted_patterns_are_patterns_not_paths, ::test_a_real_path_after_a_quoted_pattern_is_still_judged, ::test_awk_alternation_is_a_pattern_but_real_pipes_and_redirects_are_not, ::test_grep_on_a_secret_after_a_pattern_is_denied, ::test_everyday_corpus_prompt_rate_is_under_five_percent; tests/test_fuzz_guard.py",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-S1",
+      "severity": "medium",
+      "where": "scripts/adapters/gemini_hook.py, scripts/adapters/antigravity_hook.py, templates/gemini/settings.hooks.json, templates/antigravity/hooks.json",
+      "what": "Gemini CLI and Antigravity had the rules and the gate but no agent guard. Both now have an adapter checked against the official hook docs: Gemini CLI BeforeTool (exit 0 or 2 only, because other exits and non-JSON output fail open there; ask becomes deny), Antigravity PreToolUse (allow, deny, force_ask; an explicit JSON decision on every path). Malformed input fails closed. Antigravity's behaviour when the hook itself crashes or times out is not documented and is untested",
+      "check": "tests/test_v7_guard.py::test_gemini_adapter_replays_the_guard_corpus, ::test_antigravity_adapter_replays_the_guard_corpus, ::test_gemini_adapter_fails_closed, ::test_antigravity_adapter_fails_closed, ::test_gemini_and_antigravity_hook_processes_end_to_end",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-M1",
+      "severity": "low",
+      "where": "ONE_PROMPT_INSTALL.md, README.md (Install with one prompt, Install by hand)",
+      "what": "Two install routes disagreed: ONE_PROMPT_INSTALL.md installed from a fixed local folder and installed scanners with winget and pip, while the README said the agent installs pinned, hash-checked scanners. Both now name one route: download zip and .sig, check the key fingerprint published in SECURITY.md on main (the trust anchor), verify with ssh-keygen, extract, install, securecode.py doctor and setup --yes after one yes, verify-global, restart",
+      "check": "tests/test_v7_docs.py::test_readme_prompt_and_one_prompt_install_name_the_same_steps, ::test_one_prompt_install_has_no_old_install_route, ::test_published_fingerprint_matches_the_release_key",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-M2",
+      "severity": "low",
+      "where": "AGENTS.md, global-CLAUDE.md, .claude/skills/security-review/SKILL.md, docs/SOURCE-CODE-REVIEW.md, MANIFEST.txt, scripts/secgate.py banner and SARIF driver",
+      "what": "User-facing docs and the gate still said V6.2 or V6 in 7.0. They now carry the current version, and the gate banner and SARIF driver read it from GATE_VERSION",
+      "check": "tests/test_v7_docs.py::test_user_facing_docs_and_banner_carry_the_current_version, ::test_no_stale_v6_labels_outside_history",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-D",
+      "severity": "low",
+      "where": "scripts/engines/__init__.py run_engines, scripts/engines/_base.py setup_command, scripts/securecode.py doctor",
+      "what": "The gate's 'not run' note said 'install with securecode setup', which is not a command anyone can type from a project folder. It now prints the full installed path command for the platform, the same text as the README",
+      "check": "tests/test_v7_engines.py::test_setup_command_is_the_full_installed_path_per_platform, ::test_gate_prints_not_run_notes_and_still_passes",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-Z",
+      "severity": "low",
+      "where": "scripts/engines/zap.py, scripts/engines/engines.lock.json, scripts/engines/_install.py, scripts/local_dast.py _zap_dirs",
+      "what": "Local DAST needed ZAP installed by hand. securecode setup --engine zap now installs the official ZAP 2.17.0 cross-platform zip (SHA-256 and size pinned) into <tools>/zap/ZAP_2.17.0, where local_dast finds it; doctor shows it; Java 17+ is checked with java -version and reported, never installed. local_dast now uses the same tools folder rule as setup (XDG_DATA_HOME was ignored before)",
+      "check": "tests/test_v7_engines.py::test_zap_installs_where_local_dast_finds_it, ::test_zap_download_with_the_wrong_size_or_hash_is_refused, ::test_java_problem_reports_missing_or_old_java_and_never_installs_it, ::test_doctor_shows_zap_and_setup_names_the_java_requirement",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-CI1",
+      "severity": "low",
+      "where": "tests/test_v7_rules.py::test_linked_app_folder_is_not_walked",
+      "what": "The test skipped on Linux ('junctions are Windows only') and failed the new skip check. It now uses a symlink on Linux and macOS and a junction on Windows, so the same protection is tested everywhere",
+      "check": "tests/test_v7_rules.py::test_linked_app_folder_is_not_walked (run under Linux via WSL with a real symlink on 2026-11-03: HIGH as expected)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-R1",
+      "severity": "high",
+      "where": "scripts/agent_guard.py awk(), awk_code_only(), grep/rg/ag/ack option tables, opt_lookup_exact",
+      "what": "Found in the independent review of the first S2 fix (before it shipped): a regex holding a quote read as a division hid system(), getline, ENVIRON and redirects behind a fake string; gawk @f() indirect calls, -i/-E/--exec/--file=/-l, -i inplace and ARGV/ARGC were not modelled; GNU-style prefix matching resolved grep --binary to --binary-files and skipped the real file; --reg=x was not seen as an explicit pattern; ag and ack reused rg's table where -r, -t and -f are flags; ag -p reads a file; rg --files took the folder as a pattern; ag --pager and ack --output run code. Keywords are now checked on the raw awk program, only -F and -v are modelled, regex versus division follows awk's grammar and fails closed when unclear, # comments are dropped, option lookup is exact with abbreviations of value options unmodelled, and ag and ack have their own tables",
+      "check": "tests/test_guard_positive_model.py::test_review_bypasses_of_the_s2_fix_are_never_allowed (34 cases), ::test_everyday_awk_and_search_forms_still_allowed",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-R2",
+      "severity": "high",
+      "where": "scripts/adapters/gemini_hook.py, scripts/adapters/antigravity_hook.py",
+      "what": "Found in the independent review: dir_path (Gemini) and Cwd (Antigravity) became the event cwd, which the guard trusts as a project root, so rm -rf or a hosts file edit in any folder was allowed. The folder change is now an explicit cd the guard judges. Also fixed: read_many_files ignored paths when include was set; broad globs with default excludes off; the legacy path key of grep_search, search_file_content and glob; unknown Gemini tools kept their raw name (now mcp__gemini__<name>, so outside paths are the unknown class); save_memory now needs approval; Antigravity grep_search Includes and send_command_input Input are judged; a failed answer write in the Gemini adapter is exit 2, never the fail-open exit 1",
+      "check": "tests/test_v7_guard.py::test_adapter_working_folder_is_not_a_trusted_root, ::test_gemini_review_findings_a2_to_a6, ::test_antigravity_review_findings_a7_a8, ::test_gemini_answer_that_cannot_be_written_is_a_deny",
+      "status": "fixed"
+    },
+    {
+      "id": "V7F-SH",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py PROTECTED, PROTECTED_NAMES, judge(), judge_tool_path()",
+      "what": "Ahead of the output secret shield and MCP manifest lock: .security/shield-audit.jsonl and .security/mcp-lock.json are protected like guard-audit.jsonl (no write, truncate, move or delete through shell, Write, Edit or MCP, in either mode; reads allowed), and removing or moving the whole .security folder is refused, so the agent cannot erase the audit or approve a changed MCP tool by editing the lock. Writing other files inside .security stays allowed",
+      "check": "tests/test_guard_positive_model.py::test_security_audit_files_and_folder_cannot_be_changed_or_removed, ::test_security_audit_files_tools_and_reads",
+      "status": "fixed"
+    },
+    {
+      "id": "OPEN-09",
+      "severity": "low",
+      "where": "scripts/agent_guard.py (.security folder)",
+      "what": "git clean -fdx and find . -delete style commands that remove the whole tree can still remove .security with its audit files; only direct rm, rmdir, mv and Remove-Item of the folder are refused. local_dast and setup sort ZAP_* folders and jars as text, so two ZAP versions side by side could pick the older one (setup keeps one). The size cap during the ZAP download is the global 400 MB, not the pinned size (the SHA-256 check still refuses anything else)",
+      "check": "code reading in the 7.0.1 review",
+      "status": "open"
     }
   ]
 }

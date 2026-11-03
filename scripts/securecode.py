@@ -56,7 +56,8 @@ def doctor(eng, project, as_json=False):
         if st["missing_runtimes"]:
             note = "needs " + ", ".join(st["missing_runtimes"])
         elif not st["installed"]:
-            note = "manual: see README" if e.kind in ("manual", "builtin") else "install with: securecode.py setup"
+            note = "manual: see README" if e.kind in ("manual", "builtin") else \
+                f"for local DAST: {eng.setup_command()} --engine zap" if e.name == "zap" else f"install with: {eng.setup_command()}"
         elif e.name == "codeql":
             note = "runs only with SECGATE_CODEQL=1"
         elif e.name == "security-code-scan":
@@ -81,7 +82,7 @@ def doctor(eng, project, as_json=False):
     say()
     if missing:
         say(f"{len(missing)} needed engine(s) missing: {', '.join(missing)}. The gate reports them as 'not run'.")
-        say("See the plan with: py -I scripts/securecode.py setup")
+        say(f"See the plan with: {eng.setup_command()}")
     else:
         say("Every engine this project needs is installed.")
     return 0
@@ -90,7 +91,9 @@ def doctor(eng, project, as_json=False):
 def setup(eng, project, all_engines=False, only=None, yes=False):
     from nfsc_engines import _install
     langs = eng.detect_languages(project)
-    chosen = [e for e in eng.ENGINES if (all_engines or e.detect(project, langs)) and (not only or e.name in only)]
+    # --engine NAME picks that engine even when the project does not need it (zap is never "needed" by a project).
+    chosen = [e for e in eng.ENGINES if (all_engines or (only and e.name in only) or e.detect(project, langs))
+              and (not only or e.name in only)]
     if only:
         unknown = sorted(set(only) - {e.name for e in eng.ENGINES})
         if unknown:
@@ -110,8 +113,12 @@ def setup(eng, project, all_engines=False, only=None, yes=False):
         return 0
     for e, plan in todo:
         say(f"[{e.name}] version {plan['version']}, licence {plan['licence']}")
-        if e.missing_runtimes():
-            say(f"  note: {e.name} also needs {', '.join(e.missing_runtimes())} on PATH to run")
+        missing_rt = e.missing_runtimes()
+        if missing_rt:
+            say(f"  note: {e.name} also needs {', '.join(missing_rt)} to run")
+            if any(str(r).startswith("java") for r in missing_rt):
+                say("  SecureCode never installs Java for you. Install a Java 17 or newer runtime yourself "
+                    "(for example Eclipse Temurin from https://adoptium.net/), then check it with: java -version")
         say(f"  source: {plan['source']}")
         for s in plan["steps"]:
             say(f"  - {s}")

@@ -2,7 +2,7 @@
 name: org-appsec-security
 description: Organization secure coding, deep source code security review and AppSec gate. Use for any web, API or mobile coding; run the full protocol when the user writes "Run Security Test" or "Run Advisory QA" (Roman Urdu "Security Test Karo" / "Advisory QA Karo" also work), runs /security-gate, or asks for a security check, source code review, IDOR check, pentest readiness or QA before handover.
 ---
-# Org AppSec Security Review V6.2
+# Org AppSec Security Review 7.0.0
 
 The installed runtime lives in the per-user app folder, not in the project:
 Windows `%LOCALAPPDATA%\OrgAISecureAppSec`, macOS `~/Library/Application Support/OrgAISecureAppSec`,

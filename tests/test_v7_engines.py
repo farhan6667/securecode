@@ -538,8 +538,9 @@ def test_missing_engines_become_notes_not_failures(tmp_path):
     notes, findings = [], []
     status = E.run_engines(tmp_path, findings, notes, "ci", False, find=lambda n: None, runner=lambda *a, **k: pytest.fail("ran"))
     assert findings == []
-    assert "not run: bandit (install with securecode setup)" in notes
-    assert "not run: gosec (install with securecode setup)" in notes
+    cmd = _base.setup_command()
+    assert f"not run: bandit (install with: {cmd})" in notes
+    assert f"not run: gosec (install with: {cmd})" in notes
     assert status["bandit"] == "not run" and not any("codeql" in n for n in notes)
 
 
@@ -596,10 +597,18 @@ def test_gate_prints_not_run_notes_and_still_passes(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(sys, "argv", ["secgate", ".", "--mode", "full", "--fail-on", "high"])
     rc = g.main()
     out = capsys.readouterr().out
-    assert "NOTE: not run: bandit (install with securecode setup)" in out
+    assert f"NOTE: not run: bandit (install with: {_base.setup_command()})" in out
     assert rc == 0 and "BLOCKED" not in out
     report = json.loads((tmp_path / ".security" / "findings.json").read_text(encoding="utf-8"))
     assert report["tool_status"]["engines"]["bandit"] == "not run"
+
+
+def test_setup_command_is_the_full_installed_path_per_platform():
+    assert _base.setup_command("Windows") == 'py -I "%LOCALAPPDATA%\\OrgAISecureAppSec\\scripts\\securecode.py" setup'
+    assert _base.setup_command("Darwin").endswith('/Library/Application Support/OrgAISecureAppSec/scripts/securecode.py" setup')
+    assert "OrgAISecureAppSec/scripts/securecode.py\" setup" in _base.setup_command("Linux")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert _base.setup_command("Windows") in readme and "install with securecode setup" not in readme
 
 
 def test_gate_retire_ignores_repo_ignore_file_in_ci(tmp_path, monkeypatch):
@@ -652,3 +661,103 @@ def test_setup_refuses_a_tools_folder_inside_the_project(tmp_path, monkeypatch, 
     monkeypatch.setattr(_install, "install", lambda e, log=print: pytest.fail("must not install"))
     assert sc.main(["setup", str(tmp_path), "--yes", "--engine", "bandit"]) == 2
     assert "inside the project" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ ZAP for local DAST (V7F-Z)
+
+ZAP_PIN = E.BY_NAME["zap"].pin()
+
+
+def test_zap_pin_is_the_official_crossplatform_zip():
+    art = ZAP_PIN["artifacts"]["any"]
+    assert ZAP_PIN["version"] == "2.17.0" and ZAP_PIN["licence"] == "Apache-2.0"
+    assert art["url"] == "https://github.com/zaproxy/zaproxy/releases/download/v2.17.0/ZAP_2.17.0_Crossplatform.zip"
+    assert art["sha256"] == "94c8f767b1c2e94f0db66b3ae56514d5e3f5a728ee1b6c798e0c8fe2d61fbff0" and art["size"] == 286652857
+    assert E.BY_NAME["zap"] not in E.RUNNABLE                  # the gate never runs it; local_dast.py does
+    plan = E.BY_NAME["zap"].install_plan()
+    assert plan["auto"] and any("286,652,857 bytes" in s for s in plan["steps"])
+
+
+def fake_zap_zip(tmp_path):
+    z = tmp_path / "ZAP_2.17.0_Crossplatform.zip"
+    with zipfile.ZipFile(z, "w") as f:
+        f.writestr("ZAP_2.17.0/zap-2.17.0.jar", "pretend jar")
+        f.writestr("ZAP_2.17.0/zap.sh", "#!/bin/sh\n")
+        f.writestr("ZAP_2.17.0/plugin/x.zap", "addon")
+    return z
+
+
+def zap_with_pin(monkeypatch, sha, size):
+    eng = E.BY_NAME["zap"]
+    pin = json.loads(json.dumps(ZAP_PIN))
+    pin["artifacts"]["any"].update(sha256=sha, size=size)
+    monkeypatch.setattr(eng, "pin", lambda: pin)
+    return eng
+
+
+def test_zap_installs_where_local_dast_finds_it(tmp_path, monkeypatch):
+    z = fake_zap_zip(tmp_path)
+    eng = zap_with_pin(monkeypatch, hashlib.sha256(z.read_bytes()).hexdigest(), z.stat().st_size)
+    path = _install.install_download(eng, fetch=copier(z), log=lambda *_: None)
+    assert path == _base.tools_root() / "zap" / "ZAP_2.17.0" / "zap-2.17.0.jar" and path.read_text() == "pretend jar"
+    assert eng.locate() == str(path)
+    sys.path.insert(0, str(ROOT / "scripts"))
+    dast = load("scripts/local_dast.py", "local_dast_zap")
+    assert _base.tools_root() / "zap" / "ZAP_2.17.0" in dast._zap_dirs()
+    java = str(tmp_path / "java.exe")
+    monkeypatch.setattr(dast, "find_tool", lambda n: java if n == "java" else None)     # no docker, a java on PATH
+    kind, argv = dast.find_zap()
+    assert kind == "local" and argv[0] == java and argv[-2:] == ["-jar", str(path)]
+
+
+def test_zap_download_with_the_wrong_size_or_hash_is_refused(tmp_path, monkeypatch):
+    z = fake_zap_zip(tmp_path)
+    sha = hashlib.sha256(z.read_bytes()).hexdigest()
+    eng = zap_with_pin(monkeypatch, sha, z.stat().st_size + 1)
+    with pytest.raises(_install.ChecksumMismatch, match="size mismatch"):
+        _install.install_download(eng, fetch=copier(z), log=lambda *_: None)
+    eng = zap_with_pin(monkeypatch, "0" * 64, z.stat().st_size)
+    with pytest.raises(_install.ChecksumMismatch):
+        _install.install_download(eng, fetch=copier(z), log=lambda *_: None)
+    assert not (_base.tools_root() / "zap").exists()
+
+
+@pytest.mark.parametrize("text,major", [('openjdk version "17.0.9" 2023-10-17', 17), ('java version "1.8.0_392"', 8),
+                                        ('openjdk version "21" 2023-09-19', 21), ('openjdk version "11.0.2"', 11),
+                                        ("garbage", None), ("", None)])
+def test_java_major_parsing(text, major):
+    from nfsc_engines import zap
+    assert zap.java_major(text) == major
+
+
+def test_java_problem_reports_missing_or_old_java_and_never_installs_it():
+    from nfsc_engines import zap
+    calls = []
+
+    def runner(argv, cwd, timeout):
+        calls.append(argv)
+        return 0, "", 'openjdk version "11.0.20" 2023-07-18'
+    assert zap.java_problem(lambda n: None, runner) == "java 17+ (not on PATH)" and calls == []
+    assert zap.java_problem(lambda n: "/usr/bin/java", runner) == "java 17+ (found 11)"
+    assert calls == [["/usr/bin/java", "-version"]]                       # only asks the version, installs nothing
+    ok = lambda argv, cwd, timeout: (0, "", 'openjdk version "17.0.9"')  # noqa: E731
+    assert zap.java_problem(lambda n: "/usr/bin/java", ok) is None
+
+
+def test_doctor_shows_zap_and_setup_names_the_java_requirement(tmp_path, monkeypatch, capsys):
+    from nfsc_engines import zap
+    sc = load("scripts/securecode.py", "sc_v7zap")
+    monkeypatch.setattr(zap, "java_problem", lambda find=None, runner=None: "java 17+ (not on PATH)")
+    write(tmp_path, "app.py", "print(1)\n")
+    assert sc.main(["doctor", str(tmp_path), "--json"]) == 0
+    row = next(e for e in json.loads(capsys.readouterr().out)["engines"] if e["engine"] == "zap")
+    assert row["optional"] and not row["needed"] and row["missing_runtimes"] == ["java 17+ (not on PATH)"]
+    called = []
+    monkeypatch.setattr(_install, "install", lambda e, log=print: called.append(e.name))
+    assert sc.main(["setup", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "[zap]" not in out                                    # never in the default plan
+    assert sc.main(["setup", str(tmp_path), "--engine", "zap"]) == 0
+    out = capsys.readouterr().out
+    assert "[zap] version 2.17.0" in out and "never installs Java" in out and "Nothing was installed" in out
+    assert called == []

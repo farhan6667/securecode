@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Org AI Secure AppSec Gate V6.
+"""Org AI Secure AppSec Gate (NexaForge SecureCode 7.0.0).
 
 Modes:
  quick: lightweight changed-file heuristics only.
@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse, json, os, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
+GATE_VERSION="7.0.0"   # kept equal to VERSION in install-global.py (tests/test_v7_docs.py checks it)
 SEV={"CRITICAL":0,"HIGH":1,"MEDIUM":2,"LOW":3,"INFO":4}
 SKIP={".git","node_modules","vendor","dist","build","coverage",".next","venv",".venv","__pycache__","target",".security"}
 EXT={".twig",".ejs",".hbs",".php",".js",".jsx",".ts",".tsx",".py",".rb",".java",".go",".cs",".vue",".html",".htm",".sql",".sh",".bash",".yml",".yaml",".json",".xml",".tf",".tfvars",".env"}
@@ -1690,7 +1691,7 @@ def write_reports(root,findings,mode,tool_status):
     report={"mode":mode,"tool_status":tool_status,"counts":counts,"findings":findings}
     (sec/"findings.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     sarif={"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json",
-           "runs":[{"tool":{"driver":{"name":"Org AI Secure AppSec Gate V6"}},
+           "runs":[{"tool":{"driver":{"name":"Org AI Secure AppSec Gate","version":GATE_VERSION}},
                      "results":[{"ruleId":f["rule"],"level":{"CRITICAL":"error","HIGH":"error","MEDIUM":"warning","LOW":"note"}.get(f["severity"],"note"),
                                  "message":{"text":f["message"]},"locations":[{"physicalLocation":{"artifactLocation":{"uri":str(f["file"])},"region":{"startLine":max(1,int(f.get("line") or 1))}}}]}
                                 for f in findings]}]}
@@ -1770,7 +1771,7 @@ def main():
     else:
         counts={s:sum(1 for f in findings if f["severity"]==s) for s in SEV}
     missing=[t for t,v in status.items() if not v]
-    print("=== ORG AI SECURE APPSEC GATE 7.0 ===")
+    print(f"=== ORG AI SECURE APPSEC GATE {GATE_VERSION} ===")
     print(safe_text(f"Mode: {args.mode} Target: {target}"))
     for name,msg in errors.items():
         print(safe_text(f"ERROR: {name} did not complete: {msg}"))

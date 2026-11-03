@@ -9,8 +9,8 @@
 
 **NexaForge SecureCode is a virtual pentester that sits next to every developer.** It makes AI coding agents
 write secure code, finds and fixes security holes while you work, and keeps the agent away from your secrets.
-Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity (rules and gate in all five; the full hooks in
-Claude Code, guard adapters for Cursor and Codex). Free and open source (MIT), for anyone who builds web apps,
+Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity (rules, gate and agent guard in all five; the
+full hooks in Claude Code, guard adapters for the other four). Free and open source (MIT), for anyone who builds web apps,
 APIs or Android apps with AI.
 
 <p align="center">
@@ -27,13 +27,15 @@ APIs or Android apps with AI.
 
 - **A guard that allows what is clearly safe and asks about the rest.** Everyday commands inside your project run
   without a prompt (1 of 256 everyday commands asked in our test); anything unusual shows you the exact command
-  first. Secrets and the agent's own settings stay off limits. Cursor and Codex get guard adapters too.
+  first. Secrets and the agent's own settings stay off limits. Cursor, Codex, Gemini CLI and Antigravity get guard
+  adapters too.
 - **More scanners, picked by language:** osv-scanner, Bandit, pip-audit, gosec, govulncheck, ESLint security,
-  Dependency-Check and SpotBugs, installed pinned and hash-checked with one setup command.
+  Dependency-Check and SpotBugs, installed pinned and hash-checked (each engine's own package; pip and npm
+  dependencies are resolved, not hash-pinned) with one setup command.
 - **New rules and labs:** Java and Spring Boot, a legacy audit for planted webshells, database and default-password
   checks. Lab scores: Laravel 17/18, Spring 20/20, legacy 17/17, web 22/22, no clean file flagged.
 - **Automated pentest flow:** a passive ZAP scan of your own app, a readable report, and a draft fix pull request.
-- **Gemini CLI and Antigravity** get the rules and the gate.
+- **Gemini CLI and Antigravity** get the rules, the gate and the agent guard.
 - **Updates that catch up:** a laptop that was off at check time updates as soon as it can, and 6.x installs move
   to 7.0 by themselves. Details in [RELEASE-NOTES-V7.0.md](RELEASE-NOTES-V7.0.md).
 
@@ -49,8 +51,8 @@ developer's desk, in real time:
 > code **with a virtual pentester beside you** → fixed while you work → staging → pentest → **pass**
 
 - **Real time.** Each change is checked as it is written, not days later.
-- **Fixes that don't break things.** After a fix the agent re-runs the gate together with your project's own tests,
-  so features keep working (the more tests your project has, the stronger this check).
+- **Fixes that don't break things.** The gate can run your project's own tests (`--run-tests`), and the review
+  protocol tells the agent to re-run them after every fix.
 - **Your security team's time goes further.** Human testers spend their days on the hard problems (business
   logic, chained attacks) instead of re-reporting old jQuery and missing headers.
 
@@ -73,27 +75,30 @@ SecureCode fixes both:
 Open Claude Code, Cursor, Codex, Gemini CLI or Antigravity and paste this one line:
 
 ```
-Install NexaForge SecureCode for me: download the latest release from https://github.com/farhan6667/nexaforge-securecode/releases, verify its signature as https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md explains, then follow ONE_PROMPT_INSTALL.md inside the zip.
+Install NexaForge SecureCode for me: download the latest release zip and its .sig from https://github.com/farhan6667/nexaforge-securecode/releases, check that the key in config/allowed_signers has the fingerprint published in https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md, verify the signature with ssh-keygen, extract it to a folder I choose, then follow ONE_PROMPT_INSTALL.md inside it: run the installer, securecode.py doctor, securecode.py setup --yes after asking me once, verify-global.py, and tell me to restart.
 ```
 
-The agent downloads it, checks the signature, installs it and the scanners, and tells you what it did. It asks
-before installing anything, so just say yes. Then type `Run Security Test` in any project.
+The agent downloads it, checks the key fingerprint and the signature, installs it and the scanners, and tells
+you what it did. It asks before installing anything, so just say yes. Restart the AI tool, then type
+`Run Security Test` in any project. [ONE_PROMPT_INSTALL.md](ONE_PROMPT_INSTALL.md) lists every step and explains
+why the fingerprint in SECURITY.md is the trust anchor.
 
 <details>
 <summary>Install by hand instead</summary>
 
-Download `NexaForge_SecureCode.zip` from the [latest release](https://github.com/farhan6667/nexaforge-securecode/releases), extract it, then:
+Download `NexaForge_SecureCode.zip` and `NexaForge_SecureCode.zip.sig` from the
+[latest release](https://github.com/farhan6667/nexaforge-securecode/releases), check the key fingerprint and the
+signature as [SECURITY.md](SECURITY.md#verifying-a-release) shows, extract it, then:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+py -I scripts/securecode.py doctor
+py -I scripts/securecode.py setup --yes
 py verify-global.py
 ```
 
-macOS or Linux: `./install-macos.sh` or `./install-linux.sh`, then `python3 verify-global.py`.
-
-The full check uses Semgrep, Trivy and Gitleaks. Windows: `winget install --id AquaSecurity.Trivy --exact --source winget`,
-`winget install --id Gitleaks.Gitleaks --exact --source winget`, `py -m pip install --user semgrep`.
-macOS: `brew install semgrep trivy gitleaks`. Restart the AI tool afterwards.
+macOS or Linux: `./install-macos.sh --update-timer` or `./install-linux.sh --update-timer`, then the same
+commands with `python3`. Restart the AI tool afterwards.
 </details>
 
 ## Install once, it updates itself
@@ -148,8 +153,21 @@ change its own settings or push your code somewhere public.
 | Access control (IDOR) rules and tests | rarely | sometimes | no | **yes** |
 | Guards your machine from the agent | no | no | no | **yes** |
 | Signed auto-updates | varies | no | no | **yes** |
-| Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity | n/a | one tool | one tool | **all five (guard: Claude Code, Cursor, Codex)** |
-| Measured on a lab with planted bugs | varies | no | no | **yes, 17 of 18** |
+| Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity | n/a | one tool | one tool | **all five, guard included (Cursor's own file edits not yet)** |
+| Measured on labs with planted bugs | varies | no | no | **yes: four labs, 76 of 77 found, 0 clean files flagged** |
+
+## Works with
+
+| Tool | Rules and gate | Agent guard | Gaps |
+|---|---|---|---|
+| Claude Code | yes, installed for you | yes, every tool (hooks) | none known; native Windows has no OS sandbox |
+| Cursor | yes | shell, MCP and file reads (`cursor_hook.py`) | Cursor's own file edits are not checked yet |
+| Codex | yes | shell, patches and MCP (`codex_hook.py`), plus the stop gate | an "ask" becomes a deny |
+| Gemini CLI | yes | every tool (`gemini_hook.py`, BeforeTool) | an "ask" becomes a deny |
+| Antigravity | yes | every tool (`antigravity_hook.py`, PreToolUse), asks work | blocking when the hook itself fails is untested |
+
+The adapters for the four other tools are installed by hand; [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md)
+has the steps.
 
 Everything runs on your machine. Your code is not sent to any NexaForge service (your AI tool still talks to its own model provider, as usual). The limits are listed
 plainly under [Honest limits](#honest-limits).
@@ -162,7 +180,7 @@ plainly under [Honest limits](#honest-limits).
 | Deep review: `Run Security Test` | the agent walks every entry point with [docs/SOURCE-CODE-REVIEW.md](docs/SOURCE-CODE-REVIEW.md), fixes what it safely can, re-runs the gate and reports a verdict |
 | Readiness advisory: `Run Advisory QA` | the same review, but nothing changes until you agree |
 | The gate, `secgate.py` | Semgrep (our rules, Laravel authorization rules, registry packs), Trivy, Gitleaks, your project's tests, and built-in checks for outdated front-end libraries, web-root exposure, cookies, headers, TLS, default credentials, raw template output and Android manifests. `ci` mode fails closed |
-| Agent guard | a Claude Code hook (with adapters for Cursor and Codex) that blocks reading secrets, writing to the agent's own settings, pipe-to-shell, force pushes and public repo creation, and asks before pushes and installs |
+| Agent guard | a Claude Code hook (with adapters for Cursor, Codex, Gemini CLI and Antigravity) that blocks reading secrets, writing to the agent's own settings, pipe-to-shell, force pushes and public repo creation, and asks before pushes and installs |
 | CI templates | GitHub and GitLab, with actions pinned to commit SHAs and scanners pinned by SHA-256 |
 | Templates | Laravel security headers, session, throttling, upload and webhook scaffolds, plus example security tests |
 
@@ -205,7 +223,7 @@ You can also use `/security-gate` and `/advisory-qa`, or just ask in your own wo
 - Optional webhook to send findings to your tracker.
 
 **Proof, not promises**
-- More than 300 automated tests, CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
+- 404 tests, 1058 cases (counted from a pytest run, parametrized cases included), CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
 - Four labs with planted vulnerabilities (Laravel, Spring Boot, legacy webshells, common pentest findings),
   each with clean files that must stay quiet. Scores and every miss are in
   [benchmark/RESULTS.md](benchmark/RESULTS.md).
@@ -237,18 +255,28 @@ py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on h
 
 The gate looks at which languages your project uses and runs the matching scanners in `full` and `ci` mode.
 It never copies a scanner into this package: each one runs as its own program, and a missing one shows up as
-`NOTE: not run: <name> (install with securecode setup)`, never as a pass and never as a failure.
+`NOTE: not run: <name> (install with: py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" setup)`
+(the macOS and Linux note names the installed path there), never as a pass and never as a failure.
 
 ```bash
-py -I scripts/securecode.py doctor          # what this project needs, what is installed, which version
-py -I scripts/securecode.py setup           # the install plan: source, pinned version, checksum, licence
-py -I scripts/securecode.py setup --yes     # your one yes: installs the plan, checking every checksum
+py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" doctor        # what this project needs, what is installed, which version
+py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" setup         # the install plan: source, pinned version, checksum, licence
+py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" setup --yes   # your one yes: installs the plan, checking every checksum
 ```
+
+macOS: `python3 -I "$HOME/Library/Application Support/OrgAISecureAppSec/scripts/securecode.py" setup`. Linux:
+`python3 -I "${XDG_DATA_HOME:-$HOME/.local/share}/OrgAISecureAppSec/scripts/securecode.py" setup`.
 
 Nothing is installed without `--yes`. Tools go to `%LOCALAPPDATA%\NexaForgeTools` (Windows) or
 `~/.local/share/nexaforge-tools`, outside your projects. Every download comes from the publisher's own release
 page at a pinned version and is checked against a SHA-256 written in
-[scripts/engines/engines.lock.json](scripts/engines/engines.lock.json); a mismatch is deleted and refused.
+[scripts/engines/engines.lock.json](scripts/engines/engines.lock.json); a mismatch is deleted and refused. That
+pins each engine's own package; for pip and npm engines, their dependencies are resolved, not hash-pinned.
+
+OWASP ZAP for the local DAST step is installed the same way, only when you ask for it:
+`py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" setup --engine zap` downloads the official
+ZAP 2.17.0 cross-platform zip (SHA-256 and size pinned) into the tools folder. ZAP needs Java 17 or newer;
+`doctor` and `setup` say clearly when Java is missing or too old, and SecureCode never installs Java for you.
 
 | Language | Engine | Licence | What it finds |
 |---|---|---|---|
@@ -288,7 +316,7 @@ After `Run Security Test` has fixed what it can, the agent finishes the job the 
 
 | Step | What happens | What it needs |
 |---|---|---|
-| Local DAST | asks once whether your app runs on this machine, then runs an OWASP ZAP baseline (or API) scan against it. Only `localhost`, `127.x.x.x` and `::1` are allowed; the name is resolved once and the IP pinned | Docker, or ZAP installed. Without them it says so and carries on |
+| Local DAST | asks once whether your app runs on this machine, then runs an OWASP ZAP baseline (or API) scan against it. Only `localhost`, `127.x.x.x` and `::1` are allowed; the name is resolved once and the IP pinned | ZAP (`setup --engine zap`) and Java 17+, or Docker. Without them it says so and carries on |
 | Retest | every finding gets a label: Pass, Fail, Partial, Compensating control or Risk accepted. A Pass needs the test that proves it; a risk acceptance needs your name and a date | nothing extra |
 | Report | `.security/REPORT.html` (print-ready A4) and `REPORT.md`: executive summary, what ran and what did not, findings with CIA impact, attack chains, artifacts, limits. `report_lint.py` checks it before handover | Chrome or Edge for the optional PDF |
 | Fix PR | a dry run first; on your yes, a `securecode/fix-<date>` branch and a draft PR with the report summary. Never the default branch, never a force push, refused if gitleaks finds a secret in the change | `gh` (GitHub CLI) signed in, and gitleaks |
@@ -320,14 +348,17 @@ ship the package under its own internal name and still receive the signed update
   sandbox where you have it.
 - The deep review is done by the AI and can miss things, especially business logic. Keep the human pentest.
 - Server settings (TLS ciphers, open ports, admin panels on the host) are outside the code and are listed for the server team.
-- Claude Code gets the full hooks. Cursor and Codex get guard adapters that you install by hand, with gaps: Cursor
-  has no hook before its own file edits, and Codex hooks cannot ask yet, so an "ask" is a deny there. Gemini CLI
-  and Antigravity get the rules and the gate; both have pre-tool hooks, but wiring the guard to them is future work.
+- Claude Code gets the full hooks. Cursor, Codex, Gemini CLI and Antigravity get guard adapters that you install
+  by hand, with gaps: Cursor's generic preToolUse hook is not wired to the guard yet, so Cursor's own file edits
+  are not checked. Codex and Gemini CLI hooks cannot ask, so an "ask" is a deny there. Antigravity can ask, but
+  whether it blocks a call when the hook itself crashes or times out is untested.
   Details in [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
 - The review history up to 6.2.2 is five internal review rounds and two outside-style attack rounds (the second
   with fuzzing), each fix with a regression test. That is not a third-party audit.
-- Local DAST is a passive ZAP scan by default and needs Docker or ZAP; it finds configuration and header
-  issues far more often than logic bugs. Attack chains in the report are a simple heuristic for a person to confirm.
+- Local DAST is a passive ZAP scan by default; it finds configuration and header issues far more often than
+  logic bugs. It has been run live: real OWASP ZAP 2.17.0 (the cross-platform zip, started with `java -jar`)
+  against a throwaway local site on 2026-11-03 found 9 alerts, and the report PDF passed `report_lint.py`. The
+  Docker path is untested. Attack chains in the report are a simple heuristic for a person to confirm.
 - No tool proves software is free of vulnerabilities. Known gaps are in [SECURITY-CONTEXT.md](SECURITY-CONTEXT.md).
 
 **Owner mode.** On your own machine the guard asks instead of refusing when you may really want the action: a force
@@ -342,11 +373,11 @@ A set of rules, a code review method, a scanner gate and Claude Code hooks that 
 more secure code and protect the developer's machine from the agent. It is free and MIT licensed.
 
 **Does it work with Cursor, Codex, Gemini CLI and Antigravity, or only Claude Code?**
-The rules, the deep review and the gate work with all five. The agent guard runs in Claude Code through its hooks,
-and in Cursor and Codex through small adapters you install by hand (Cursor: shell, MCP and file reads; Codex: shell,
-patches and MCP, plus the stop gate). The per-edit check and the injection watch are Claude Code only. Gemini CLI
-and Antigravity have pre-tool hooks too; wiring the guard to them is planned, not done. Setup is in
-[docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md) and [templates/gemini/README.md](templates/gemini/README.md).
+The rules, the deep review, the gate and the agent guard work with all five. The guard runs in Claude Code
+through its hooks, and in the others through small adapters you install by hand (Cursor: shell, MCP and file
+reads; Codex: shell, patches and MCP, plus the stop gate; Gemini CLI and Antigravity: every tool). The per-edit
+check and the injection watch are Claude Code only. Setup is in [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md)
+and [templates/gemini/README.md](templates/gemini/README.md).
 
 **Will it make my app pass a pentest?**
 It removes the findings pentests report most often and makes the agent test access control route by route, so

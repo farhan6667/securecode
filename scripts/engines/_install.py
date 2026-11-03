@@ -64,7 +64,8 @@ def plan_for(engine):
                             f"from {p.get('source')} and check its published SHA-256.")
             return base
         base.update(auto=True, url=art["url"], sha256=art["sha256"])
-        base["steps"] = [f"download {art['url']}", f"check SHA-256 {art['sha256']} (refuse and delete on mismatch)",
+        size = f" ({int(art['size']):,} bytes, checked)" if art.get("size") else ""
+        base["steps"] = [f"download {art['url']}{size}", f"check SHA-256 {art['sha256']} (refuse and delete on mismatch)",
                          f"{'copy' if art['archive'] == 'raw' else 'extract'} into {dest}"]
     elif k == "pip":
         base.update(auto=True, sha256=list(p.get("wheel_sha256") or []))
@@ -199,6 +200,11 @@ def install_download(engine, fetch=fetch_https, log=print):
         f = tmp / name
         log(f"Downloading {art['url']}")
         fetch(art["url"], f)
+        if art.get("size") and f.stat().st_size != int(art["size"]):
+            got = f.stat().st_size
+            f.unlink()
+            raise ChecksumMismatch(f"size mismatch for {name}: got {got} bytes, pinned {art['size']}. "
+                                   "The file was deleted and nothing was installed.")
         verify_sha256(f, art["sha256"])           # before anything is extracted or made executable
         log(f"  SHA-256 OK {art['sha256']}")
         staging = Path(tempfile.mkdtemp(prefix="nfsc-stage-"))

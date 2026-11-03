@@ -11,7 +11,7 @@ Code security (unchanged core, fixed)
 - Web + mobile test matrix, ZAP templates for authorized staging only, API BOLA/IDOR scaffold
 - GitHub Actions and GitLab templates that install pinned, checksum-verified scanners
 
-AI agent security (new in V6.2)
+AI agent security (since 6.2)
 - scripts/agent_guard.py: PreToolUse guard, fails closed. Blocks secret files (.env*, keys,
   cloud and agent credentials), pipe-to-shell, force push, reset --hard, root/home deletes,
   public repo creation, writes to shell startup files. Strict Markdown instruction-source mode
@@ -29,13 +29,14 @@ Honest limitations
 - The per-edit check is heuristics, not SAST.
 - Hooks and permission patterns reduce risk; they are not a sandbox or a security boundary.
 - Native Windows has no Claude Code OS sandbox; use WSL2 or a devcontainer for untrusted repos.
-- Claude Code gets the full hooks. Cursor and Codex get guard adapters you install by hand (in Codex an ask
-  becomes a deny; Cursor has no hook before its own file edits). Gemini CLI and Antigravity get rules and
-  the gate only; hooks exist there but wiring them is future work.
+- Claude Code gets the full hooks. Cursor, Codex, Gemini CLI and Antigravity get guard adapters you install
+  by hand (in Codex and Gemini CLI an ask becomes a deny; Cursor's generic preToolUse hook is not wired to the
+  guard yet, so Cursor's own file edits are not checked; Antigravity's behaviour when the hook itself fails
+  is untested).
 - Business logic, IDOR/BOLA and mobile runtime behaviour still need app-specific tests and review.
 - This package is AppSec automation, not proof of vulnerability-free software.
 
-Added after review (V6.2 final)
+Added after the 6.2 review
 - Deep source review modes: "Run Security Test", "Run Advisory QA" (/advisory-qa); docs/SOURCE-CODE-REVIEW.md
 - docs/COMMON-FINDINGS.md (common pentest findings); library_scan and config_scan rules
 - scripts/stop_gate.py (Stop hook), scripts/updater.py (signed auto-update), scripts/release/make_release.py
@@ -80,7 +81,7 @@ Added after review (V6.2 final)
 7.0 integration fixes
 - scripts/dast_target.py: shared staging-target checks for run-nuclei-authorized.py, run-zap-authorized.py and
   local_dast.py (browser-style host parsing, resolve once, metadata, link-local and private refused)
-- templates/gemini/: Gemini CLI settings and GEMINI.md, plus Antigravity notes (rules and gate; no hooks yet)
+- templates/gemini/: Gemini CLI settings and GEMINI.md, plus Antigravity notes
 - tests/test_v7_integration_fixes.py: suppression expiry, unreadable scanner output, hidden characters,
   staging targets, SQL_CONCAT on bound parameters
 
@@ -95,3 +96,11 @@ Added after review (V6.2 final)
 - scripts/updater.py: rate-limit back-off, incomplete download check, update-state.json for verify-global.py
 - scripts/install-ci-scanners.ps1 (Windows twin of install-ci-scanners.sh) and scripts/ci/check_skips.py with
   tests/skip-allowlist.json: the CI test job installs the pinned scanners and fails on unexpected skips
+
+7.0 outside review fixes
+- scripts/adapters/gemini_hook.py (Gemini CLI BeforeTool) and scripts/adapters/antigravity_hook.py (Antigravity
+  PreToolUse); templates/gemini/settings.hooks.json and templates/antigravity/hooks.json
+- scripts/engines/zap.py: OWASP ZAP 2.17.0 for local DAST through securecode setup --engine zap (Java 17+ checked,
+  never installed)
+- scripts/agent_guard.py: case-sensitive grep and rg options, awk regex literals are patterns (V7F-S2)
+- ONE_PROMPT_INSTALL.md: one install route with the key fingerprint as the trust anchor; tests/test_v7_docs.py

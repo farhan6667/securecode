@@ -229,9 +229,14 @@ def _zap_dirs() -> list[Path]:
         p = find_tool(name)
         if p:
             dirs.append(Path(p).parent)
-    tools = os.environ.get("NEXAFORGE_TOOLS_DIR") or (
-        str(Path(os.environ["LOCALAPPDATA"]) / "NexaForgeTools") if os.environ.get("LOCALAPPDATA")
-        else str(Path.home() / ".local/share/nexaforge-tools"))
+    # The same folder engines._base.tools_root() installs into (keep the two in step).
+    env = os.environ.get("NEXAFORGE_TOOLS_DIR", "")
+    if env and os.path.isabs(env):
+        tools = env
+    elif os.name == "nt":
+        tools = str(Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "NexaForgeTools")
+    else:
+        tools = str(Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "nexaforge-tools")
     zroot = Path(tools) / "zap"
     if zroot.is_dir():
         dirs += sorted((d for d in zroot.glob("ZAP_*") if d.is_dir() and not d.is_symlink()), reverse=True)

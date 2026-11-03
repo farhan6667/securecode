@@ -14,8 +14,10 @@ Cursor hook contract, checked against https://cursor.com/docs/hooks on 2026-11-0
   "allow"|"deny", "user_message"}. "ask" is not part of this hook's schema, so an ask becomes a deny here.
 - Exit code 2 blocks; invalid JSON output blocks a permission hook; crashes and timeouts fail open unless the
   hook entry sets "failClosed": true. The template in templates/cursor/hooks.json sets it.
-Cursor has no "before edit" permission hook, so file writes by the Cursor agent are not checked here
-(preToolUse exists but takes only allow or deny and its Write input is not documented well enough yet).
+Cursor's generic preToolUse hook is not wired to the guard yet, so Cursor's own file edits are not checked.
+Checked again on 2026-11-03 (https://cursor.com/docs/agent/hooks): preToolUse exists and lists Write and Delete as
+matcher values, but the page documents neither the tool_input fields of those tools nor whether the hook runs
+before the edit is applied, so wiring it now could deny every edit or miss them. OPEN-02 tracks this.
 
 The adapter turns each Cursor event into the Claude Code tool event the guard already understands and
 returns the guard's decision under the same owner/managed policy. The file content Cursor sends with

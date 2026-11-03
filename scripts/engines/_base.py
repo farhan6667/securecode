@@ -53,6 +53,17 @@ def tools_root():
     return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "nexaforge-tools"
 
 
+def setup_command(system=None):
+    """The exact command a person types to install missing engines, pointing at the installed runtime (so it
+    works from any project folder). Same text in the README, the gate's NOTE and doctor."""
+    s = (system or platform.system()).lower()
+    if s == "windows":
+        return 'py -I "%LOCALAPPDATA%\\OrgAISecureAppSec\\scripts\\securecode.py" setup'
+    if s == "darwin":
+        return 'python3 -I "$HOME/Library/Application Support/OrgAISecureAppSec/scripts/securecode.py" setup'
+    return 'python3 -I "${XDG_DATA_HOME:-$HOME/.local/share}/OrgAISecureAppSec/scripts/securecode.py" setup'
+
+
 def inside(child, parent):
     c = os.path.normcase(os.path.realpath(str(child)))
     p = os.path.normcase(os.path.realpath(str(parent))).rstrip(os.sep)

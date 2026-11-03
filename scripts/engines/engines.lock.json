@@ -110,6 +110,15 @@
                 "exe": "lib/findsecbugs-plugin-1.14.0.jar"}
       }
     },
+    "zap": {
+      "version": "2.17.0", "licence": "Apache-2.0", "kind": "download",
+      "source": "https://github.com/zaproxy/zaproxy/releases/tag/v2.17.0",
+      "artifacts": {
+        "any": {"url": "https://github.com/zaproxy/zaproxy/releases/download/v2.17.0/ZAP_2.17.0_Crossplatform.zip",
+                "sha256": "94c8f767b1c2e94f0db66b3ae56514d5e3f5a728ee1b6c798e0c8fe2d61fbff0", "size": 286652857,
+                "archive": "zip", "member": "*", "exe": "ZAP_2.17.0/zap-2.17.0.jar"}
+      }
+    },
     "security-code-scan": {
       "version": "5.6.7", "licence": "LGPL-3.0, run as a separate process", "kind": "manual",
       "source": "https://www.nuget.org/packages/security-scan/5.6.7",

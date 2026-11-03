@@ -99,6 +99,13 @@ EVERYDAY_BASH = [
     "cp -r src/. build/", "ls -1 tests | wc -l", "grep -c def src/app.py", "cut -d, -f1 data.csv | sort -u",
     "xxd assets/icon.png | head", "base64 assets/icon.png > icon.b64", "cat .env.example",
     "cd /e/work/project && sed -n 280,296p README.md; grep -n \"^## \\|^### \" SECURITY-CONTEXT.md | head -30",
+    # S2 (7.0.1): a live false positive, a quoted alternation that names protected-sounding words is a pattern
+    "cat SECURITY.md ; sed -n 1,40p SECURITY.md ; grep -nE \"ssh-keygen|sig|verify|allowed_signers|key\" SECURITY.md",
+    "grep -nE \"ssh-keygen|sig|verify|allowed_signers|key\" SECURITY.md", "grep -E 'settings.json|hooks' docs/AI-AGENT-SECURITY.md",
+    "grep -F \"allowed_signers|key\" SECURITY.md", "grep -A 3 \"allowed_signers|key\" SECURITY.md",
+    "grep -A3 -nE \"allowed_signers|key\" SECURITY.md", "grep -ne \"allowed_signers|key\" SECURITY.md",
+    "grep -e 'settings.json' -e 'allowed_signers' -n SECURITY.md", "rg -n 'allowed_signers|settings.json|update keys' docs",
+    "sed -n '/allowed_signers/,/^$/p' SECURITY.md", "awk '/settings.json|allowed_signers/ {print NR\": \"$0}' SECURITY.md",
     # gh
     "gh pr list", "gh pr view 12", "gh pr create --fill", "gh issue list", "gh run list", "gh run view 123 --log",
     "gh api repos/o/r/pulls", "gh repo view", "gh pr checks", "gh auth status",
@@ -153,6 +160,112 @@ def test_plain_read_only_sed_grep_head_never_prompt():
         assert run(cmd, "Bash", mode)[0] == "allow"
     for c in ("grep -n '\\|' a.txt", "grep -E 'a|b' src/x.py | head -5", "sed -n '/^## /p' README.md", "head -30 x.md"):
         assert run(c, "Bash", "managed")[0] == "allow", c
+
+
+S2_READS = ["cat SECURITY.md ; sed -n 1,40p SECURITY.md ; grep -nE \"ssh-keygen|sig|verify|allowed_signers|key\" SECURITY.md",
+            "grep -nE \"ssh-keygen|sig|verify|allowed_signers|key\" SECURITY.md", "grep -F 'x|settings.json' SECURITY.md",
+            "grep -A 3 'allowed_signers|key' SECURITY.md", "grep -ne 'allowed_signers|key' SECURITY.md",
+            "rg -nE utf8 'allowed_signers|key' SECURITY.md", "grep -e 'a|b' -e '~/.claude/settings.json' SECURITY.md"]
+
+
+@pytest.mark.parametrize("cmd", S2_READS)
+def test_s2_quoted_patterns_are_patterns_not_paths(cmd):
+    """V7F-S2: a quoted grep/rg/sed/awk pattern is not a path candidate, in both modes."""
+    for mode in ("owner", "managed"):
+        assert run(cmd, "Bash", mode)[0] == "allow", (mode, cmd)
+
+
+@pytest.mark.parametrize("cmd", [
+    "grep -E 'a|b' ~/.claude/settings.json",          # before 7.0.1 grep -E ate the pattern and the path went unchecked
+    "grep -F 'x' ~/.claude/settings.json", "grep -nE 'x' SECURITY.md ~/.claude/settings.json",
+    "grep -nf ~/.claude/settings.json SECURITY.md",    # -f in a cluster: the pattern file is read
+    "rg -E utf8 'a|b' ~/.claude/settings.json",        # rg -E takes a value (the encoding)
+    "grep -A 3 'x' ~/.claude/settings.json", "egrep 'a|b' ~/.claude/settings.json",
+    "rg --hostname-bin ./x a .",
+])
+def test_a_real_path_after_a_quoted_pattern_is_still_judged(cmd):
+    assert run(cmd, "Bash", "owner")[0] == "ask", cmd
+    assert run(cmd, "Bash", "managed")[0] == "deny", cmd
+
+
+def test_awk_alternation_is_a_pattern_but_real_pipes_and_redirects_are_not():
+    assert run("awk '/settings.json|allowed_signers/ {print NR\": \"$0}' SECURITY.md", "Bash", "managed")[0] == "allow"
+    assert run("awk '$1 == \"a|b\" || /x|y/ {print}' data.txt", "Bash", "managed")[0] == "allow"
+    for c in ("awk '{print | \"sh\"}' data.txt", "awk 'BEGIN{x=4/2; print x | \"sh\"; y=1/3}' data.txt",
+              "awk '/a|b/ {print > \"out.txt\"}' data.txt", "awk '/x/ || system(\"id\")' data.txt",
+              "awk '\"id\" | getline v' data.txt", "awk '/unterminated|x {print}' data.txt"):
+        assert run(c, "Bash", "managed")[0] == "deny", c
+
+
+REVIEW_BYPASSES = [
+    # G1: a regex holding a quote, read as a division, made the rest of the program look like a string
+    "awk 'BEGIN{x = /\"/; system(\"id\"); y = /\"/}'",
+    "awk 'BEGIN{x = /\"/; print \"a\" > \"/tmp/o\"; y = /\"/}' README.md",
+    "awk 'BEGIN{x = /\"/; while ((\"cat /etc/shadow\" | getline l) > 0) print l; y = /\"/}'",
+    "awk 'BEGIN{x = /\"/; print ENVIRON[\"HOME\"]; y = /\"/}'",
+    "awk $'BEGIN { # \"\\nsystem(\"id\") # \"\\n}'",
+    "awk 'BEGIN{if (1) /\"/; print | \"sh\"; /\"/}'",
+    # G2: gawk indirect calls and includes
+    "gawk 'BEGIN{f=\"system\"; @f(\"id\")}'", "gawk '@include \"evil.awk\"; {print}' README.md",
+    # G3: options that load or rewrite code and files, ARGV
+    "gawk -i ./evil.awk '1' README.md", "gawk -E evil.awk f", "gawk --exec=evil.awk f", "gawk --file=evil.awk f",
+    "gawk -l ./evil '1' README.md", "gawk -i inplace '{print \"pwned\"}' .claude/settings.json",
+    "awk 'BEGIN{ARGV[1]=\".env\"; ARGC=2} {print}'", "awk 'BEGIN{ARGV[1]=\"/etc/shadow\"; ARGC=2} {print}'",
+    # G4, G5: long option prefixes
+    "grep --binary secret .env", "grep --binary secret /etc/shadow", "grep --reg=x /etc/shadow", "grep --rege x /etc/shadow",
+    "grep --regex=x .env", "grep --exclude-fr /etc/shadow x f",
+    # G6, G7: ag and ack flags, rg --files
+    "ag -r secret /etc/shadow", "ack -r secret .env", "ag -t secret .env", "rg --ignore secret .env", "ag -p /etc/shadow x",
+    "rg --files /etc", "ag --pager 'sh -c id' x", "ack --output='@{[system(\"id\")]}' x f",
+]
+
+
+@pytest.mark.parametrize("cmd", REVIEW_BYPASSES)
+def test_review_bypasses_of_the_s2_fix_are_never_allowed(cmd):
+    """Findings of the independent review of the S2 fix: none of these may be allowed in managed mode."""
+    assert run(cmd, "Bash", "managed")[0] == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ["awk '{print $1/2 \" items\"}' data.txt", "awk 'NR % 2 == 0 {print $1}' data.txt",
+                                 "awk -F, '{print $2}' data.csv", "awk -F'\\t' -v n=3 '{print $n}' data.tsv",
+                                 "awk '/^#/ {next} {print}' conf.txt", "grep --color=always -n TODO src/app.py",
+                                 "grep --line-buffered -rn TODO src", "rg --files src", "ag -l TODO src", "ack -l TODO src"])
+def test_everyday_awk_and_search_forms_still_allowed(cmd):
+    assert run(cmd, "Bash", "managed")[0] == "allow", cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "rm .security/shield-audit.jsonl", "rm -f .security/mcp-lock.json", "echo {} > .security/mcp-lock.json",
+    ": > .security/shield-audit.jsonl", "truncate -s 0 .security/shield-audit.jsonl", "mv .security/mcp-lock.json x.json",
+    "sed -i 's/a/b/' .security/mcp-lock.json", "cp evil.json .security/mcp-lock.json", "rm -rf .security", "rm -rf ./.security/",
+    "rm -rf .secur*", "mv .security old", "rmdir .security", "rm .security/guard-audit.jsonl",
+])
+def test_security_audit_files_and_folder_cannot_be_changed_or_removed(cmd):
+    for mode in ("owner", "managed"):
+        assert run(cmd, "Bash", mode)[0] == "deny", (mode, cmd)
+    if WIN:
+        assert run("Remove-Item -Recurse -Force .security", "PowerShell", "owner")[0] == "deny"
+        assert run("Clear-Content .security\\shield-audit.jsonl", "PowerShell", "owner")[0] == "deny"
+
+
+def test_security_audit_files_tools_and_reads():
+    for tool in ("Write", "Edit"):
+        for f in (".security/shield-audit.jsonl", ".security/mcp-lock.json", ".security/guard-audit.jsonl"):
+            assert ftool(tool, {"file_path": f}, "owner")[0] == "deny", (tool, f)
+    assert ftool("mcp__fs__write_file", {"path": ".security/mcp-lock.json", "content": "{}"}, "owner")[0] == "deny"
+    assert ftool("mcp__fs__delete_file", {"path": ".security"}, "owner")[0] == "deny"
+    assert ftool("mcp__fs__move_file", {"source": ".security", "destination": "old"}, "owner")[0] == "deny"
+    for f in (".security/shield-audit.jsonl", ".security/mcp-lock.json"):
+        assert ftool("Read", {"file_path": f}, "managed")[0] == "allow", f
+        assert run(f"cat {f}", "Bash", "managed")[0] == "allow", f
+    # the review protocol's own files in .security stay writable, and so does creating the folder
+    assert ftool("Write", {"file_path": ".security/authz-matrix.md"}, "managed")[0] == "allow"
+    assert run("mkdir -p .security", "Bash", "managed")[0] == "allow"
+
+
+def test_grep_on_a_secret_after_a_pattern_is_denied():
+    for c in ("grep -nE 'x|y' .env", "grep -F 'k' backend/.env.production", "rg -E utf8 'a|b' .env"):
+        assert run(c, "Bash", "owner")[0] == "deny", c
 
 
 def test_outside_project_asks_in_owner_and_denies_in_managed():

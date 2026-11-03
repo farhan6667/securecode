@@ -1,4 +1,4 @@
-# Deep source code review checklist (V6.2)
+# Deep source code review checklist (7.0.0)
 
 Used by the agent in "Run Security Test" and "Run Advisory QA", and for self-review before saying
 a feature is done. Organized by OWASP Top 10 2021 and API Security Top 10 2023. For each class:

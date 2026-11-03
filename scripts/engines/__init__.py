@@ -4,7 +4,7 @@ from __future__ import annotations
 import os, shutil, tempfile
 from pathlib import Path
 
-from ._base import Ctx, SKIP, clean, find_tool, inside, tools_root
+from ._base import Ctx, SKIP, clean, find_tool, inside, setup_command, tools_root
 from .core import Gitleaks, Psalm, Retire, Semgrep, Trivy
 from .osv_scanner import OsvScanner
 from .bandit import Bandit
@@ -13,11 +13,12 @@ from .golang import Gosec, Govulncheck
 from .node import EslintSecurity, NpmAudit
 from .java import DependencyCheck, SpotBugs
 from .dotnet_codeql import CodeQL, SecurityCodeScan
+from .zap import Zap
 
 # Dependency engines first, so the code engines' results come after and duplicates are dropped in one place.
 RUNNABLE = [OsvScanner(), NpmAudit(), PipAudit(), Govulncheck(), DependencyCheck(),
             Bandit(), Gosec(), EslintSecurity(), SpotBugs(), SecurityCodeScan(), CodeQL()]
-ENGINES = [Semgrep(), Trivy(), Gitleaks(), Retire(), Psalm()] + RUNNABLE
+ENGINES = [Semgrep(), Trivy(), Gitleaks(), Retire(), Psalm()] + RUNNABLE + [Zap()]   # Zap: local DAST, not run by the gate
 BY_NAME = {e.name: e for e in ENGINES}
 
 LANG_FILES = {
@@ -95,7 +96,7 @@ def run_engines(root, findings, notes, mode="full", run_tests=False, find=None, 
                 status[e.name] = "not run"
                 if e.name == "codeql" and msg.startswith(("not installed", "opt-in")) and not e.locate(ctx.find):
                     continue
-                hint = "install with securecode setup" if msg == "not installed" and e.kind in ("download", "pip", "go", "npm") else msg
+                hint = f"install with: {setup_command()}" if msg == "not installed" and e.kind in ("download", "pip", "go", "npm") else msg
                 notes.append(clean(f"not run: {e.name} ({hint})", 300))
                 continue
             if not ok:

@@ -6,7 +6,8 @@ developer machines, plus CI templates. It runs with the developer's own rights a
 **Who or what can reach it.**
 - The AI agent (Claude Code, Cursor, Codex, Gemini CLI, Antigravity): reads the rules. Claude Code sends every
   tool event to the hooks; Cursor and Codex send shell, MCP and (Codex) patch events to the guard adapters when
-  they are installed; Gemini CLI and Antigravity get the rules and the gate only. It may be prompt-injected by
+  they are installed; Gemini CLI (BeforeTool) and Antigravity (PreToolUse) send every tool event to their
+  adapters when installed (Antigravity's handling of a crashed or timed-out hook is untested). It may be prompt-injected by
   repo files, web pages or MCP output, so the hooks treat its input as untrusted.
 - Project repositories: their files are scanned; their `.claude/`, `.mcp.json`, `.cursor/`, `.codex/` configs are checked.
 - The updater: reads public release data from GitHub (it sends the developer's GitHub login only when one

@@ -1,8 +1,8 @@
 # Gemini CLI and Antigravity
 
 NexaForge SecureCode gives Gemini CLI and Google Antigravity the same rules (`AGENTS.md`) and the same gate
-(`scripts/secgate.py`) as the other agents. The agent guard hooks are not wired up for these two yet (see the
-end of this page). Checked against the official docs on 2026-11-03.
+(`scripts/secgate.py`) as the other agents, plus the agent guard through a hook adapter (see the end of this
+page). Checked against the official docs on 2026-11-03.
 
 ## Gemini CLI
 
@@ -41,13 +41,23 @@ Antigravity workflows (saved prompts started with `/name`) are not needed: say "
 "Run Advisory QA" as in the other agents. The workflows page says current workflows stop working on
 19 October 2026 in favour of Agent skills. Source: https://antigravity.google/docs/ide/workflows/
 
-## Hooks: future work, not in this release
+## The agent guard (7.0.1)
 
-Both tools have pre-tool hooks today, so a port of the agent guard is possible later:
-- Gemini CLI: `BeforeTool` hooks in `settings.json`; a hook can deny a call or exit with code 2 to block it.
-  Source: https://geminicli.com/docs/hooks/
-- Antigravity: `PreToolUse` in `.agents/hooks.json` or `~/.gemini/config/hooks.json`, with allow, deny or ask
-  decisions. The docs do not say whether a crashed or timed-out hook blocks the call or lets it through, so
-  fail-closed behaviour must be tested before anyone relies on it. Source: https://antigravity.google/docs/hooks/
+Both tools get the agent guard through a small adapter. Replace `<PYTHON>` with the full path of your Python and
+`<APP>` with the installed runtime folder (Windows: `%LOCALAPPDATA%\OrgAISecureAppSec`), using forward slashes.
 
-Until then, on these two tools the rules and the gate (and CI) are the controls, not the guard.
+**Gemini CLI.** Merge `settings.hooks.json` from this folder into `~/.gemini/settings.json` (keep your other keys).
+It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every tool. Shell commands, file writes,
+edits, reads, searches, web fetches and MCP calls are checked. Gemini CLI has no "ask" decision, so anything the
+guard would ask about is refused with the reason, and you run it yourself if you meant it. Gemini CLI lets a tool
+run when a hook exits with a code other than 0 or 2 or prints something that is not JSON, so the adapter only ever
+exits 0 (allow) or 2 (deny), and every error is a deny. Source: https://geminicli.com/docs/hooks/reference/
+
+**Antigravity.** Copy `../antigravity/hooks.json` to `~/.gemini/config/hooks.json` (all workspaces) or to
+`.agents/hooks.json` in one workspace, then check it with `/hooks` in the Antigravity CLI. It runs
+`scripts/adapters/antigravity_hook.py` as a `PreToolUse` hook. Antigravity supports allow, deny and ask, so owner
+mode asks there (as `force_ask`, which a cached "Always Allow" cannot skip). The docs do not say what happens when a
+hook crashes or times out; the adapter always answers with an explicit decision, but whether Antigravity blocks a
+call when the hook itself fails is untested. Source: https://antigravity.google/docs/hooks/
+
+The per-edit gate check and the injection watch are still Claude Code only.
