@@ -1,0 +1,271 @@
+# NexaForge SecureCode: Laravel authorization rules (IDOR, mass assignment, routes without auth).
+# Written for this project. Pattern rules cannot prove access control, so every message starts with
+# "Verify:" and says what to check. The entry-point review in the security-review skill still applies.
+#
+# Opt-out for objects or routes that are public on purpose: put `// securecode: public-object` at the
+# end of the reported line, or (IDOR rule only) on its own line directly above the method, where it
+# covers that whole method. Mass assignment has no opt-out marker: use $request->validated() or an
+# explicit field list instead.
+rules:
+  - id: laravel-idor-unscoped-lookup
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Verify: this controller loads a record by an id that comes from the request or the route, and
+      nothing in the method checks that the current user may see it. Load it through the owner, for
+      example auth()->user()->orders()->findOrFail($id), or call $this->authorize('view', $order)
+      (or Gate, ->can()) before using it. Check read, update, delete and export separately. If the
+      record is public on purpose, add `// securecode: public-object`.
+    metadata:
+      category: security
+      cwe: "CWE-639: Authorization Bypass Through User-Controlled Key"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: MEDIUM
+    patterns:
+      - pattern-inside: |
+          class $CTRL extends $BASE { ... }
+      - metavariable-regex:
+          metavariable: $CTRL
+          regex: ^\w*Controller$
+      - pattern-either:
+          # An id read from the request object or the request() helper.
+          - patterns:
+              - pattern-either:
+                  - pattern: $MODEL::$FIND($ARG, ...)
+                  - pattern: $Q->$FIND($ARG, ...)
+                  - pattern: $MODEL::where('id', $ARG)
+                  - pattern: $MODEL::where('id', '=', $ARG)
+                  - pattern: $Q->where('id', $ARG)
+                  - pattern: $Q->where('id', '=', $ARG)
+              - metavariable-pattern:
+                  metavariable: $ARG
+                  pattern-either:
+                    - pattern: $request->$F
+                    - pattern: $request->$F(...)
+                    - pattern: request(...)
+                    - pattern: request()->$F(...)
+                    - pattern: Request::$F(...)
+          # An id taken from a route parameter of the controller method ($id, $orderId, ...).
+          - patterns:
+              - pattern-inside: |
+                  function $METHOD(..., $ID, ...) { ... }
+              - pattern-either:
+                  - pattern: $MODEL::$FIND($ID, ...)
+                  - pattern: $Q->$FIND($ID, ...)
+                  - pattern: $MODEL::where('id', $ID)
+                  - pattern: $MODEL::where('id', '=', $ID)
+                  - pattern: $Q->where('id', $ID)
+                  - pattern: $Q->where('id', '=', $ID)
+              - metavariable-regex:
+                  metavariable: $ID
+                  regex: (?i)^\$\w*id$
+      # $FIND, when bound, must be a lookup helper.
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $MODEL::$FIND(...)
+                  - pattern: $Q->$FIND(...)
+              - metavariable-regex:
+                  metavariable: $FIND
+                  regex: ^(find|findOrFail|findOr|findMany|firstWhere|whereKey)$
+          - pattern: $MODEL::where(...)
+          - pattern: $Q->where(...)
+      # Scoped through the signed-in user: not an IDOR.
+      - pattern-not: auth()->user()->$REL(...)->$M(...)
+      - pattern-not: $request->user()->$REL(...)->$M(...)
+      - pattern-not: Auth::user()->$REL(...)->$M(...)
+      - pattern-not-inside: auth()->user()->$REL(...)->$M(...)->$N(...)
+      - pattern-not-inside: $request->user()->$REL(...)->$M(...)->$N(...)
+      - pattern-not-inside: Auth::user()->$REL(...)->$M(...)->$N(...)
+      - pattern-not-inside: $X->whereBelongsTo(...)->$M(...)
+      - pattern-not-inside: $X::whereBelongsTo(...)->$M(...)
+      # An authorization check anywhere in the same method.
+      - pattern-not-inside: |
+          function $METHOD(...) { ... $this->authorize(...); ... }
+      - pattern-not-inside: |
+          function $METHOD(...) { ... $this->authorizeForUser(...); ... }
+      - pattern-not-inside: |
+          function $METHOD(...) { ... <... Gate::$G(...) ...>; ... }
+      - pattern-not-inside: |
+          function $METHOD(...) { ... if (<... Gate::$G(...) ...>) { ... } ... }
+      - pattern-not-inside: |
+          function $METHOD(...) { ... <... $U->can(...) ...>; ... }
+      - pattern-not-inside: |
+          function $METHOD(...) { ... if (<... $U->can(...) ...>) { ... } ... }
+      - pattern-not-inside: |
+          function $METHOD(...) { ... <... $U->cannot(...) ...>; ... }
+      - pattern-not-inside: |
+          function $METHOD(...) { ... if (<... $U->cannot(...) ...>) { ... } ... }
+      # Opt-out marker on the same line, or on its own line directly above the method. The method
+      # ends where the next one starts: a line that opens with an attribute (#[...]), a docblock
+      # (/**) or a method signature, so the marker never covers the method after it.
+      - pattern-not-regex: (?m)^[^\n]*//[ \t]*securecode:[ \t]*public-object\b[^\n]*$
+      - pattern-not-regex: (?m)^[ \t]*//[ \t]*securecode:[ \t]*public-object\b[^\n]*\n(?:[ \t]*(?:#\[|/\*|\*)[^\n]*\n)*[ \t]*(?:#\[[^\n]*?\][ \t]*)*(?:(?:public|protected|private|static|final)[ \t]+)*function\b(?s:.*?)(?=^[ \t]*(?:#\[|/\*\*|(?:(?:public|protected|private|static|final|abstract)[ \t]+)*function\b)|\z)
+
+  - id: laravel-mass-assignment
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Verify: the whole request is written into a model, or the model accepts every column. A caller
+      can then set fields such as role, is_admin, user_id, price or status. Use $request->validated()
+      from a FormRequest (or $request->only([...])) and list the allowed columns in $fillable.
+    metadata:
+      category: security
+      cwe: "CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: HIGH
+    pattern-either:
+      # The whole request passed straight in.
+      - patterns:
+          - pattern-either:
+              - pattern: $X->update($SRC, ...)
+              - pattern: $X->fill($SRC)
+              - pattern: $X->forceFill($SRC)
+              - pattern: $X->create($SRC, ...)
+              - pattern: $X->forceCreate($SRC)
+              - pattern: $M::create($SRC, ...)
+              - pattern: $M::forceCreate($SRC)
+              - pattern: $M::updateOrCreate($KEYS, $SRC)
+              - pattern: $M::firstOrCreate($KEYS, $SRC)
+              - pattern: new $M($SRC)
+          - metavariable-pattern:
+              metavariable: $SRC
+              pattern-either:
+                - pattern: $request->all()
+                - pattern: $request->input()
+                - pattern: $request->post()
+                - pattern: $request->toArray()
+                - pattern: $request->except(...)
+                - pattern: $request->json()->all()
+                - pattern: request()->all()
+                - pattern: request()->input()
+                - pattern: request()->post()
+                - pattern: request()->toArray()
+                - pattern: request()->except(...)
+                - pattern: request()->json()->all()
+                - pattern: Request::all()
+                - pattern: Request::input()
+                - pattern: Request::post()
+                - pattern: Request::except(...)
+                - pattern: Request::json()->all()
+      # The whole request copied into a variable first, then passed in later in the same function,
+      # for example $data = $request->all(); Order::create($data). A later reassignment of the
+      # variable (an Arr::only() filter, say) ends the match.
+      - patterns:
+          - pattern-inside: |
+              $DATA = $SRC;
+              ...
+          - metavariable-pattern:
+              metavariable: $SRC
+              pattern-either:
+                - pattern: $request->all()
+                - pattern: $request->input()
+                - pattern: $request->post()
+                - pattern: $request->toArray()
+                - pattern: $request->except(...)
+                - pattern: $request->json()->all()
+                - pattern: request()->all()
+                - pattern: request()->input()
+                - pattern: request()->post()
+                - pattern: request()->toArray()
+                - pattern: request()->except(...)
+                - pattern: request()->json()->all()
+                - pattern: Request::all()
+                - pattern: Request::input()
+                - pattern: Request::post()
+                - pattern: Request::except(...)
+                - pattern: Request::json()->all()
+          - pattern-not-inside: |
+              $DATA = $SRC;
+              ...
+              $DATA = $OTHER;
+              ...
+          - pattern-either:
+              - pattern: $X->update($DATA, ...)
+              - pattern: $X->fill($DATA)
+              - pattern: $X->forceFill($DATA)
+              - pattern: $X->create($DATA, ...)
+              - pattern: $X->forceCreate($DATA)
+              - pattern: $M::create($DATA, ...)
+              - pattern: $M::forceCreate($DATA)
+              - pattern: $M::updateOrCreate($KEYS, $DATA)
+              - pattern: $M::firstOrCreate($KEYS, $DATA)
+              - pattern: new $M($DATA)
+      # An empty $guarded list makes every column mass assignable.
+      - pattern-regex: (?m)^[ \t]*(?:protected|public)[ \t]+(?:array[ \t]+)?\$guarded[ \t]*=[ \t]*(?:\[[ \t]*\]|array\([ \t]*\))[ \t]*;
+
+  - id: laravel-api-route-without-auth
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Verify: this API route has no auth middleware in routes/api.php. If it returns user data or
+      changes state, put it inside Route::middleware('auth:sanctum')->group(...) and add a policy or a
+      can: middleware for roles. If it is public on purpose (a public catalogue, a signed webhook), add
+      `// securecode: public-object` to the line. Middleware set in a controller or in
+      bootstrap/app.php is not visible to this rule.
+    metadata:
+      category: security
+      cwe: "CWE-306: Missing Authentication for Critical Function"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: LOW
+    paths:
+      include:
+        - "**/routes/api.php"
+    patterns:
+      - pattern: Route::$VERB($URI, ...)
+      - metavariable-regex:
+          metavariable: $VERB
+          regex: ^(get|post|put|patch|delete|options|any|match|resource|resources|apiResource|apiResources)$
+      # Routes that must stay public: sign-in flows and health checks. The whole URI must be one of
+      # these, as complete path segments, after an optional api/, auth/ or v1/ prefix and before
+      # optional {parameters}. A URI that only contains one of the words (/orders/{o}/verify-payment,
+      # /shipping-addresses/{id}, /users/{u}/password-history) is still reported.
+      - pattern-not: Route::$VERB("=~/(?i)^/?(?:(?:api|auth|v\d+)/)*(?:login|register|password/(?:forgot|reset|email)|forgot-password|reset-password|email/verify|verify-email|ping|health|up)(?:/\{[^/{}]+\})*/?$/", ...)
+      - pattern-not-inside: $R->middleware("=~/^auth(:|\.basic|$)/")
+      - pattern-not-inside: $R->middleware([..., "=~/^auth(:|\.basic|$)/", ...])
+      - pattern-not-inside: <... Route::middleware("=~/^auth(:|\.basic|$)/") ...>
+      - pattern-not-inside: <... Route::middleware([..., "=~/^auth(:|\.basic|$)/", ...]) ...>
+      - pattern-not-inside: Route::group([..., 'middleware' => "=~/^auth(:|\.basic|$)/", ...], ...)
+      - pattern-not-inside: Route::group([..., 'middleware' => [..., "=~/^auth(:|\.basic|$)/", ...], ...], ...)
+      - pattern-not-regex: (?m)^[^\n]*//[ \t]*securecode:[ \t]*public-object\b[^\n]*$
+
+  - id: laravel-web-group-without-auth
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Verify: this route group in routes/web.php looks like a signed-in area (admin, dashboard,
+      account, settings, billing, profile, panel, manage) but has no auth middleware in the file. Add
+      ->middleware('auth') to the group, plus can: or a policy for admin roles. If the area is public
+      on purpose, add `// securecode: public-object` to the line. Middleware set in a controller or in
+      bootstrap/app.php is not visible to this rule.
+    metadata:
+      category: security
+      cwe: "CWE-306: Missing Authentication for Critical Function"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: LOW
+    paths:
+      include:
+        - "**/routes/web.php"
+    patterns:
+      - pattern-either:
+          - pattern: Route::prefix("=~/(?i)(admin|dashboard|account|settings|billing|profile|panel|manage)/")->group(...)
+          - pattern: Route::prefix("=~/(?i)(admin|dashboard|account|settings|billing|profile|panel|manage)/")->$A(...)->group(...)
+          - pattern: Route::prefix("=~/(?i)(admin|dashboard|account|settings|billing|profile|panel|manage)/")->$A(...)->$B(...)->group(...)
+          - pattern: Route::$A(...)->prefix("=~/(?i)(admin|dashboard|account|settings|billing|profile|panel|manage)/")->group(...)
+          - pattern: Route::$A(...)->prefix("=~/(?i)(admin|dashboard|account|settings|billing|profile|panel|manage)/")->$B(...)->group(...)
+          - pattern: Route::group([..., 'prefix' => "=~/(?i)(admin|dashboard|account|settings|billing|profile|panel|manage)/", ...], ...)
+      # Auth middleware on the group itself, or on an outer group around it.
+      # (Fresh metavariable names: semgrep would unify $A and $B with the positive patterns.)
+      - pattern-not: Route::middleware("=~/^auth(:|\.basic|$)/")->$N1(...)
+      - pattern-not: Route::middleware([..., "=~/^auth(:|\.basic|$)/", ...])->$N1(...)
+      - pattern-not: Route::middleware("=~/^auth(:|\.basic|$)/")->$N1(...)->$N2(...)
+      - pattern-not: Route::middleware([..., "=~/^auth(:|\.basic|$)/", ...])->$N1(...)->$N2(...)
+      - pattern-not: Route::$N1(...)->middleware("=~/^auth(:|\.basic|$)/")->$N2(...)
+      - pattern-not: Route::$N1(...)->middleware([..., "=~/^auth(:|\.basic|$)/", ...])->$N2(...)
+      - pattern-not: Route::$N1(...)->$N2(...)->middleware("=~/^auth(:|\.basic|$)/")->$N3(...)
+      - pattern-not: Route::$N1(...)->$N2(...)->middleware([..., "=~/^auth(:|\.basic|$)/", ...])->$N3(...)
+      - pattern-not: Route::group([..., 'middleware' => "=~/^auth(:|\.basic|$)/", ...], ...)
+      - pattern-not: Route::group([..., 'middleware' => [..., "=~/^auth(:|\.basic|$)/", ...], ...], ...)
+      - pattern-not-inside: <... Route::middleware("=~/^auth(:|\.basic|$)/") ...>
+      - pattern-not-inside: <... Route::middleware([..., "=~/^auth(:|\.basic|$)/", ...]) ...>
+      - pattern-not-regex: (?m)^[^\n]*//[ \t]*securecode:[ \t]*public-object\b[^\n]*$

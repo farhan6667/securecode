@@ -1,0 +1,30 @@
+# Temporary security finding suppressions. Every entry needs an owner, a reason and an expiry.
+# The gate drops a suppression after its expiry date, so the finding comes back by itself.
+# Entries without a rule cover every rule for that one file only; keep them for test fixtures.
+suppressions:
+  # The scanner's own rule tables contain the patterns they look for.
+  - {rule: SQL_CONCAT, file: scripts/secgate.py, reason: "Rule definition text, not a query.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: REACT_RAW_HTML, file: scripts/secgate.py, reason: "Rule definition text.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: INSECURE_CRYPTO, file: scripts/secgate.py, reason: "Rule definition text.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: CORS_WILDCARD, file: scripts/secgate.py, reason: "Rule definition text.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: OPEN_REDIRECT, file: scripts/secgate.py, reason: "Rule definition text.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: INSECURE_COOKIE_FLAG, file: scripts/secgate.py, reason: "Rule definition text.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: OLD_TLS_PROTOCOL, file: scripts/secgate.py, reason: "Rule definition text.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: XSS_RAW_TEMPLATE, file: scripts/secgate.py, reason: "Rule definition text.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: COMMAND_INJECTION, file: semgrep/org-security.yml, reason: "Semgrep rule pattern that describes the sink.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: DISABLE_TLS_VERIFY, file: semgrep/org-security.yml, reason: "Semgrep rule pattern that describes the sink.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: PATH_TRAVERSAL_SINK, file: scripts/updater.py, reason: "False positive: the urllib Request class name looks like user input to the rule; the URL is checked for https and a GitHub host first.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: OPEN_REDIRECT, file: scripts/updater.py, reason: "The updater follows GitHub's own asset redirect after checking scheme and host.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  # Argument arrays, values from the release officer's own command line; no shell.
+  - {rule: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args, file: scripts/release/make_release.py, reason: "argv list, no shell; run only by the release officer.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args, file: scripts/run-zap-authorized.py, reason: "argv list, URL and plan path validated before use.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args, file: scripts/run-nuclei-authorized.py, reason: "argv list; the URL is validated by check_url and needs SECURITY_DAST_ALLOW=true.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected, file: scripts/notify_webhook.py, reason: "URL restricted to https:// before use.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected, file: scripts/updater.py, reason: "URLs restricted to https://api.github.com and GitHub download hosts.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  # Test fixtures that contain vulnerable samples on purpose.
+  - {rule: "*", file: tests/vulnerable_sample.py, reason: "Intentionally vulnerable test fixture.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: "*", file: tests/test_heuristics.py, reason: "Vulnerable SQL samples that the rule must match.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: "*", file: tests/test_org_findings.py, reason: "Fixtures for the config scan.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: "*", file: tests/test_agent_guard.py, reason: "Fixtures for the agent guard and gate.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: "*", file: benchmark/laravel-lab.json, reason: "Deliberately vulnerable benchmark lab, stored as JSON and only written to a temp folder by run_lab.py.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: INSECURE_CRYPTO, file: tests/test_phase1.py, reason: "Weak-hash samples that the test-path downgrade must classify.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}

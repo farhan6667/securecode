@@ -1,0 +1,13 @@
+NexaForge SecureCode
+Copyright (c) 2026 Syed Farhan Ahmed (NexaForge)
+
+The code is licensed under the MIT License (see LICENSE).
+
+"NexaForge", "NexaForge SecureCode", the NexaForge logo and the SFA mark are names and marks of
+Syed Farhan Ahmed. The MIT License covers the code, not these names or marks. You may say that your
+work is based on NexaForge SecureCode, but please don't ship a modified copy under the same name or
+with the logo in a way that suggests it is the original or endorsed by NexaForge.
+
+This is an independent project. It is not affiliated with, sponsored by or endorsed by Anthropic
+(Claude Code), Anysphere (Cursor), OpenAI (Codex), Semgrep, Aqua Security (Trivy), Gitleaks or OWASP.
+Their names are used only to say which tools this project works with.

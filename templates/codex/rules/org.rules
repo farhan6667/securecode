@@ -1,0 +1,9 @@
+# Org execpolicy for Codex CLI. Copy to ~/.codex/rules/org.rules.
+# Test with: codex execpolicy check --rules org.rules -- git push --force
+prefix_rule(pattern=["git", "push", "--force"], decision="forbidden", justification="Force push is done by the developer, not the agent.")
+prefix_rule(pattern=["git", "push", "-f"], decision="forbidden", justification="Force push is done by the developer, not the agent.")
+prefix_rule(pattern=["git", "reset", "--hard"], decision="forbidden", justification="Discards work; ask the developer.")
+prefix_rule(pattern=["git", "push"], decision="prompt", justification="Pushing needs the developer's yes.")
+prefix_rule(pattern=["npm", "install"], decision="prompt", justification="New dependencies need a name and age check.")
+prefix_rule(pattern=["pip", "install"], decision="prompt", justification="New dependencies need a name and age check.")
+prefix_rule(pattern=["composer", "require"], decision="prompt", justification="New dependencies need a name and age check.")

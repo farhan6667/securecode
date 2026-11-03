@@ -1,0 +1,130 @@
+{
+  "_about": "A tiny, deliberately vulnerable Laravel-shaped project used only to measure what the gate finds. It is stored as JSON so that this repository's own scans and GitHub code scanning do not report it. benchmark/run_lab.py writes it to a temporary folder and scans it there. Never deploy it.",
+  "files": {
+    "artisan": "<?php // marker file so the gate treats this as a Laravel project\n",
+    "composer.json": "{\n  \"require\": {\n    \"php\": \"^7.4\",\n    \"laravel/framework\": \"^8.75\"\n  }\n}\n",
+    "bootstrap/app.php": "<?php\nreturn Application::configure(basePath: dirname(__DIR__))\n    ->withRouting(web: __DIR__.'/../routes/web.php', api: __DIR__.'/../routes/api.php')\n    ->withMiddleware(function (Middleware $middleware) {\n        // no security headers middleware registered\n    })\n    ->create();\n",
+    "routes/web.php": "<?php\nuse App\\Http\\Controllers\\OrderController;\nRoute::get('/orders/{id}/delete', [OrderController::class, 'destroy']);\nRoute::get('/', fn () => view('home'));\n",
+    "routes/api.php": "<?php\nuse App\\Http\\Controllers\\OrderController;\nRoute::get('/orders/{id}', [OrderController::class, 'show']);\nRoute::put('/orders/{id}', [OrderController::class, 'update']);\n",
+    "app/Http/Controllers/OrderController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Models\\Order;\nuse Illuminate\\Http\\Request;\n\nclass OrderController extends Controller\n{\n    public function show(Request $request)\n    {\n        return Order::findOrFail($request->id);\n    }\n\n    public function update(Request $request)\n    {\n        $order = Order::find($request->id);\n        $order->update($request->all());\n        return $order;\n    }\n\n    public function destroy(Request $request)\n    {\n        Order::where('id', $request->id)->delete();\n        return back();\n    }\n\n    public function search(Request $request)\n    {\n        return DB::select(\"SELECT * FROM orders WHERE note LIKE '%\" . $request->q . \"%'\");\n    }\n}\n",
+    "app/Http/Controllers/ProfileController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Models\\User;\nuse Illuminate\\Http\\Request;\n\nclass ProfileController extends Controller\n{\n    public function store(Request $request)\n    {\n        return User::create($request->all());\n    }\n}\n",
+    "app/Models/User.php": "<?php\nnamespace App\\Models;\n\nclass User extends Authenticatable\n{\n    protected $guarded = [];\n}\n",
+    "config/session.php": "<?php\nreturn ['secure' => false, 'http_only' => true, 'same_site' => 'lax'];\n",
+    "database/seeders/AdminSeeder.php": "<?php\nUser::create(['email' => 'admin@admin.com', 'password' => Hash::make('12345678')]);\n",
+    "public/js/jquery.min.js": "/*! jQuery v2.2.4 | (c) jQuery Foundation | jquery.org/license */\n",
+    "public/js/app.js.map": "{}\n",
+    "public/.htaccess": "Options +Indexes\n",
+    "resources/views/home.blade.php": "<html><head><script src=\"https://code.jquery.com/jquery-2.2.4.min.js\"></script></head><body>{!! $note !!}</body></html>\n",
+    "app/Http/Controllers/InvoiceController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Models\\Invoice;\n\nclass InvoiceController extends Controller\n{\n    // Route model binding: Laravel loads any invoice by id, and nothing checks the owner.\n    public function show(Invoice $invoice)\n    {\n        return $invoice;\n    }\n}\n"
+  },
+  "expected": [
+    {
+      "id": "L1",
+      "what": "IDOR: show() loads any order by id",
+      "file": "app/Http/Controllers/OrderController.php",
+      "rule_hint": "laravel-idor"
+    },
+    {
+      "id": "L2",
+      "what": "IDOR plus mass assignment in update()",
+      "file": "app/Http/Controllers/OrderController.php",
+      "rule_hint": "laravel-idor"
+    },
+    {
+      "id": "L3",
+      "what": "IDOR in destroy() through where('id', ...)",
+      "file": "app/Http/Controllers/OrderController.php",
+      "rule_hint": "laravel-idor"
+    },
+    {
+      "id": "L4",
+      "what": "SQL injection in search()",
+      "file": "app/Http/Controllers/OrderController.php",
+      "rule_hint": "SQL"
+    },
+    {
+      "id": "L5",
+      "what": "Mass assignment in ProfileController::store",
+      "file": "app/Http/Controllers/ProfileController.php",
+      "rule_hint": "laravel-mass-assignment"
+    },
+    {
+      "id": "L6",
+      "what": "guarded = [] on User",
+      "file": "app/Models/User.php",
+      "rule_hint": "laravel-mass-assignment"
+    },
+    {
+      "id": "L7",
+      "what": "API routes without auth middleware",
+      "file": "routes/api.php",
+      "rule_hint": "laravel-api-route"
+    },
+    {
+      "id": "L8",
+      "what": "Delete over GET",
+      "file": "routes/web.php",
+      "rule_hint": "STATE_CHANGE_OVER_GET"
+    },
+    {
+      "id": "L9",
+      "what": "No global security headers middleware",
+      "file": "bootstrap/app.php",
+      "rule_hint": "MISSING_SECURITY_HEADERS"
+    },
+    {
+      "id": "L10",
+      "what": "Session cookie without Secure",
+      "file": "config/session.php",
+      "rule_hint": "INSECURE_COOKIE_FLAG"
+    },
+    {
+      "id": "L11",
+      "what": "Seeded admin with a weak password",
+      "file": "database/seeders/AdminSeeder.php",
+      "rule_hint": "WEAK_DEFAULT_CREDENTIAL"
+    },
+    {
+      "id": "L12",
+      "what": "Outdated jQuery 2.2.4 (file and CDN)",
+      "file": "public/js/jquery.min.js",
+      "rule_hint": "VULNERABLE_LIBRARY"
+    },
+    {
+      "id": "L13",
+      "what": "Source map in the web root",
+      "file": "public/js/app.js.map",
+      "rule_hint": "WEBROOT_EXPOSURE"
+    },
+    {
+      "id": "L14",
+      "what": "Directory listing on",
+      "file": "public/.htaccess",
+      "rule_hint": "DIRECTORY_LISTING"
+    },
+    {
+      "id": "L15",
+      "what": "CDN script without SRI",
+      "file": "resources/views/home.blade.php",
+      "rule_hint": "CDN_WITHOUT_SRI"
+    },
+    {
+      "id": "L16",
+      "what": "Unescaped Blade output {!! !!}",
+      "file": "resources/views/home.blade.php",
+      "rule_hint": "XSS"
+    },
+    {
+      "id": "L17",
+      "what": "PHP 7.4 and Laravel 8 out of support",
+      "file": "composer.json",
+      "rule_hint": "UNSUPPORTED_PLATFORM"
+    },
+    {
+      "id": "L18",
+      "what": "IDOR through route model binding (show(Invoice $invoice) without authorize). Known gap of the static rules; the authz matrix and cross-user tests in the skill are meant to catch it.",
+      "file": "app/Http/Controllers/InvoiceController.php",
+      "rule_hint": "laravel-idor"
+    }
+  ]
+}

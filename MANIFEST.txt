@@ -1,0 +1,40 @@
+NexaForge SecureCode (Org AI Secure AppSec Gate) V6.2
+=====================================================
+Version: 6.2.0
+
+Code security (unchanged core, fixed)
+- Global Claude Code skill (org-appsec-security), /security-gate and /sec-review commands
+- Secure coding policy in global CLAUDE.md block and AGENTS.md
+- PostToolUse fast heuristic check after every edit (Claude Code)
+- Full/CI gate: Semgrep SAST, Trivy (vuln, misconfig, secret), Gitleaks, project tests, SARIF + JSON
+- "Security Test Karo" trigger with the standard report: verdict, findings table, fixed code, verify command
+- Web + mobile test matrix, ZAP templates for authorized staging only, API BOLA/IDOR scaffold
+- GitHub Actions and GitLab templates that install pinned, checksum-verified scanners
+
+AI agent security (new in V6.2)
+- scripts/agent_guard.py: PreToolUse guard, fails closed. Blocks secret files (.env*, keys,
+  cloud and agent credentials), pipe-to-shell, force push, reset --hard, root/home deletes,
+  public repo creation, writes to shell startup files. Strict Markdown instruction-source mode
+  for projects that contain claude_docs/.
+- scripts/injection_watch.py: PostToolUse advisory scan of Read, WebFetch and MCP output for
+  hidden Unicode and injection phrases.
+- secgate.py agent scan: HIDDEN_UNICODE, INSTRUCTION_INJECTION, REPO_AGENT_HOOKS,
+  MCP_AUTO_APPROVE, REPO_MCP_SERVERS, AGENT_HOME_OVERRIDE.
+- config/agent-permissions.json: deny/ask rules merged into user settings, enableAllProjectMcpServers false.
+- AGENTS.md rules for every agent; templates for Codex (config.toml, execpolicy rules) and strict projects.
+- enterprise-managed-settings.example.json for admin-enforced policy.
+- docs/AI-AGENT-SECURITY.md (incidents, per-tool setup, limits) and docs/SOURCES.md.
+
+Honest limitations
+- The per-edit check is heuristics, not SAST.
+- Hooks and permission patterns reduce risk; they are not a sandbox or a security boundary.
+- Native Windows has no Claude Code OS sandbox; use WSL2 or a devcontainer for untrusted repos.
+- Cursor gets rules and ignore files only; its hook format differs and is not wired yet.
+- Business logic, IDOR/BOLA and mobile runtime behaviour still need app-specific tests and review.
+- This package is AppSec automation, not proof of vulnerability-free software.
+
+Added after review (V6.2 final)
+- Deep source review modes: "Security Test Karo", "Advisory QA Karo" (/advisory-qa); docs/SOURCE-CODE-REVIEW.md
+- docs/COMMON-FINDINGS.md (common pentest findings); library_scan and config_scan rules
+- scripts/stop_gate.py (Stop hook), scripts/updater.py (signed auto-update), scripts/release/make_release.py
+- install-managed.py (organization-enforced install), SECURITY-CONTEXT.md, docs/THIRD-PARTY-REVIEW.md

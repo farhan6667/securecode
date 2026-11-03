@@ -1,0 +1,187 @@
+<h1 align="center"><img src="docs/img/banner.webp" width="100%" alt="NexaForge SecureCode: a gold shield over a laptop, with panels for what's inside (secure-by-default rules, common pentest findings, security knowledge library, signed auto-updates), the AI agents it works with (Claude Code, Cursor, Codex), the secure coding flow and the outcome"></h1>
+
+<p align="center">
+  <a href="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml"><img src="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%7C%20Cursor%20%7C%20Codex-f59e0b.svg" alt="Works with Claude Code, Cursor and Codex">
+  <img src="https://img.shields.io/badge/status-public%20preview-orange.svg" alt="Status: public preview">
+</p>
+
+**NexaForge SecureCode is a free, open source security layer for AI-assisted coding: it makes Claude Code, Cursor
+and Codex write secure code by default, reviews and fixes the code for OWASP Top 10 issues before handover, and
+guards the developer's machine and secrets from the AI agent itself.** It is built for developers and teams who
+vibe code business web apps, APIs and Android apps and want them to pass the security team's pentest the first time.
+
+<p align="center">
+  <a href="#install-in-two-minutes">Install</a> ·
+  <a href="#what-you-get">What you get</a> ·
+  <a href="#how-a-review-works">How a review works</a> ·
+  <a href="#honest-limits">Limits</a> ·
+  <a href="#frequently-asked-questions">FAQ</a> ·
+  <a href="#contribute">Contribute</a>
+</p>
+
+## The problem it solves
+
+AI agents write a lot of code fast, and pentests keep finding the same things in it: outdated jQuery and
+Bootstrap, missing security headers on the login and admin pages, IDOR in APIs, debug output, weak cookies.
+Each finding means a fix, a retest and a delay. The agent itself is also a new way in: a poisoned file in a
+cloned repo can tell it to read your `.env` or push your code somewhere public.
+
+SecureCode puts the security team's checklist inside the agent, so most of those findings are fixed before
+the code ever reaches a human tester, and it puts a guard between the agent and your machine.
+
+## Install in two minutes
+
+1. Download `NexaForge_SecureCode.zip` and `NexaForge_SecureCode.zip.sig` from the
+   [latest release](https://github.com/farhan6667/nexaforge-securecode/releases).
+2. Optional but recommended, check the signature (the key is in `config/allowed_signers`, see [SECURITY.md](SECURITY.md)).
+3. Extract it, open your AI coding tool, and paste the prompt from [ONE_PROMPT_INSTALL.md](ONE_PROMPT_INSTALL.md).
+
+Or install by hand on Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+py verify-global.py
+```
+
+<details>
+<summary>macOS, Linux and the scanners</summary>
+
+```bash
+./install-macos.sh      # or ./install-linux.sh
+python3 verify-global.py
+```
+
+The full gate uses Semgrep, Trivy and Gitleaks. On Windows: `winget install --id AquaSecurity.Trivy --exact --source winget`,
+`winget install --id Gitleaks.Gitleaks --exact --source winget` and `py -m pip install --user semgrep`.
+On macOS: `brew install semgrep trivy gitleaks`. Restart the AI tool afterwards.
+</details>
+
+A daily task then installs newer releases from this repo, and only ones signed with the NexaForge release key.
+How to turn it off is in [ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md#auto-update).
+
+## What you get
+
+| Part | What it does |
+|---|---|
+| Secure-by-default rules | `AGENTS.md` and a global `CLAUDE.md` block: validate input on the server, parameterized queries, output encoding, authorization on every route, no secrets in code, ask before new dependencies |
+| Deep review: `Security Test Karo` | the agent walks every entry point with [docs/SOURCE-CODE-REVIEW.md](docs/SOURCE-CODE-REVIEW.md), fixes what it safely can, re-runs the gate and reports a verdict |
+| Readiness advisory: `Advisory QA Karo` | the same review, but nothing changes until you agree |
+| The gate, `secgate.py` | Semgrep (our rules, Laravel authorization rules, registry packs), Trivy, Gitleaks, your project's tests, and built-in checks for outdated front-end libraries, web-root exposure, cookies, headers, TLS, default credentials, raw template output and Android manifests. `ci` mode fails closed |
+| Agent guard | a Claude Code hook that blocks reading secrets, writing to the agent's own settings, pipe-to-shell, force pushes and public repo creation, and asks before pushes and installs |
+| CI templates | GitHub and GitLab, with actions pinned to commit SHAs and scanners pinned by SHA-256 |
+| Templates | Laravel security headers, session, throttling, upload and webhook scaffolds, plus example security tests |
+
+The two trigger phrases are Roman Urdu ("run a security test", "do an advisory QA"). They work as written in any
+language you chat in, and `/security-gate` and `/advisory-qa` do the same.
+
+## How a review works
+
+1. The agent reads the project and lists every route, form, upload and API endpoint.
+2. For access control it writes `.security/authz-matrix.md` (route, verb, who may call it, which objects) and
+   one cross-user test per row. A row without a passing test stays open.
+3. It runs the gate, fixes what it safely can, and runs the gate again.
+4. It reports a verdict, a findings table, the fixes and a short script you can run to check them yourself.
+
+Proof on a small lab: on our own Laravel lab with 18 planted issues the full gate found 17
+([benchmark/RESULTS.md](benchmark/RESULTS.md)). We wrote that lab ourselves, so it shows the checks work as
+designed, not how much a real pentest will find. The one it misses is listed there on purpose.
+
+## Check a project without the AI
+
+```bash
+py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests
+```
+
+`RESULT: PASS` means no High or Critical finding. Reports go to `.security/findings.json` and `.security/findings.sarif`.
+
+## For teams
+
+Per-user installs can be removed by their user. Real enforcement is the managed install (read-only runtime,
+admin-owned settings) and the CI required check that a pull request cannot change. An organization can also
+ship the package under its own internal name and still receive the signed updates. All of this is in
+[ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md).
+
+## Honest limits
+
+- The guard matches patterns. It reduces risk, it is not a sandbox, and native Windows has no Claude Code OS sandbox.
+- The deep review is done by the AI and can miss things, especially business logic. Keep the human pentest.
+- Server settings (TLS ciphers, open ports, admin panels on the host) are outside the code and are listed for the server team.
+- Cursor and Codex get the rules and the gate, but not the Claude Code hooks.
+- No tool proves software is free of vulnerabilities. Known gaps are in [SECURITY-CONTEXT.md](SECURITY-CONTEXT.md).
+
+## Frequently asked questions
+
+**What is NexaForge SecureCode?**
+A set of rules, a code review method, a scanner gate and Claude Code hooks that make AI coding agents produce
+more secure code and protect the developer's machine from the agent. It is free and MIT licensed.
+
+**Does it work with Cursor and Codex, or only Claude Code?**
+The rules, the deep review and the gate work with all three. The hooks (agent guard, per-edit check, stop gate)
+are Claude Code features, so Cursor and Codex get their own settings instead, described in
+[docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
+
+**Will it make my app pass a pentest?**
+It removes the findings pentests report most often and makes the agent test access control route by route, so
+fewer issues reach the tester. It cannot promise a clean report: business logic and server setup still need a person.
+
+**Does it send my code anywhere?**
+The gate and the hooks run on your machine. Semgrep downloads its registry rules, and the updater checks this
+GitHub repo for new releases. Your AI tool itself talks to its own provider as usual.
+
+**Is the auto-update safe?**
+It installs only releases signed with the NexaForge release key, never an older version, and it refuses unsafe
+paths inside the zip. A stolen GitHub login alone cannot push an update to your machine.
+
+**What does "Security Test Karo" mean?**
+It is Roman Urdu for "run a security test". The phrase was kept because the first users write it that way; the
+slash commands do the same thing in English.
+
+## Contribute
+
+The most useful thing you can send is a **compatibility report**: install it on your own stack and tell us what
+it found, what it missed and where it was noisy. Bug fixes, new checks with a test, and clearer docs are welcome
+too. Start with the [contributing guide](CONTRIBUTING.md) or a
+[good first issue](https://github.com/farhan6667/nexaforge-securecode/labels/good%20first%20issue), or say hello in
+[Discussions](https://github.com/farhan6667/nexaforge-securecode/discussions). Please report vulnerabilities in
+SecureCode itself privately, see [SECURITY.md](SECURITY.md).
+
+## Sponsor my work
+
+<p align="center">
+  <a href="https://github.com/farhan6667/farhan6667/blob/main/SPONSOR.md"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/sponsor-button-dark.webp">
+    <img src="docs/img/sponsor-button-light.webp" width="420" alt="Support NexaForge: a gold Support button that opens the sponsor page">
+  </picture></a>
+</p>
+
+If your team uses SecureCode, sponsoring keeps the rules current with new CVEs and new agent features.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The NexaForge name and logo are not covered by the licence, see [NOTICE](NOTICE).
+Independent project, not affiliated with Anthropic, Anysphere (Cursor), OpenAI, Semgrep, Aqua Security or OWASP.
+More open source work by the same author: [HexSwarm](https://github.com/farhan6667/hexswarm),
+[no-api-media-mcp](https://github.com/farhan6667/no-api-media-mcp) and others on [GitHub](https://github.com/farhan6667).
+
+---
+
+<div align="center">
+
+<a href="https://nexaforge.eu.cc/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/brand/nexaforge-lockup-dark.webp">
+    <img src="docs/img/brand/nexaforge-lockup-light.webp" height="48" alt="NexaForge">
+  </picture>
+</a>
+
+**Built by [Syed Farhan Ahmed](https://github.com/farhan6667) (SFA)** at **[NexaForge](https://nexaforge.eu.cc/)**<br>
+Cyber security · Vibe coding · Web development and IT infrastructure
+
+[Website](https://nexaforge.eu.cc/) ·
+[LinkedIn](https://www.linkedin.com/in/sfa6667) ·
+[Portfolio](https://farhan6667.github.io/portfolio/) ·
+[Email](mailto:nexaforge.services@gmail.com)
+
+</div>

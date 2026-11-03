@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.claude/.credentials.json)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)"
+    ]
+  },
+  "enableAllProjectMcpServers": false,
+  "allowManagedHooksOnly": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Bash|PowerShell|Monitor|mcp__.*",
+        "hooks": [{ "type": "command", "command": "\"C:\\Program Files\\Python313\\python.exe\" -I \"C:\\Program Files\\OrgAISecureAppSec\\scripts\\agent_guard.py\"", "timeout": 20 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "\"C:\\Program Files\\Python313\\python.exe\" -I \"C:\\Program Files\\OrgAISecureAppSec\\scripts\\global_hook.py\"", "timeout": 120 }]
+      },
+      {
+        "matcher": "Read|WebFetch|mcp__.*",
+        "hooks": [{ "type": "command", "command": "\"C:\\Program Files\\Python313\\python.exe\" -I \"C:\\Program Files\\OrgAISecureAppSec\\scripts\\injection_watch.py\"", "timeout": 20 }]
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+rules:
+  - id: org-python-eval
+    languages: [python]
+    message: Avoid eval/exec on untrusted input; use a safe parser or explicit allowlist.
+    severity: ERROR
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+  - id: org-node-child-process-exec
+    languages: [javascript, typescript]
+    message: child_process.exec is a high-risk sink; prefer execFile/spawn with fixed arguments and strict validation.
+    severity: ERROR
+    pattern: child_process.exec(...)
+  - id: org-python-requests-verify-false
+    languages: [python]
+    message: TLS verification must not be disabled for production traffic.
+    severity: ERROR
+    pattern: requests.$F(..., verify=False, ...)

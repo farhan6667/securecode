@@ -1,0 +1,4 @@
+# Changes to the gate, the exceptions and the update signing key need the maintainer's review.
+* @farhan6667
+/exceptions/ @farhan6667
+/config/allowed_signers @farhan6667

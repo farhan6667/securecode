@@ -1,0 +1,9 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    # wait a week before proposing a brand-new release (hijacked releases are usually caught within days)
+    cooldown:
+      default-days: 7

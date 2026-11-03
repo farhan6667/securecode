@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use NexaForge SecureCode in research, training or tooling, please cite it as below."
+title: "NexaForge SecureCode: a security layer for AI-assisted coding in Claude Code, Cursor and Codex"
+authors:
+  - family-names: "Ahmed"
+    given-names: "Syed Farhan"
+    alias: "SFA"
+    affiliation: "NexaForge"
+    email: "nexaforge.services@gmail.com"
+date-released: 2026-11-02
+url: "https://github.com/farhan6667/nexaforge-securecode"
+repository-code: "https://github.com/farhan6667/nexaforge-securecode"
+license: MIT
+version: 6.2.0
+keywords:
+  - secure coding
+  - AI coding agent security
+  - Claude Code hooks
+  - prompt injection
+  - pentest readiness
+  - Semgrep
+  - Trivy
+  - Gitleaks

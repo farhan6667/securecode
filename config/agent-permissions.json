@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/.env.production)",
+      "Read(**/.env.development)",
+      "Read(**/.env.staging)",
+      "Read(**/.env.testing)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/id_rsa)",
+      "Read(**/id_ed25519)",
+      "Read(~/.aws/credentials)",
+      "Read(~/.git-credentials)",
+      "Read(~/.claude/.credentials.json)",
+      "Edit(**/.env)",
+      "Edit(~/.bashrc)",
+      "Edit(~/.zshrc)",
+      "Edit(~/.profile)",
+      "Edit(~/Documents/PowerShell/**)",
+      "Edit(~/Documents/WindowsPowerShell/**)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(npm install*)",
+      "Bash(pip install*)",
+      "Bash(composer require*)",
+      "Bash(composer update*)",
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.claude/CLAUDE.md)"
+    ]
+  },
+  "enableAllProjectMcpServers": false
+}

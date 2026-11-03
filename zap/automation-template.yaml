@@ -1,0 +1,37 @@
+# OWASP ZAP Automation Framework template.
+# Use only on authorized non-production targets.
+env:
+  contexts:
+    - name: app
+      urls:
+        - ${SECURITY_DAST_URL}
+      authentication:
+        method: browser
+        parameters:
+          loginPageUrl: ${SECURITY_AUTH_LOGIN_URL}
+          browserId: chromium
+      sessionManagement:
+        method: cookieProperties
+      users:
+        - name: security-test-user
+          credentials:
+            username: ${SECURITY_DAST_USERNAME}
+            password: ${SECURITY_DAST_PASSWORD}
+jobs:
+  - type: spider
+    parameters:
+      context: app
+      user: security-test-user
+      maxDuration: 5
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+  - type: activeScan
+    parameters:
+      context: app
+      user: security-test-user
+      policy: Default Policy
+      maxScanDurationInMins: 10
+  - type: outputSummary
+    parameters:
+      format: Long

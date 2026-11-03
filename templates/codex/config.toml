@@ -1,0 +1,11 @@
+# Org baseline for OpenAI Codex CLI. Merge into ~/.codex/config.toml (back it up first).
+# Keys from the Codex config reference; check them against your installed Codex version.
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+[sandbox_workspace_write]
+network_access = false
+
+[shell_environment_policy]
+# "core" passes only basic variables; KEY/SECRET/TOKEN variables stay out of agent commands.
+inherit = "core"

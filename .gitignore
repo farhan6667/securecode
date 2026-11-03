@@ -1,0 +1,9 @@
+.security/
+__pycache__/
+dist/
+*.sig
+*.pem
+*.key
+org-internal/
+.pytest_cache/
+.ai-media/
