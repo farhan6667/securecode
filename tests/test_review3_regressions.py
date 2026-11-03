@@ -217,7 +217,7 @@ def test_release_zip_takes_only_committed_files():
         import pytest
         pytest.skip("git not installed")
     with tempfile.TemporaryDirectory() as d:
-        pkg = Path(d)
+        pkg = Path(d).resolve()                   # 8.3 short temp names (RUNNER~1) differ from PKG
         (pkg / "scripts" / "release").mkdir(parents=True)
         _sh.copy2(ROOT / "scripts" / "release" / "make_release.py", pkg / "scripts" / "release" / "make_release.py")
         (pkg / "README.md").write_text("x")

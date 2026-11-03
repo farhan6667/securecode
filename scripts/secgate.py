@@ -97,7 +97,11 @@ def is_instruction_file(fp: Path) -> bool:
 
 def is_link_dir(p):
     # Symlinked folders and Windows junctions can point anywhere on the machine; never walk into them.
-    return os.path.islink(p) or bool(getattr(os.path,"isjunction",lambda _p: False)(p))
+    # os.path.isjunction exists only on Python 3.12+, so read the reparse tag directly (3.8+ on Windows).
+    if os.path.islink(p): return True
+    try: st=os.lstat(p)
+    except OSError: return True
+    return getattr(st,"st_reparse_tag",0)==0xA0000003      # IO_REPARSE_TAG_MOUNT_POINT (junction)
 
 def walk_files(target):
     p=Path(target)
