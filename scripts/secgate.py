@@ -721,7 +721,7 @@ def main():
     args=ap.parse_args()
     root=Path(".").resolve(); target=args.changed_file or args.target
     findings=local_scan(target)+agent_scan(target)+library_scan(target)+config_scan(target)
-    status={}; errors={}; notes=[]; engine_status={}
+    status={}; errors={}; notes=[]; engine_status={}; ran_tests=[]
     required=["semgrep","trivy","gitleaks"]
     if args.mode in ("full","ci"):
         for t in required: status[t]=bool(find_tool(t))
@@ -762,13 +762,14 @@ def main():
         if args.run_tests:
             for cmd in project_commands(root,notes):
                 rc,out,err=run(cmd,root,1200)
+                ran_tests.append({"command":" ".join([Path(str(cmd[0])).name,*map(str,cmd[1:])]),"exit":rc})
                 if rc!=0:
                     findings.append({"rule":"TEST_FAILURE","severity":"HIGH","file":"","line":0,
                         "message":f"Project command failed: {' '.join(cmd)}","code":(out+err)[-1000:],"engine":"project-tests"})
     findings=apply_suppressions(findings,root,args.mode,notes)
     # Quick mode runs on every edit through the hook; it must not litter every project with .security/.
     if args.mode!="quick" or args.report:
-        counts=write_reports(root,findings,args.mode,{**status,"engines":engine_status,"errors":errors,"notes":notes})
+        counts=write_reports(root,findings,args.mode,{**status,"engines":engine_status,"errors":errors,"notes":notes,"project_tests":ran_tests})
     else:
         counts={s:sum(1 for f in findings if f["severity"]==s) for s in SEV}
     missing=[t for t,v in status.items() if not v]

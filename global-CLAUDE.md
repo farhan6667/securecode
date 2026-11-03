@@ -19,7 +19,10 @@ OrgAISecureAppSec app folder). Short version, always on:
    gives fast heuristic feedback only (it is not SAST).
 7. When the user writes **"Run Security Test"** (or "Security Test Karo") or runs `/security-gate`, use the
    `org-appsec-security` skill: deep source review (IDOR, access control, injection, XSS, uploads,
-   auth, headers, outdated libraries), full gate in `ci` mode, fix, re-test, report in its format.
+   auth, headers, outdated libraries), full gate in `ci` mode plus project tests, fix, then the
+   automated pentest: optional local DAST (ask once whether the app can run locally; loopback only),
+   a retest with outcome labels, the professional report (`report.py`, checked by `report_lint.py`),
+   and an offer to open a fix PR (`fix_pr.py`, dry run first, never the default branch).
    **"Run Advisory QA"** (or "Advisory QA Karo") or `/advisory-qa` does the same review as a readiness advisory and changes
    nothing until the user agrees.
 8. Before saying a feature is done, review your own change against `docs/SOURCE-CODE-REVIEW.md` for

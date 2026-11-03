@@ -80,10 +80,20 @@ When the developer writes **Run Security Test** (or the Roman Urdu "Security Tes
    `python "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests`
    (macOS: `~/Library/Application Support/OrgAISecureAppSec`, Linux: `~/.local/share/OrgAISecureAppSec`).
 3. Review the code against `docs/SECURITY-TEST-MATRIX.md` and `docs/AI-AGENT-SECURITY.md` in that folder.
-4. Fix what is safe to fix, show vulnerable vs fixed code for the rest, run the gate again.
-5. Report: verdict (PASSED / FAILED / BLOCKED) with risk rating, a findings table
-   (# | issue | severity | file | impact and root cause), the fixed code, and the command the
-   developer can run to confirm. Never call the project "100% secure"; list what was not checked.
+4. Fix what is safe to fix (copy `.security/findings.json` to `.security/findings-before.json` first),
+   show vulnerable vs fixed code for the rest, run the gate and the project tests again.
+5. Optional local DAST: ask the developer once whether the app can run on this machine. If yes, run
+   `scripts/local_dast.py --target http://127.0.0.1:<port>` from that folder, with `--start "<command>"` only when
+   the developer typed the command. It scans loopback only and notes, not fails, when ZAP or Docker is missing.
+6. Retest every finding with an outcome label in `.security/retest.json`: Pass (only with the test or
+   command that proves it, after trying a variant), Fail, Partial, Compensating control, or Risk
+   accepted (only with the developer's name and date). Check for the same bug elsewhere.
+7. Write the professional report with `scripts/report.py --pdf` and check it with `scripts/report_lint.py`.
+8. Report: verdict (PASSED / FAILED / BLOCKED) with risk rating, a findings table
+   (# | issue | severity | file | impact and root cause), the fixed code, the path to `.security/REPORT.html`,
+   and the command the developer can run to confirm. Never call the project "100% secure"; list what was not checked.
+9. Offer a fix pull request: `scripts/fix_pr.py` shows a dry run; `--open` creates a `securecode/fix-<date>`
+   branch and a draft PR only after the developer agrees. Never push to the default branch or force push.
 
 "Run Advisory QA" (or "Advisory QA Karo") runs the same review (entry point by entry point, using `docs/SOURCE-CODE-REVIEW.md`)
 but changes nothing until the developer agrees. It ends with an OWASP Top 10 status table and a plain

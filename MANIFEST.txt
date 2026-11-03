@@ -38,3 +38,10 @@ Added after review (V6.2 final)
 - docs/COMMON-FINDINGS.md (common pentest findings); library_scan and config_scan rules
 - scripts/stop_gate.py (Stop hook), scripts/updater.py (signed auto-update), scripts/release/make_release.py
 - install-managed.py (organization-enforced install), SECURITY-CONTEXT.md, docs/THIRD-PARTY-REVIEW.md
+
+Automated pentest (7.0 branch, not yet released)
+- scripts/report.py: REPORT.md and print-ready REPORT.html (optional PDF) with executive summary, scope and
+  method, findings with CIA impact and retest outcome labels, attack chains, artifacts and limits
+- scripts/report_lint.py: required sections, labels, evidence, no overclaims, no unmasked secrets
+- scripts/local_dast.py: OWASP ZAP baseline or API scan of the developer's app on loopback only
+- scripts/fix_pr.py: dry-run-first fix branch and draft PR, never the default branch, gitleaks on the diff
