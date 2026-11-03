@@ -19,13 +19,34 @@ developer machines, plus CI templates. It runs with the developer's own rights a
 - Be modifiable by the agent: the guard blocks edits to its own runtime folder; managed installs are read-only.
 
 **Accepted risks (documented, not bugs).**
-- Pattern-based guard: a determined command (a script that opens files itself, unusual encodings) can get
-  past it. It reduces risk; it is not a sandbox. Native Windows has no Claude Code OS sandbox. Since 6.2 any
-  shell command that names the agent's own config folder is refused unless it only reads, so new write
-  routes need no new rule. Known gaps that remain: paths built at run time from variables the guard cannot
-  see, links created outside the agent, MCP tools that hide a path deep inside nested arguments, and plain
-  shell aliases defined earlier in the session. Four independent review rounds and their regression tests
-  are in `tests/test_review*_regressions.py`.
+- The agent guard is a pattern-based, best-effort layer. It is not a sandbox and not a security boundary.
+  It reads command text, so an attacker who already has arbitrary code execution (a script that opens files
+  itself, paths built at run time from variables, unusual encodings, interpreters and tools the guard has
+  never heard of) can still find gaps. Each review round has found new ones, and more will exist. Native
+  Windows has no Claude Code OS sandbox; 7.0 plans a real sandbox (OS-level file and network confinement for
+  the agent) so the guard becomes a second line instead of the only one.
+  What it does today: any shell command that names the agent's own config folder or the runtime is refused
+  unless every stage only reads (no method calls, script blocks, `$(...)` or write options such as `sort -o`);
+  wildcards are judged by what they could expand to (`.cl*`, `OrgAIS*`, `id*`, `*env`); a command other than a
+  plain reader may not target the home folder itself or a folder above a protected one (tree copies and
+  archive extraction into `~`); macOS `/Users/x`, root-relative `\Users\x`, `~user`, `%SystemDrive%` and
+  `Documents and Settings` count as home.
+  Known gaps that remain: paths built at run time, links created outside the agent, MCP tools that hide a
+  path deep inside nested arguments, plain shell aliases defined earlier in the session, a downloader
+  hidden inside a script file, and secret gists (only public gists are refused). Six independent review
+  rounds and their regression tests are in `tests/test_review*_regressions.py`.
+- Global rules and settings: Edit, Write and MultiEdit on the user's own `~/.claude/CLAUDE.md`,
+  `~/.claude/rules/**/*.md` and `settings(.local).json` return "ask", never a silent allow and never deny. The
+  owner may legitimately ask for a rule change; a prompt-injected agent still needs the owner's yes in the
+  prompt. Hooks, skills, agents, commands and anything else in that folder are denied, and shell commands
+  may not write any of it. An "ask" is only as strong as the person answering it: approve rule edits only
+  when you asked for them. (An older per-user install was seen letting a CLAUDE.md edit through with no prompt; run the updater.
+6.2.1 denied `rules/*.md` edits outright; they are "ask" now, like CLAUDE.md.)
+- secgate ci mode ignores the scanned repo's own scanner settings (`.gitleaks.toml`, inline `gitleaks:allow`,
+  `# nosemgrep`, `.semgrepignore`, `.trivyignore`, `trivy.yaml`, `trivy-secret.yaml`) and uses package-owned
+  ones (`config/gitleaks-ci.toml`, `config/ci-empty.ignore`, semgrep's default excludes). gitleaks 8.x always
+  reads a repo-root `.gitleaksignore`, so in ci mode that file is itself a HIGH finding. full and quick
+  modes still honour the developer's own files on purpose and print a note when they are present.
 - Reading inside the user's `.claude` folder with a non-reader command (for example `node -v` started there)
   is refused. That is a deliberate false positive.
 - Advisory hooks (injection watch, stop gate, per-edit check) fail open so they never trap a session.

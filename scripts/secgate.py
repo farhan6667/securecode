@@ -407,6 +407,18 @@ def run(cmd,cwd,timeout=600):
 
 ORG_SEMGREP=Path(__file__).resolve().parent.parent/"semgrep"/"org-security.yml"
 
+# In ci mode the scanned repo must not be able to switch its own scanners off: a pull request could add a
+# .gitleaks.toml allowlist of ".*", a .gitleaksignore, a .semgrepignore, "# nosemgrep" comments or a
+# .trivyignore. ci mode therefore uses package-owned settings and ignores those files. full and quick modes keep
+# honouring them, because there they are the developer's own choice on their own machine.
+PKG_CONFIG=Path(__file__).resolve().parent.parent/"config"
+CI_GITLEAKS_CONFIG=PKG_CONFIG/"gitleaks-ci.toml"
+CI_EMPTY_IGNORE=PKG_CONFIG/"ci-empty.ignore"
+# Semgrep's own default ignore list, applied centrally because --x-ignore-semgrepignore-files drops it too.
+SEMGREP_CI_EXCLUDES=["node_modules","build","dist","vendor",".env",".venv",".tox","*.min.js",".npm",".yarn",
+                     "test","tests","*_test.go",".semgrep",".semgrep_logs",".security"]
+REPO_SCANNER_FILES=(".gitleaks.toml",".gitleaksignore",".semgrepignore",".trivyignore",".trivyignore.yaml","trivy.yaml","trivy-secret.yaml")
+
 def semgrep_configs():
     # "auto" refuses to run with metrics off, so the default is explicit: org rules + registry packs.
     env=os.environ.get("SEMGREP_CONFIGS")
@@ -427,10 +439,14 @@ def semgrep_override(rid,sev,confidence=""):
     if SEMGREP_HIGH.search(rid) and audit_ok and SEV.get(sev,9)>SEV["HIGH"]: return "HIGH"
     return sev
 
-def collect_semgrep(root, findings):
+def collect_semgrep(root, findings, mode="full"):
     if not find_tool("semgrep"): return False,"semgrep missing"
     cmd=["semgrep","scan","--metrics","off"]
     for c in semgrep_configs(): cmd += ["--config",c]
+    if mode=="ci":
+        # nosemgrep comments and .semgrepignore files belong to the code under review, not to the reviewer.
+        cmd += ["--disable-nosem","--x-ignore-semgrepignore-files"]
+        for x in SEMGREP_CI_EXCLUDES: cmd += ["--exclude",x]
     cmd += ["--json","--quiet","."]
     rc,out,err=run(cmd,root,900)
     try:
@@ -451,9 +467,14 @@ def collect_semgrep(root, findings):
     # rc 0 = clean, 1 = findings; anything else (config or network error) is a failed scan.
     return rc in (0,1), "semgrep completed" if rc in (0,1) else f"semgrep exited {rc}: {(err or '').strip()[-300:]}"
 
-def collect_trivy(root,findings):
+def collect_trivy(root,findings,mode="full"):
     if not find_tool("trivy"): return False,"trivy missing"
-    rc,out,err=run(["trivy","fs","--scanners","vuln,misconfig,secret","--format","json","."],root,1200)
+    cmd=["trivy","fs","--scanners","vuln,misconfig,secret","--format","json"]
+    if mode=="ci":
+        if not CI_EMPTY_IGNORE.is_file(): return False,f"ci ignore file missing from the package: {CI_EMPTY_IGNORE.name}"
+        # an empty string disables trivy.yaml and trivy-secret.yaml; the ignore file is the package's empty one
+        cmd += ["--config","","--secret-config","","--ignorefile",str(CI_EMPTY_IGNORE)]
+    rc,out,err=run(cmd+["."],root,1200)
     try:
         data=json.loads(out)
     except Exception:
@@ -473,12 +494,24 @@ def collect_trivy(root,findings):
                 "line":s.get("StartLine",0),"message":s.get("Title","Secret detected"),"code":"","engine":"trivy"})
     return rc in (0,1), "trivy completed"
 
-def collect_gitleaks(root,findings):
+def collect_gitleaks(root,findings,mode="full"):
     if not find_tool("gitleaks"): return False,"gitleaks missing"
+    ci_args=[]
+    if mode=="ci":
+        if not (CI_GITLEAKS_CONFIG.is_file() and CI_EMPTY_IGNORE.is_file()):
+            return False,"ci gitleaks config missing from the package"
+        # --config wins over the repo's .gitleaks.toml and --ignore-gitleaks-allow drops inline gitleaks:allow
+        # comments. gitleaks 8.x still reads <source>/.gitleaksignore on top of --gitleaks-ignore-path, so the
+        # repo's file is reported and blocks; reviewed exceptions belong in the central config instead.
+        ci_args=["--config",str(CI_GITLEAKS_CONFIG),"--gitleaks-ignore-path",str(CI_EMPTY_IGNORE),"--ignore-gitleaks-allow"]
+        if (root/".gitleaksignore").exists():
+            findings.append({"rule":"SCANNER_SUPPRESSION_IN_REPO","severity":"HIGH","file":".gitleaksignore","line":0,
+                "message":"ci mode does not accept a repo .gitleaksignore (it can hide real secrets). Remove it and ask the "
+                          "security team to add reviewed exceptions to the central gitleaks config.","code":"","engine":"gitleaks"})
     sec=root/".security"; sec.mkdir(exist_ok=True)
     rp=sec/"gitleaks.json"
     if rp.exists(): rp.unlink()
-    cmd=["gitleaks","detect","--source",".","--no-banner","--report-format","json","--report-path",str(rp)]
+    cmd=["gitleaks","detect","--source",".","--no-banner","--report-format","json","--report-path",str(rp),*ci_args]
     if not (root/".git").exists(): cmd.append("--no-git")
     rc,out,err=run(cmd,root,900)
     # Gitleaks exits 1 both for "leaks found" and for errors, so success means a readable report.
@@ -667,9 +700,13 @@ def main():
         if args.mode=="ci" and not all(status.values()):
             print("RESULT: BLOCKED (ci) required security scanner missing:",[t for t,v in status.items() if not v])
             return 3
+        own=[n for n in REPO_SCANNER_FILES if (root/n).exists()]
+        if own:
+            notes.append(("ci mode ignored the repo's own scanner settings: " if args.mode=="ci" else
+                          "full mode honours the repo's own scanner settings (ci mode will not): ")+", ".join(own))
         for name,fn in (("semgrep",collect_semgrep),("trivy",collect_trivy),("gitleaks",collect_gitleaks)):
             if not status[name]: continue
-            ok,msg=fn(root,findings)
+            ok,msg=fn(root,findings,mode=args.mode)
             if not ok:
                 errors[name]=msg; status[name]=False
         # Optional extra scanners: used when installed, never required. A failure is a note, not a block.

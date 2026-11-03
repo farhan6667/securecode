@@ -1,0 +1,6 @@
+# NexaForge SecureCode: gitleaks settings for ci mode. The scanned repo's own .gitleaks.toml is not used.
+# Add organization-wide allowlists here (reviewed by the security team), never in the repo under review.
+title = "NexaForge SecureCode ci"
+
+[extend]
+useDefault = true
