@@ -23,14 +23,48 @@ def write(d, rel, text):
     return f
 
 
+# Names that must never appear in public text. Only their SHA-256 hashes are stored here, so this guard
+# does not publish the very names it protects. Every substring of a word with one of these lengths is hashed
+# and compared, so the names are also caught inside longer words.
+_BLOCKED_SHA256 = {
+    "34f01161e6d553bad21aa46e5162c7deae536434632760b9ce840d80c65ef948",
+    "cc5d93e2859817ef766e3715ea3e37b40e99e5ef7bc3e178dd925d798cdca1eb",
+    "a084a7e06dee42b19858e7407800275db2465f301922e49b6e462d5b514a1193",
+    "56b14f835e40e007bacef2b50777ac1eec3f2119006747c1a40bfa1a2c4868e2",
+    "2be6d1ec07641b6f004938912f89876a153c963a53cba7fed04ed0c818690f0f",
+}
+_BLOCKED_LENGTHS = (4, 5, 6, 7)
+
+
+def _blocked_hits(text):
+    import hashlib
+    import re
+    found = set()
+    for word in set(re.findall(r"\w+", text.lower())):
+        for n in _BLOCKED_LENGTHS:
+            for i in range(len(word) - n + 1):
+                part = word[i:i + n]
+                if hashlib.sha256(part.encode("utf-8")).hexdigest() in _BLOCKED_SHA256:
+                    found.add(hashlib.sha256(part.encode("utf-8")).hexdigest()[:12])
+    return found
+
+
+def test_blocked_name_check_catches_a_planted_name():
+    # A word whose hash is listed must be reported, also inside a longer word; ordinary words must not be.
+    assert not _blocked_hits("ordinary security text about the gate")
+    planted = "x" + "fai" + "zan" + "y"
+    assert _blocked_hits(planted)
+
+
 def test_no_organization_names_in_tracked_text():
-    bad = ()      # last one is the Urdu word
     hits = []
     for f in ROOT.rglob("*"):
-        if f.is_file() and not {".git", ".ai-media", "__pycache__", ".pytest_cache"} & set(f.parts) and f.suffix in (
-                ".py", ".md", ".json", ".yml", ".yaml", ".txt", ".php", ".ps1", ".sh", ".toml", ".cff", ""):
-            low = f.read_text(encoding="utf-8", errors="ignore").lower()
-            hits += [(f.name, b) for b in bad if b in low and f.name != "test_review5_regressions.py"]
+        if f.is_file() and not {".git", ".ai-media", "__pycache__", ".pytest_cache", ".hypothesis"} & set(f.parts) \
+                and f.suffix in (".py", ".md", ".json", ".yml", ".yaml", ".txt", ".php", ".ps1", ".sh", ".toml",
+                                 ".cff", ""):
+            found = _blocked_hits(f.read_text(encoding="utf-8", errors="ignore"))
+            if found and f.name != "test_review5_regressions.py":
+                hits.append((str(f.relative_to(ROOT)), sorted(found)))
     assert not hits, hits
 
 
