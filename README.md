@@ -7,13 +7,12 @@
   <img src="https://img.shields.io/badge/status-public%20preview-orange.svg" alt="Status: public preview">
 </p>
 
-**NexaForge SecureCode is a free, open source security layer for AI-assisted coding: it makes Claude Code, Cursor
-and Codex write secure code by default, reviews and fixes the code for OWASP Top 10 issues before handover, and
-guards the developer's machine and secrets from the AI agent itself.** It is built for developers and teams who
-vibe code business web apps, APIs and Android apps and want them to pass the security team's pentest the first time.
+**NexaForge SecureCode makes AI coding agents (Claude Code, Cursor, Codex) write secure code, check it before
+you ship, and stay away from your secrets.** Free and open source (MIT), for anyone who builds web apps, APIs or
+Android apps with AI.
 
 <p align="center">
-  <a href="#install-in-two-minutes">Install</a> ·
+  <a href="#install-with-one-prompt">Install</a> ·
   <a href="#what-you-get">What you get</a> ·
   <a href="#how-a-review-works">How a review works</a> ·
   <a href="#honest-limits">Limits</a> ·
@@ -21,45 +20,48 @@ vibe code business web apps, APIs and Android apps and want them to pass the sec
   <a href="#contribute">Contribute</a>
 </p>
 
-## The problem it solves
+## Why you need it
 
-AI agents write a lot of code fast, and pentests keep finding the same things in it: outdated jQuery and
-Bootstrap, missing security headers on the login and admin pages, IDOR in APIs, debug output, weak cookies.
-Each finding means a fix, a retest and a delay. The agent itself is also a new way in: a poisoned file in a
-cloned repo can tell it to read your `.env` or push your code somewhere public.
+AI writes code fast. Pentests keep finding the same holes in it: old jQuery, missing security headers, one
+user reading another user's data (IDOR), weak cookies, debug output. And the agent itself can be tricked by a
+poisoned file into reading your `.env` or pushing your code somewhere public.
 
-SecureCode puts the security team's checklist inside the agent, so most of those findings are fixed before
-the code ever reaches a human tester, and it puts a guard between the agent and your machine.
+SecureCode fixes both:
 
-## Install in two minutes
+- **Secure by default.** The agent follows a security checklist while it writes.
+- **Checked before handover.** Type `Security Test Karo` and it reviews, fixes and re-tests the code.
+- **A guard on your machine.** It keeps the agent away from secrets, force pushes and other risky commands.
 
-1. Download `NexaForge_SecureCode.zip` and `NexaForge_SecureCode.zip.sig` from the
-   [latest release](https://github.com/farhan6667/nexaforge-securecode/releases).
-2. Optional but recommended, check the signature (the key is in `config/allowed_signers`, see [SECURITY.md](SECURITY.md)).
-3. Extract it, open your AI coding tool, and paste the prompt from [ONE_PROMPT_INSTALL.md](ONE_PROMPT_INSTALL.md).
+## Install with one prompt
 
-Or install by hand on Windows:
+Open Claude Code, Cursor or Codex and paste this one line:
+
+```
+Install NexaForge SecureCode for me: download the latest release from https://github.com/farhan6667/nexaforge-securecode/releases, verify its signature as SECURITY.md says, then follow ONE_PROMPT_INSTALL.md inside it.
+```
+
+The agent downloads it, checks the signature, installs it and the scanners, and tells you what it did. It asks
+before installing anything, so just say yes. Then type `Security Test Karo` in any project.
+
+<details>
+<summary>Install by hand instead</summary>
+
+Download `NexaForge_SecureCode.zip` from the [latest release](https://github.com/farhan6667/nexaforge-securecode/releases), extract it, then:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 py verify-global.py
 ```
 
-<details>
-<summary>macOS, Linux and the scanners</summary>
+macOS or Linux: `./install-macos.sh` or `./install-linux.sh`, then `python3 verify-global.py`.
 
-```bash
-./install-macos.sh      # or ./install-linux.sh
-python3 verify-global.py
-```
-
-The full gate uses Semgrep, Trivy and Gitleaks. On Windows: `winget install --id AquaSecurity.Trivy --exact --source winget`,
-`winget install --id Gitleaks.Gitleaks --exact --source winget` and `py -m pip install --user semgrep`.
-On macOS: `brew install semgrep trivy gitleaks`. Restart the AI tool afterwards.
+The full check uses Semgrep, Trivy and Gitleaks. Windows: `winget install --id AquaSecurity.Trivy --exact --source winget`,
+`winget install --id Gitleaks.Gitleaks --exact --source winget`, `py -m pip install --user semgrep`.
+macOS: `brew install semgrep trivy gitleaks`. Restart the AI tool afterwards.
 </details>
 
-A daily task then installs newer releases from this repo, and only ones signed with the NexaForge release key.
-How to turn it off is in [ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md#auto-update).
+Updates install by themselves once a day, and only releases signed with the NexaForge key.
+[How to turn that off](ENTERPRISE_DEPLOYMENT.md#auto-update).
 
 ## What you get
 
