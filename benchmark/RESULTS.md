@@ -15,8 +15,8 @@ Run on 2026-11-03, Windows 11, Python 3.14, Semgrep 1.183.0, Trivy 0.76.1, Gitle
 
 | Command | Found |
 |---|---|
-| `py -I benchmark/run_lab.py --mode quick` (built-in checks only, no scanners) | 11 of 18 |
-| `py -I benchmark/run_lab.py --mode full` (adds Semgrep with the Laravel authz rules, Trivy, Gitleaks) | 17 of 18 |
+| `py -I benchmark/run_lab.py --mode quick --lab laravel` (built-in checks only, no scanners) | 11 of 18 |
+| `py -I benchmark/run_lab.py --mode full --lab laravel` (adds Semgrep with the Laravel authz rules, Trivy, Gitleaks) | 17 of 18 |
 
 The one miss in full mode is on purpose: L18 is an IDOR through route model binding
 (`show(Invoice $invoice)` with no `authorize` call). A pattern rule cannot tell whether the binding is
@@ -48,6 +48,113 @@ Full table from the full-mode run:
 | L18 | IDOR through route model binding | missed | (known gap, see above) |
 
 `tests/test_benchmark_lab.py` keeps the quick-mode floor at 11, so a weaker rule fails CI.
+
+## 7.0 labs: Spring Boot, legacy audit, pentest findings
+
+Run on 2026-11-03 with the same tools. Each lab also lists "clean" files: safe code that must not be
+reported (for the legacy lab, no malware rule may fire on normal Laravel, Spring, Express and WordPress
+files). A finding on a clean file is counted as a false positive.
+
+| Lab | Planted | Quick mode | Full mode | Clean files reported |
+|---|---|---|---|---|
+| `spring-lab.json` (Java and Spring Boot rules, database config, default values) | 20 | 6 | 20 | 1 of 1 (see below) |
+| `legacy-lab.json` (webshells, backdoors, obfuscation, PHP upgrade blockers, default passwords, admin tools) | 17 | 17 | 17 | 0 of 7 |
+| `web-lab.json` (input validation, owner pentest-skill items, database checks, default secrets) | 22 | 22 | 22 | 0 of 4 |
+
+Commands: `py -I benchmark/run_lab.py --mode quick` and `py -I benchmark/run_lab.py --mode full` (all
+labs; add `--lab spring` for one). The Java rules are Semgrep rules, so the Spring lab needs full mode;
+quick mode only sees `SQL_CONCAT`, the database checks and the default-value checks there.
+
+The one false positive is known: the clean Spring controller has
+`setParameter("n", "%" + note + "%")` on the same line as a parameterized JPQL query, and the older
+line-based `SQL_CONCAT` heuristic cannot tell that the concatenation goes into a bound parameter. The
+Semgrep rule `java-sqli-string-concat` does not report it. The floor test allows this one and fails if
+the number grows.
+
+The legacy lab samples are short, synthetic and inert (the encoded strings decode to words like
+INERT). None is copied from a real webshell. The web lab's W9 to W11 reproduce the retest lesson from
+the owner's pentest skills: a "fix" that rejects one quote character is reported as `DENYLIST_FIX`,
+the query behind it is still reported, and so is the sibling query in the reset controller.
+
+In full mode some rows also list Semgrep registry rules (for example `spring-csrf-disabled`,
+`spring-actuator-fully-enabled`) next to ours; the row counts as found if any listed rule matches.
+
+### Spring lab, full mode
+
+| id | planted issue | result | rule |
+|---|---|---|---|
+| S1 | IDOR: show() loads any order by id | found | spring-idor-unscoped-lookup |
+| S2 | Mass assignment: request body entity saved directly | found | spring-mass-assignment-entity-binding |
+| S3 | @RequestBody without @Valid | found | spring-requestbody-without-valid |
+| S4 | JPQL built by string concatenation | found | SQL_CONCAT, java-sqli-string-concat |
+| S5 | SpEL expression from a request parameter | found | java-spel-injection |
+| S6 | JNDI lookup name from a request parameter | found | java-jndi-injection |
+| S7 | permitAll on /admin/** | found | spring-permitall-sensitive-path |
+| S8 | CSRF disabled in a form-login app | found | spring-csrf-disabled, spring-csrf-disabled-with-session |
+| S9 | XXE: DocumentBuilderFactory without disallow-doctype-decl | found | java-xxe-documentbuilderfactory |
+| S10 | ObjectInputStream on a cookie value | found | java-unsafe-deserialization-objectinputstream |
+| S11 | Jackson default typing | found | java-jackson-default-typing |
+| S12 | Trust-all X509TrustManager | found | java-trust-all-certificates |
+| S13 | MD5 password hash | found | java-weak-password-hash |
+| S14 | java.util.Random reset token | found | java-insecure-random-token |
+| S15 | Actuator exposes every endpoint | found | spring-actuator-exposed-properties, spring-actuator-fully-enabled |
+| S16 | Database user root | found | DB_ROOT_USER |
+| S17 | Database connection without TLS | found | DB_NO_TLS |
+| S18 | Guessable datasource password admin123 | found | WEAK_DEFAULT_CREDENTIAL |
+| S19 | jwt.secret=secret | found | DEFAULT_SECRET_KEY |
+| S20 | /admin controller opened by permitAll | found | EXPOSED_ADMIN_PATH |
+
+### Legacy lab, full mode
+
+| id | planted issue | result | rule |
+|---|---|---|---|
+| G1 | Obfuscated eval(gzinflate(base64_decode())) injected into an include | found | WEBSHELL_OBFUSCATED_EVAL |
+| G2 | Webshell in the uploads folder | found | PHP_IN_UPLOAD_DIR |
+| G3 | eval of a request value | found | BACKDOOR_REQUEST_EXEC |
+| G4 | system() on $_GET | found | BACKDOOR_REQUEST_EXEC |
+| G5 | Request chooses the function: $_GET['f'](...) | found | REQUEST_DYNAMIC_CALL |
+| G6 | preg_replace with /e | found | PREG_REPLACE_EVAL |
+| G7 | PHP code inside an image | found | PHP_IN_IMAGE_FILE |
+| G8 | eval(atob()) in front-end JS | found | WEBSHELL_OBFUSCATED_EVAL |
+| G9 | Node exec with req.query | found | BACKDOOR_REQUEST_EXEC |
+| G10 | JSP Runtime.exec on a request parameter | found | BACKDOOR_REQUEST_EXEC |
+| G11 | ASPX Process.Start with Request.QueryString | found | BACKDOOR_REQUEST_EXEC |
+| G12 | Python exec(b64decode()) | found | WEBSHELL_OBFUSCATED_EVAL |
+| G13 | Long base64 blob in code | found | SUSPICIOUS_OBFUSCATION |
+| G14 | Removed mysql_* API and deprecated utf8_encode | found | PHP_DEPRECATED_API |
+| G15 | Database password 'root' in config.php | found | WEAK_DEFAULT_CREDENTIAL |
+| G16 | Forgotten adminer.php | found | EXPOSED_ADMIN_TOOL |
+| G17 | backup folder inside the web root | found | SENSITIVE_WEBROOT_PATH |
+
+### Web lab, full mode
+
+| id | planted issue | result | rule |
+|---|---|---|---|
+| W1 | Laravel controller reads input with no validation | found | MISSING_INPUT_VALIDATION |
+| W2 | Express handler uses req.body with no validator | found | MISSING_INPUT_VALIDATION |
+| W3 | debug=1 returns config and env (owner skills L19) | found | DEBUG_FLAG_FROM_REQUEST |
+| W4 | Reset code route with no throttle (L20) | found | AUTH_ROUTE_NO_THROTTLE |
+| W5 | 4-digit reset code | found | SHORT_NUMERIC_CODE |
+| W6 | CSRF token is base64 of the user role (L21) | found | TOKEN_FROM_USER_DATA |
+| W7 | Admin API token under a VITE_ prefix (L22) | found | PUBLIC_ENV_SECRET |
+| W8 | Production source maps | found | SOURCEMAP_IN_PROD |
+| W9 | Deny-list fix in front of a concatenated query | found | DENYLIST_FIX |
+| W10 | The fake-fixed login query is still SQL injection | found | SQL_CONCAT |
+| W11 | Sibling: the reset query built the same way | found | SQL_CONCAT |
+| W12 | Express login route with no rate limit | found | AUTH_ROUTE_NO_THROTTLE |
+| W13 | Card number column | found | DB_SENSITIVE_COLUMN |
+| W14 | GRANT ALL to any host | found | DB_GRANT_ALL |
+| W15 | MySQL container with empty password | found | DB_EMPTY_PASSWORD |
+| W16 | MySQL bound to every interface | found | DB_BIND_ALL |
+| W17 | utf8_encode, deprecated in PHP 8.2 | found | PHP_DEPRECATED_API |
+| W18 | Postgres with the default password 'postgres' | found | WEAK_DEFAULT_CREDENTIAL |
+| W19 | Redis without a password, port published | found | DB_NO_AUTH |
+| W20 | Empty Laravel APP_KEY | found | DEFAULT_SECRET_KEY |
+| W21 | /admin route without auth middleware | found | EXPOSED_ADMIN_PATH |
+| W22 | Express session secret 'keyboard cat' | found | DEFAULT_SECRET_KEY |
+
+`tests/test_benchmark_lab.py` keeps these floors: Laravel 11+ in quick mode, Spring 6+ in quick and
+20 of 20 in full mode when Semgrep is installed, legacy and web all found with no clean file reported.
 
 ## Not run yet
 

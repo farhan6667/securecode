@@ -57,7 +57,21 @@ developer machines, plus CI templates. It runs with the developer's own rights a
   runtime) is the answer where that matters.
 - The guard matches text, so a command that only mentions a protected path inside a string (for example an
   edit to a config template) is blocked too. Use the Edit tool for such files.
-- Heuristic rules have false positives; the self-scan suppressions cover the package's own rule tables only.
+- Heuristic rules have false positives; the self-scan suppressions cover the package's own rule tables only
+  (and, since 7.0, the deliberately vulnerable labs and test fixtures, each by exact file with an expiry).
+- The legacy audit (`malware_scan`) reads `vendor/` and the first 5 MB of image files, because planted code
+  hides there. It only reads: it never runs, decodes into a file, moves or deletes anything, and the skill
+  tells the agent to show every hit to the owner first. Its patterns are text heuristics: an attacker who
+  knows them can write a webshell they miss, so a clean sweep is not proof that a server is clean.
+  Known misses, accepted: payloads split across lines (`eval(` on one line, `$_POST[x])` on the next),
+  variable indirection (`$c=$_POST[x]; eval($c)`), variable functions built from strings
+  (`$f='sys'.'tem'; $f(...)`), `${'_GE'.'T'}`, `extract($_REQUEST)`, a JSP with the parameter and the
+  exec on separate lines, and Python `getattr(os,'system')(...)`. A real file-integrity baseline or a
+  YARA scan of the live server is the next layer.
+- The default-value checks use a short bundled list of guessable passwords and secrets (about 50 each),
+  so an uncommon weak password is not found; strong secrets committed to the repo are Gitleaks' job.
+- The new code and database checks never print secret values: env findings show the variable name only and
+  connection strings are redacted in the finding.
 
 **Deployment.** Per user (`%LOCALAPPDATA%\OrgAISecureAppSec`), managed (`%ProgramFiles%\OrgAISecureAppSec`),
 CI (pinned, hash-verified scanners). Updates from the public GitHub repo `farhan6667/nexaforge-securecode`

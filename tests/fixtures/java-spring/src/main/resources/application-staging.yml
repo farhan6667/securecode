@@ -1,0 +1,7 @@
+# Test fixture for semgrep/java-spring.yml.
+management:
+  endpoints:
+    web:
+      exposure:
+        # expect: spring-actuator-exposed-yaml
+        include: health,info,env,heapdump

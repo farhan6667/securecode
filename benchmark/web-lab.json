@@ -1,0 +1,179 @@
+{
+  "_about": "A tiny, deliberately vulnerable project used only to measure what the gate finds. It is stored as JSON so that this repository's own scans and GitHub code scanning do not report it. benchmark/run_lab.py writes it to a temporary folder and scans it there. Never deploy it. Files listed under \"clean\" are safe code: any finding on them (matching rule_hint, or any finding when rule_hint is empty) counts as a false positive.",
+  "files": {
+    "artisan": "<?php // marker\n",
+    "app/Http/Controllers/OrderController.php": "<?php\nnamespace App\\Http\\Controllers;\nclass OrderController extends Controller\n{\n    public function store(Request $request)\n    {\n        return Order::create(['note' => $request->input('note'), 'qty' => $request->input('qty')]);\n    }\n}\n",
+    "app/Http/Controllers/DiagController.php": "<?php\nnamespace App\\Http\\Controllers;\nclass DiagController extends Controller\n{\n    public function status(StatusRequest $request)\n    {\n        if ($request->boolean('debug')) {\n            return response()->json(['config' => config('app'), 'env' => env('APP_ENV')]);\n        }\n        return response()->json(['ok' => true]);\n    }\n}\n",
+    "app/Http/Controllers/Auth/ResetController.php": "<?php\nnamespace App\\Http\\Controllers\\Auth;\nclass ResetController extends Controller\n{\n    public function send(SendCodeRequest $request)\n    {\n        $code = random_int(1000, 9999);\n        $user = DB::select(\"SELECT * FROM users WHERE email = '\" . $request->validated()['email'] . \"'\");\n        return back();\n    }\n}\n",
+    "app/Http/Controllers/Auth/LoginController.php": "<?php\nnamespace App\\Http\\Controllers\\Auth;\nclass LoginController extends Controller\n{\n    public function login(LoginRequest $request)\n    {\n        $email = $request->validated()['email'];\n        if (str_contains($email, \"'\")) { abort(400); }\n        $user = DB::select(\"SELECT * FROM users WHERE email = '\" . $email . \"'\");\n        return back();\n    }\n}\n",
+    "app/Support/Csrf.php": "<?php\nfunction form_token($user) {\n    $csrfToken = base64_encode($user->role);\n    return $csrfToken;\n}\n",
+    "app/Support/Legacy.php": "<?php\nfunction clean_name($n) { return utf8_encode($n); }\n",
+    "routes/web.php": "<?php\nRoute::post('/login', [LoginController::class, 'login']);\nRoute::post('/password/code', [ResetController::class, 'send']);\nRoute::post('/password/verify-code', [ResetController::class, 'verify']);\nRoute::middleware('throttle:5,1')->group(function () {\n    Route::post('/register', [RegisterController::class, 'store']);\n});\n",
+    "frontend/.env.production": "VITE_API_URL=https://api.example.test\nVITE_ADMIN_API_TOKEN=lab-not-a-real-token\nVITE_STRIPE_PUBLISHABLE_KEY=pk_test_lab\n",
+    "frontend/vite.config.js": "export default { build: { sourcemap: true } };\n",
+    "node/routes.js": "const router = require('express').Router();\nrouter.post('/api/login', (req, res) => { auth.check(req.body.email, req.body.password).then(r => res.json(r)); });\nrouter.post('/api/notes', (req, res) => { notes.create(req.body).then(n => res.json(n)); });\nmodule.exports = router;\n",
+    "database/migrations/2024_01_01_000000_create_payments.php": "<?php\nSchema::create('payments', function ($table) {\n    $table->id();\n    $table->string('card_number');\n    $table->string('password', 20);\n});\n",
+    "database/grants.sql": "GRANT ALL PRIVILEGES ON *.* TO 'shop'@'%';\n",
+    "docker-compose.yml": "services:\n  db:\n    image: mysql:8.4\n    environment:\n      MYSQL_ALLOW_EMPTY_PASSWORD: \"yes\"\n  reports-db:\n    image: postgres:16\n    environment:\n      POSTGRES_PASSWORD: postgres\n  cache:\n    image: redis:7\n    ports:\n      - \"6379:6379\"\n",
+    ".env": "APP_NAME=Shop\nAPP_KEY=\nDB_PASSWORD=${DB_PASSWORD}\n",
+    "routes/admin.php": "<?php\nRoute::get('/admin', [AdminController::class, 'index']);\n",
+    "node/session.js": "app.use(session({ secret: 'keyboard cat', resave: false, saveUninitialized: false }));\n",
+    "config/jwt.php": "<?php\nreturn ['secret' => env('JWT_SECRET'), 'ttl' => 60, 'algo' => 'HS256'];\n",
+    "deploy/my.cnf": "[mysqld]\nbind-address = 0.0.0.0\n",
+    "app/Http/Controllers/InvoiceController.php": "<?php\nnamespace App\\Http\\Controllers;\nclass InvoiceController extends Controller\n{\n    public function store(StoreInvoiceRequest $request)\n    {\n        return $request->user()->invoices()->create($request->validated());\n    }\n}\n",
+    "node/items.js": "const { z } = require('zod');\nconst rateLimit = require('express-rate-limit');\nconst router = require('express').Router();\nrouter.use(rateLimit({ windowMs: 60000, max: 20 }));\nconst Item = z.object({ name: z.string().max(80) });\nrouter.post('/api/items', (req, res) => { const item = Item.parse(req.body); res.json(item); });\nrouter.post('/api/verify', (req, res) => res.json({ ok: true }));\nmodule.exports = router;\n",
+    "database/migrations/2024_01_02_000000_create_users.php": "<?php\nSchema::create('users', function ($table) {\n    $table->id();\n    $table->string('email')->unique();\n    $table->string('password');\n    $table->string('card_last4', 4)->nullable();\n});\n"
+  },
+  "expected": [
+    {
+      "id": "W1",
+      "what": "Laravel controller reads input with no validation",
+      "file": "app/Http/Controllers/OrderController.php",
+      "rule_hint": "MISSING_INPUT_VALIDATION"
+    },
+    {
+      "id": "W2",
+      "what": "Express handler uses req.body with no validator",
+      "file": "node/routes.js",
+      "rule_hint": "MISSING_INPUT_VALIDATION"
+    },
+    {
+      "id": "W3",
+      "what": "debug=1 returns config and env (owner skills L19)",
+      "file": "app/Http/Controllers/DiagController.php",
+      "rule_hint": "DEBUG_FLAG_FROM_REQUEST"
+    },
+    {
+      "id": "W4",
+      "what": "Reset code route with no throttle (L20)",
+      "file": "routes/web.php",
+      "rule_hint": "AUTH_ROUTE_NO_THROTTLE"
+    },
+    {
+      "id": "W5",
+      "what": "4-digit reset code",
+      "file": "app/Http/Controllers/Auth/ResetController.php",
+      "rule_hint": "SHORT_NUMERIC_CODE"
+    },
+    {
+      "id": "W6",
+      "what": "CSRF token is base64 of the user role (L21)",
+      "file": "app/Support/Csrf.php",
+      "rule_hint": "TOKEN_FROM_USER_DATA"
+    },
+    {
+      "id": "W7",
+      "what": "Admin API token under a VITE_ prefix (L22)",
+      "file": "frontend/.env.production",
+      "rule_hint": "PUBLIC_ENV_SECRET"
+    },
+    {
+      "id": "W8",
+      "what": "Production source maps",
+      "file": "frontend/vite.config.js",
+      "rule_hint": "SOURCEMAP_IN_PROD"
+    },
+    {
+      "id": "W9",
+      "what": "Deny-list fix in front of a concatenated query",
+      "file": "app/Http/Controllers/Auth/LoginController.php",
+      "rule_hint": "DENYLIST_FIX"
+    },
+    {
+      "id": "W10",
+      "what": "The fake-fixed login query is still SQL injection",
+      "file": "app/Http/Controllers/Auth/LoginController.php",
+      "rule_hint": "SQL_CONCAT"
+    },
+    {
+      "id": "W11",
+      "what": "Sibling: the reset query built the same way",
+      "file": "app/Http/Controllers/Auth/ResetController.php",
+      "rule_hint": "SQL_CONCAT"
+    },
+    {
+      "id": "W12",
+      "what": "Express login route with no rate limit",
+      "file": "node/routes.js",
+      "rule_hint": "AUTH_ROUTE_NO_THROTTLE"
+    },
+    {
+      "id": "W13",
+      "what": "Card number column",
+      "file": "database/migrations/2024_01_01_000000_create_payments.php",
+      "rule_hint": "DB_SENSITIVE_COLUMN"
+    },
+    {
+      "id": "W14",
+      "what": "GRANT ALL to any host",
+      "file": "database/grants.sql",
+      "rule_hint": "DB_GRANT_ALL"
+    },
+    {
+      "id": "W15",
+      "what": "MySQL container with empty password",
+      "file": "docker-compose.yml",
+      "rule_hint": "DB_EMPTY_PASSWORD"
+    },
+    {
+      "id": "W16",
+      "what": "MySQL bound to every interface",
+      "file": "deploy/my.cnf",
+      "rule_hint": "DB_BIND_ALL"
+    },
+    {
+      "id": "W17",
+      "what": "utf8_encode, deprecated in PHP 8.2",
+      "file": "app/Support/Legacy.php",
+      "rule_hint": "PHP_DEPRECATED_API"
+    },
+    {
+      "id": "W18",
+      "what": "Postgres with the default password 'postgres'",
+      "file": "docker-compose.yml",
+      "rule_hint": "WEAK_DEFAULT_CREDENTIAL"
+    },
+    {
+      "id": "W19",
+      "what": "Redis without a password, port published",
+      "file": "docker-compose.yml",
+      "rule_hint": "DB_NO_AUTH"
+    },
+    {
+      "id": "W20",
+      "what": "Empty Laravel APP_KEY",
+      "file": ".env",
+      "rule_hint": "DEFAULT_SECRET_KEY"
+    },
+    {
+      "id": "W21",
+      "what": "/admin route without auth middleware",
+      "file": "routes/admin.php",
+      "rule_hint": "EXPOSED_ADMIN_PATH"
+    },
+    {
+      "id": "W22",
+      "what": "Express session secret 'keyboard cat'",
+      "file": "node/session.js",
+      "rule_hint": "DEFAULT_SECRET_KEY"
+    }
+  ],
+  "clean": [
+    {
+      "file": "app/Http/Controllers/InvoiceController.php",
+      "rule_hint": ""
+    },
+    {
+      "file": "node/items.js",
+      "rule_hint": ""
+    },
+    {
+      "file": "database/migrations/2024_01_02_000000_create_users.php",
+      "rule_hint": ""
+    },
+    {
+      "file": "config/jwt.php",
+      "rule_hint": ""
+    }
+  ]
+}

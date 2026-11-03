@@ -1,0 +1,144 @@
+{
+  "_about": "A tiny, deliberately vulnerable project used only to measure what the gate finds. It is stored as JSON so that this repository's own scans and GitHub code scanning do not report it. benchmark/run_lab.py writes it to a temporary folder and scans it there. Never deploy it. Files listed under \"clean\" are safe code: any finding on them (matching rule_hint, or any finding when rule_hint is empty) counts as a false positive.",
+  "files": {
+    "pom.xml": "<project><modelVersion>4.0.0</modelVersion><groupId>lab</groupId><artifactId>shop</artifactId><version>1</version>\n<parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>3.3.5</version></parent></project>\n",
+    "src/main/java/lab/OrderController.java": "package lab;\n\nimport java.util.List;\nimport javax.naming.InitialContext;\nimport jakarta.persistence.EntityManager;\nimport org.springframework.expression.spel.standard.SpelExpressionParser;\nimport org.springframework.web.bind.annotation.*;\n\n@RestController\n@RequestMapping(\"/api/orders\")\npublic class OrderController {\n\n    private OrderRepository orders;\n    private EntityManager em;\n\n    @GetMapping(\"/{id}\")\n    public Order show(@PathVariable Long id) {\n        return orders.findById(id).orElseThrow();\n    }\n\n    @PostMapping\n    public Order create(@RequestBody Order order) {\n        return orders.save(order);\n    }\n\n    @GetMapping(\"/search\")\n    public List<?> search(@RequestParam String note) {\n        return em.createQuery(\"select o from Order o where o.note like '%\" + note + \"%'\").getResultList();\n    }\n\n    @GetMapping(\"/price\")\n    public Object price(@RequestParam String formula) {\n        return new SpelExpressionParser().parseExpression(formula).getValue();\n    }\n\n    @GetMapping(\"/resource\")\n    public Object resource(@RequestParam String name) throws Exception {\n        return new InitialContext().lookup(name);\n    }\n}\n",
+    "src/main/java/lab/SecurityConfig.java": "package lab;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.web.SecurityFilterChain;\n\npublic class SecurityConfig {\n    @Bean\n    SecurityFilterChain chain(HttpSecurity http) throws Exception {\n        http.csrf().disable()\n            .authorizeHttpRequests(a -> a\n                .requestMatchers(\"/admin/**\").permitAll()\n                .anyRequest().authenticated())\n            .formLogin(f -> {});\n        return http.build();\n    }\n}\n",
+    "src/main/java/lab/XmlImport.java": "package lab;\n\nimport java.io.InputStream;\nimport javax.xml.parsers.DocumentBuilderFactory;\nimport org.w3c.dom.Document;\n\npublic class XmlImport {\n    public Document parse(InputStream body) throws Exception {\n        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();\n        return dbf.newDocumentBuilder().parse(body);\n    }\n}\n",
+    "src/main/java/lab/CartCookie.java": "package lab;\n\nimport java.io.ByteArrayInputStream;\nimport java.io.ObjectInputStream;\nimport java.util.Base64;\n\npublic class CartCookie {\n    public Object read(String cookieValue) throws Exception {\n        ObjectInputStream in = new ObjectInputStream(new ByteArrayInputStream(Base64.getDecoder().decode(cookieValue)));\n        return in.readObject();\n    }\n}\n",
+    "src/main/java/lab/JsonConfig.java": "package lab;\n\nimport com.fasterxml.jackson.databind.ObjectMapper;\n\npublic class JsonConfig {\n    public ObjectMapper mapper() {\n        ObjectMapper m = new ObjectMapper();\n        m.enableDefaultTyping();\n        return m;\n    }\n}\n",
+    "src/main/java/lab/PaymentClient.java": "package lab;\n\nimport java.security.cert.X509Certificate;\nimport javax.net.ssl.X509TrustManager;\n\npublic class PaymentClient {\n    static class AcceptAll implements X509TrustManager {\n        public void checkClientTrusted(X509Certificate[] c, String a) {}\n        public void checkServerTrusted(X509Certificate[] c, String a) {}\n        public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }\n    }\n}\n",
+    "src/main/java/lab/AccountService.java": "package lab;\n\nimport java.security.MessageDigest;\nimport java.util.Random;\n\npublic class AccountService {\n    public byte[] hashPassword(String password) throws Exception {\n        return MessageDigest.getInstance(\"MD5\").digest(password.getBytes());\n    }\n\n    public String resetToken() {\n        return Long.toHexString(new Random().nextLong());\n    }\n}\n",
+    "src/main/resources/application.properties": "spring.application.name=shop\nmanagement.endpoints.web.exposure.include=*\nspring.datasource.url=jdbc:mysql://db.internal:3306/shop?useSSL=false\nspring.datasource.username=root\nspring.datasource.password=admin123\njwt.secret=secret\njwt.expiration=3600\n",
+    "src/main/java/lab/AdminController.java": "package lab;\n\nimport org.springframework.web.bind.annotation.*;\n\n@RestController\n@RequestMapping(\"/admin\")\npublic class AdminController {\n    @GetMapping(\"/users\")\n    public String users() { return \"[]\"; }\n}\n",
+    "src/main/java/lab/InvoiceController.java": "package lab;\n\nimport java.util.List;\nimport jakarta.persistence.EntityManager;\nimport jakarta.validation.Valid;\nimport org.springframework.security.access.prepost.PreAuthorize;\nimport org.springframework.security.core.annotation.AuthenticationPrincipal;\nimport org.springframework.web.bind.annotation.*;\n\n@RestController\n@RequestMapping(\"/api/invoices\")\npublic class InvoiceController {\n\n    private InvoiceRepository invoices;\n    private EntityManager em;\n\n    @GetMapping(\"/{id}\")\n    public Invoice show(@PathVariable Long id, @AuthenticationPrincipal AppUser user) {\n        return invoices.findByIdAndOwnerId(id, user.getId()).orElseThrow();\n    }\n\n    @PostMapping\n    public Invoice create(@Valid @RequestBody CreateInvoiceRequest req, @AuthenticationPrincipal AppUser user) {\n        Invoice i = new Invoice();\n        i.setAmount(req.getAmount());\n        i.setOwnerId(user.getId());\n        return invoices.save(i);\n    }\n\n    @GetMapping(\"/search\")\n    @PreAuthorize(\"hasRole('ACCOUNTANT')\")\n    public List<?> search(@RequestParam String note) {\n        return em.createQuery(\"select i from Invoice i where i.note like :n\").setParameter(\"n\", \"%\" + note + \"%\").getResultList();\n    }\n}\n"
+  },
+  "expected": [
+    {
+      "id": "S1",
+      "what": "IDOR: show() loads any order by id",
+      "file": "src/main/java/lab/OrderController.java",
+      "rule_hint": "spring-idor"
+    },
+    {
+      "id": "S2",
+      "what": "Mass assignment: request body entity saved directly",
+      "file": "src/main/java/lab/OrderController.java",
+      "rule_hint": "spring-mass-assignment"
+    },
+    {
+      "id": "S3",
+      "what": "@RequestBody without @Valid",
+      "file": "src/main/java/lab/OrderController.java",
+      "rule_hint": "spring-requestbody-without-valid"
+    },
+    {
+      "id": "S4",
+      "what": "JPQL built by string concatenation",
+      "file": "src/main/java/lab/OrderController.java",
+      "rule_hint": "java-sqli|SQL_CONCAT"
+    },
+    {
+      "id": "S5",
+      "what": "SpEL expression from a request parameter",
+      "file": "src/main/java/lab/OrderController.java",
+      "rule_hint": "java-spel"
+    },
+    {
+      "id": "S6",
+      "what": "JNDI lookup name from a request parameter",
+      "file": "src/main/java/lab/OrderController.java",
+      "rule_hint": "java-jndi"
+    },
+    {
+      "id": "S7",
+      "what": "permitAll on /admin/**",
+      "file": "src/main/java/lab/SecurityConfig.java",
+      "rule_hint": "spring-permitall"
+    },
+    {
+      "id": "S8",
+      "what": "CSRF disabled in a form-login app",
+      "file": "src/main/java/lab/SecurityConfig.java",
+      "rule_hint": "spring-csrf"
+    },
+    {
+      "id": "S9",
+      "what": "XXE: DocumentBuilderFactory without disallow-doctype-decl",
+      "file": "src/main/java/lab/XmlImport.java",
+      "rule_hint": "java-xxe"
+    },
+    {
+      "id": "S10",
+      "what": "ObjectInputStream on a cookie value",
+      "file": "src/main/java/lab/CartCookie.java",
+      "rule_hint": "java-unsafe-deserialization"
+    },
+    {
+      "id": "S11",
+      "what": "Jackson default typing",
+      "file": "src/main/java/lab/JsonConfig.java",
+      "rule_hint": "java-jackson"
+    },
+    {
+      "id": "S12",
+      "what": "Trust-all X509TrustManager",
+      "file": "src/main/java/lab/PaymentClient.java",
+      "rule_hint": "java-trust-all"
+    },
+    {
+      "id": "S13",
+      "what": "MD5 password hash",
+      "file": "src/main/java/lab/AccountService.java",
+      "rule_hint": "java-weak-password"
+    },
+    {
+      "id": "S14",
+      "what": "java.util.Random reset token",
+      "file": "src/main/java/lab/AccountService.java",
+      "rule_hint": "java-insecure-random"
+    },
+    {
+      "id": "S15",
+      "what": "Actuator exposes every endpoint",
+      "file": "src/main/resources/application.properties",
+      "rule_hint": "spring-actuator"
+    },
+    {
+      "id": "S16",
+      "what": "Database user root",
+      "file": "src/main/resources/application.properties",
+      "rule_hint": "DB_ROOT_USER"
+    },
+    {
+      "id": "S17",
+      "what": "Database connection without TLS",
+      "file": "src/main/resources/application.properties",
+      "rule_hint": "DB_NO_TLS"
+    },
+    {
+      "id": "S18",
+      "what": "Guessable datasource password admin123",
+      "file": "src/main/resources/application.properties",
+      "rule_hint": "WEAK_DEFAULT_CREDENTIAL"
+    },
+    {
+      "id": "S19",
+      "what": "jwt.secret=secret",
+      "file": "src/main/resources/application.properties",
+      "rule_hint": "DEFAULT_SECRET_KEY"
+    },
+    {
+      "id": "S20",
+      "what": "/admin controller opened by permitAll",
+      "file": "src/main/java/lab/AdminController.java",
+      "rule_hint": "EXPOSED_ADMIN_PATH"
+    }
+  ],
+  "clean": [
+    {
+      "file": "src/main/java/lab/InvoiceController.java",
+      "rule_hint": ""
+    }
+  ]
+}

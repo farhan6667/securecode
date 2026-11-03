@@ -374,6 +374,865 @@ def walk_files_all(target):
         files.extend(Path(r)/f for f in fs if not os.path.islink(os.path.join(r,f)))
     return files
 
+# =====================================================================================================
+# 7.0 checks: legacy audit (webshells, backdoors, obfuscation), code-level pentest heuristics, PHP
+# upgrade readiness and database configuration. The patterns avoid nested unbounded quantifiers, gaps
+# are bounded ({0,200}), names are bounded ({0,80}) and long-blob searches start only at a run boundary.
+# Lines longer than CODE_LINE_MAX are skipped by the line rules; the blob rules search at most
+# BLOB_LINE_MAX characters of a line. File-level loops use precomputed line offsets and running
+# counters (no rescans), and every scanner stops at MAX_PER_FILE findings per file.
+# tests/test_v7_rules.py times every pattern on hostile lines and every scanner on hostile 1-3 MB files;
+# the first review round found three quadratic loops that the per-line tests had missed.
+# =====================================================================================================
+CODE_LINE_MAX=4000
+BLOB_LINE_MAX=200_000
+MAX_PER_FILE=50          # findings per file and scanner; a hostile file must not flood the report
+# Cheap prefilter: a line with none of these words cannot match a malware line rule.
+_MAL_PREFILTER=re.compile(r"(?i)eval|assert|create_function|system|exec|passthru|popen|proc_open|include|require|\$_|`|call_user_func|"
+                          r"array_map|register_|preg_replace|function|spawn|runtime|processbuilder|process|request")
+
+def _line_starts(text):
+    # Offsets of every line start, so a match offset maps to a line number with bisect in O(log n).
+    out=[0]; i=text.find("\n")
+    while i!=-1:
+        out.append(i+1); i=text.find("\n",i+1)
+    return out
+
+def _line_at(starts,pos):
+    import bisect
+    return bisect.bisect_right(starts,pos)
+PHP_EXT={".php",".phtml",".php3",".php4",".php5",".php7",".php8",".phar",".pht",".inc"}
+SERVER_SCRIPT_EXT=PHP_EXT|{".jsp",".jspx",".asp",".aspx",".ashx",".asmx",".cer",".cgi",".pl"}
+JS_EXT={".js",".mjs",".cjs",".jsx",".ts",".tsx"}
+MALWARE_EXT=SERVER_SCRIPT_EXT|JS_EXT|{".py",".java",".cs",".cshtml",".vbhtml",".rb",".sh"}
+IMAGE_EXT={".jpg",".jpeg",".png",".gif",".ico",".bmp",".webp"}
+MALWARE_SKIP={".git","node_modules",".venv","venv","__pycache__",".security",".next"}   # vendor/ is swept on purpose
+UPLOAD_DIRS={"uploads","upload","userfiles","user_uploads","user-uploads","attachments","avatars"}
+WEB_ASSET_DIRS={"images","image","img","media"}
+
+def _lang(fp):
+    s=fp.suffix.lower()
+    if s in PHP_EXT: return "php"
+    if s in JS_EXT: return "js"
+    if s==".py": return "py"
+    if s in (".jsp",".jspx",".java"): return "java"
+    if s in (".asp",".aspx",".ashx",".asmx",".cs",".cshtml",".vbhtml",".cer"): return "net"
+    return "other"
+
+_PHP_DECODERS=r"(?:base64_decode|gzinflate|gzuncompress|gzdecode|str_rot13|hex2bin|convert_uudecode|strrev|rawurldecode)"
+_PHP_REQ=r"(?:\$_(?:GET|POST|REQUEST|COOKIE|FILES)\b|\$_SERVER\s*\[\s*['\"]HTTP_|\bgetallheaders\s*\(|\bapache_request_headers\s*\(|php://input)"
+_JS_REQ=r"\breq(?:uest)?\s*\.\s*(?:query|body|params|headers|cookies)\b"
+_PY_REQ=r"\brequest\s*\.\s*(?:args|form|values|data|json|get_json|GET|POST|body|headers|cookies|query_params)\b"
+_JAVA_REQ=r"\b(?:request|req)\s*\.\s*(?:getParameter|getParameterValues|getHeader|getQueryString)\s*\("
+_NET_REQ=r"\bRequest\s*(?:\.\s*(?:QueryString|Form|Params|Item|Headers|Cookies)\b|\[)"
+MALWARE_LINE_RULES={
+  # (rule, severity, regex) per language family
+  "php":[
+    ("WEBSHELL_OBFUSCATED_EVAL","CRITICAL",re.compile(r"(?i)(?<![\w>:$])(?:eval|assert|create_function)\s{0,10}\([^\n;]{0,200}?\b"+_PHP_DECODERS+r"\s*\(")),
+    # Functions need "(" right after the name; include/require take "(", a quote or a variable. Plain words
+    # in templates ("required", "System status", "Please include") are not calls.
+    ("BACKDOOR_REQUEST_EXEC","CRITICAL",re.compile(r"(?i)(?<![\w>:$])(?:(?:eval|assert|create_function|system|exec|passthru|shell_exec|popen|proc_open|pcntl_exec)\s{0,10}\(|"
+                                                    r"(?:include|include_once|require|require_once)\b\s{0,10}[('\"$])[^\n;]{0,200}?"+_PHP_REQ)),
+    ("BACKDOOR_REQUEST_EXEC","CRITICAL",re.compile(r"`[^`\n]{0,200}?\$_(?:GET|POST|REQUEST|COOKIE)\b")),
+    ("REQUEST_DYNAMIC_CALL","CRITICAL",re.compile(r"\$_(?:GET|POST|REQUEST|COOKIE)\s*\[[^\]\n]{0,80}\]\s*\(")),
+    ("REQUEST_DYNAMIC_CALL","CRITICAL",re.compile(r"(?i)\b(?:call_user_func|call_user_func_array|array_map|register_shutdown_function|register_tick_function)\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)\b")),
+    ("PREG_REPLACE_EVAL","HIGH",re.compile(r"(?i)\bpreg_replace\s*\(\s*(['\"])([/#~!|@%])[^\n]{0,300}?\2[a-df-z]*e[a-z]*\1")),
+  ],
+  "js":[
+    ("WEBSHELL_OBFUSCATED_EVAL","CRITICAL",re.compile(r"(?:(?<![\w.$])eval|\bnew\s+Function|(?<![\w.$])Function)\s{0,10}\([^\n;]{0,200}?\b(?:atob|unescape|decodeURIComponent|String\.fromCharCode|Buffer\.from)\s*\(")),
+    ("BACKDOOR_REQUEST_EXEC","CRITICAL",re.compile(r"(?:(?<![\w.$])eval|\bnew\s+Function|(?<![\w.$])(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)|\b(?:child_process|cp|shell)\s*\.\s*(?:exec|execSync|spawn|spawnSync|execFile)|child_process['\"]\s*\)\s*\.\s*(?:exec|execSync|spawn|spawnSync|execFile))\s{0,10}\([^\n;]{0,200}?"+_JS_REQ)),
+  ],
+  "py":[
+    ("WEBSHELL_OBFUSCATED_EVAL","CRITICAL",re.compile(r"(?<![\w.])(?:exec|eval)\s{0,10}\([^\n]{0,200}?\b(?:base64\.b64decode|b64decode|zlib\.decompress|codecs\.decode|marshal\.loads|bytes\.fromhex|binascii\.unhexlify)\s*\(")),
+    ("BACKDOOR_REQUEST_EXEC","CRITICAL",re.compile(r"(?:(?<![\w.])(?:exec|eval)|\bos\.(?:system|popen)|\bsubprocess\.\w+|\bcommands\.getoutput)\s{0,10}\([^\n]{0,200}?"+_PY_REQ)),
+  ],
+  "java":[
+    ("BACKDOOR_REQUEST_EXEC","CRITICAL",re.compile(r"(?:Runtime\.getRuntime\(\)\s*\.\s*exec|\bnew\s+ProcessBuilder)\s{0,10}\([^\n;]{0,200}?"+_JAVA_REQ)),
+  ],
+  "net":[
+    ("BACKDOOR_REQUEST_EXEC","CRITICAL",re.compile(r"(?i)(?:\bProcess\.Start|\bProcessStartInfo|(?<![\w.])eval)\s{0,10}\([^\n;]{0,200}?"+_NET_REQ)),
+  ],
+}
+# Shared by every language: encoded payloads. A run of 1000+ base64 characters, hex-escape chains and
+# char-code chains; decoder chains without an eval are reported too, since they usually feed one.
+OBF_RULES=[
+  re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{1000,}={0,2}"),
+  re.compile(r"(?:\\x[0-9a-fA-F]{2}){40,}"),
+  re.compile(r"(?i)(?:\bchr\s*\(\s*\d{1,3}\s*\)\s*\.\s*){12,}"),
+  re.compile(r"\bString\.fromCharCode\s*\(\s*(?:\d{1,5}\s*,\s*){24,}"),
+  re.compile(r"(?i)\b(?:gzinflate|gzuncompress|gzdecode|str_rot13|convert_uudecode|strrev)\s*\(\s*(?:base64_decode|str_rot13|gzinflate|strrev|hex2bin)\s*\("),
+]
+PLACEHOLDER_PHP=re.compile(r"(?is)^\s*<\?php\s*(?://[^\n]*|#[^\n]*|/\*.*?\*/|\s)*(?:\?>)?\s*$")
+
+def _rel_parts(fp,base):
+    try: return [x for x in fp.resolve().relative_to(base).parts]
+    except (ValueError,OSError): return [fp.name]
+
+def _walk(target,skip):
+    p=Path(target)
+    if p.is_file(): return [p]
+    out=[]
+    for r,d,fs in os.walk(p):
+        d[:]=[x for x in d if x not in skip and not is_link_dir(os.path.join(r,x))]
+        out.extend(Path(r)/f for f in fs if not os.path.islink(os.path.join(r,f)))
+    return out
+
+def malware_scan(target):
+    """Legacy audit: webshells, request-driven backdoors, PHP where only uploads belong, encoded blobs.
+    Findings are for the owner to review; nothing is deleted or changed."""
+    findings=[]; p=Path(target); base=p.resolve() if p.is_dir() else Path.cwd().resolve()
+    def add(rule,sev,fp,n,msg,code=""):
+        findings.append({"rule":rule,"severity":sev,"file":str(fp),"line":n,"message":msg+" Show it to the owner before deleting anything.",
+                         "code":code.strip()[:180],"engine":"malware-scan"})
+    for fp in _walk(target,MALWARE_SKIP):
+        suf=fp.suffix.lower(); name=fp.name.lower()
+        parts=_rel_parts(fp,base); dirs=parts[:-1]; low_dirs=[x.lower() for x in dirs]
+        try: size=fp.stat().st_size
+        except OSError: continue
+        if suf in IMAGE_EXT:
+            if size<=5_000_000:
+                try:
+                    with open(fp,"rb") as fh: blob=fh.read(5_000_000)
+                except OSError: continue
+                # <?php, or the short echo tag <?= followed soon by a variable, backtick or ?> (a bare 3-byte "<?="
+                # turns up by chance in large binaries, so it needs the second marker).
+                if re.search(rb"(?i)<\?php|<\?=[^\x00\n]{0,200}?(?:\$\w|`|\?>)",blob):
+                    add("PHP_IN_IMAGE_FILE","HIGH",fp,0,"An image file contains PHP code (<?php or <?=). This is how upload webshells hide; "
+                        "an include or a server that runs it turns it into code execution.")
+            continue
+        if suf not in MALWARE_EXT or size>3_000_000: continue
+        try: text=fp.read_text(encoding="utf-8",errors="ignore")
+        except OSError: continue
+        if suf in SERVER_SCRIPT_EXT:
+            webroot_idx=[i for i,x in enumerate(low_dirs) if x in WEBROOTS|{"pub"}]
+            joined="/".join(low_dirs)
+            # Lowercase upload folder names count anywhere. Under the web root or at the top level, any casing
+            # counts (Uploads/, Images/ are the same folder on IIS and Windows); deeper in the source tree a
+            # capitalised folder such as app/Uploads/ is a PSR-4 namespace, not an upload folder.
+            exposed=lambda i: bool((webroot_idx and i>webroot_idx[0]) or i==0)
+            in_upload=any(x in UPLOAD_DIRS for x in dirs) or "wp-content/uploads" in joined or "storage/app/public" in joined \
+                or "public/storage" in joined or \
+                any((d in UPLOAD_DIRS or d in WEB_ASSET_DIRS) and exposed(i) for i,d in enumerate(low_dirs))
+            if in_upload and not (len(text)<=2000 and PLACEHOLDER_PHP.match(text)):
+                add("PHP_IN_UPLOAD_DIR","HIGH",fp,0,"A server-side script sits in an upload, image or media folder. Real apps never "
+                    "keep code there; it is the usual place for an uploaded webshell. Also block script execution in that folder.")
+        lang=_lang(fp); rules=MALWARE_LINE_RULES.get(lang,[])
+        in_vendor="vendor" in low_dirs
+        minified=name.endswith((".min.js",".min.mjs",".bundle.js"))
+        per_file=0
+        for n,line in enumerate(text.splitlines(),1):
+            if per_file>=MAX_PER_FILE: break
+            if not line.strip(): continue
+            seg=line[:BLOB_LINE_MAX]
+            stripped=seg.lstrip()
+            comment=stripped.startswith(("//","#","*","/*","--"))
+            if not comment and len(seg)<=CODE_LINE_MAX and _MAL_PREFILTER.search(seg):
+                for rid,sev,rx in rules:
+                    m=rx.search(seg)
+                    if not m: continue
+                    s=sev
+                    if rid=="BACKDOOR_REQUEST_EXEC" and re.search(r"(?i)escapeshellarg|escapeshellcmd|\(int\)|intval\s*\(",seg):
+                        s="HIGH"
+                    # An argument list (spawn('ls', ['-l', req.query.d]), subprocess.run([... request.args ...])) is
+                    # argument injection, not a shell or eval of the whole value.
+                    if rid=="BACKDOOR_REQUEST_EXEC" and lang in ("js","py") and "[" in m.group(0):
+                        s="HIGH"
+                    per_file+=1
+                    add(rid,s,fp,n,{"WEBSHELL_OBFUSCATED_EVAL":"Code execution (eval/assert/exec/Function) fed by a decoder chain: the classic obfuscated webshell or injected backdoor.",
+                                    "BACKDOOR_REQUEST_EXEC":"A request value (query, body, cookie, header) reaches a code or command execution function. Remote code execution, or a planted backdoor.",
+                                    "REQUEST_DYNAMIC_CALL":"The request chooses which function runs ($_GET['f'](...)). This is a one-line webshell pattern.",
+                                    "PREG_REPLACE_EVAL":"preg_replace with the /e modifier evaluates the replacement as PHP (removed in PHP 7). In legacy code this is a backdoor or an RCE."}[rid],seg)
+                    break
+            if in_vendor or minified: continue
+            for rx in OBF_RULES:
+                m=rx.search(seg)
+                if not m: continue
+                if rx is OBF_RULES[0] and "base64," in seg[max(0,m.start()-40):m.start()]: continue   # data: URI
+                # Only a short excerpt: the blob may be a key or a token, so the report does not copy it.
+                add("SUSPICIOUS_OBFUSCATION","MEDIUM",fp,n,"Encoded or obfuscated content in code (a long base64 run, hex or char-code chains, or a decoder chain). "
+                    "Decode it and check what it does; legitimate code rarely ships payloads like this.",
+                    seg[:m.start()][-60:]+seg[m.start():m.start()+16]+("..." if m.end()-m.start()>16 else ""))
+                per_file+=1
+                break
+    return findings
+
+# --- code-level heuristics from pentest findings ---
+_INPUT_LARAVEL=re.compile(r"(?:\$request|\brequest\(\))\s*->\s*(?:input|all|get|query|post|only|except|json|string|integer|float|boolean|date|collect|file|array)\s*\(|\$_(?:GET|POST|REQUEST)\s*\[|\bRequest::(?:input|all|get|query|post)\s*\(")
+_VALIDATED_LARAVEL=re.compile(r"->\s*validate(?:WithBag)?\s*\(|\bValidator::make\s*\(|->\s*validated\s*\(|\bvalidator\s*\(|->\s*safe\s*\(|\$this->validate\s*\(")
+_FORM_REQUEST=re.compile(r"\b(?!Request\b)[A-Z]\w*Request\s+\$\w+")
+_METHOD=re.compile(r"\bfunction\s+(\w+)\s*\(([^)]{0,600})\)")
+_EXPRESS_ROUTE=re.compile(r"\b(?:app|router|\w*[Rr]outer|api|server)\s*\.\s*(?:get|post|put|patch|delete|all)\s*\(")
+_EXPRESS_BODY=re.compile(r"\breq\s*\.\s*body\b")
+_VALIDATOR_LIBS=re.compile(r"(?:require\s*\(\s*|from\s+|import\s+)['\"](?:zod|joi|@hapi/joi|express-validator|celebrate|yup|ajv|class-validator|superstruct|valibot|fastest-validator|@sinclair/typebox|io-ts|express-joi-validation|@vinejs/vine)['\"]|\b(?:z\.object|Joi\.object|checkSchema|celebrate\s*\(|\.safeParse\s*\(|ajv\.compile|validationResult\s*\()")
+
+_DEBUG_ACCESSOR=re.compile(r"(?i)(?:\$request\s*->\s*(?:input|query|get|header|boolean|has|filled|cookie)\s*\(|\brequest\(\)\s*->\s*\w+\s*\(|\brequest\s*\(|\$_(?:GET|POST|REQUEST|COOKIE|SERVER)\s*\[|\breq\s*\.\s*(?:query|body|headers|params|cookies)\s*(?:\.|\[|\.get\s*\()|\brequest\s*\.\s*(?:args|form|values|GET|POST|headers|cookies|query_params)\s*(?:\.\s*get\s*\(|\[)|\bget(?:Parameter|Header)\s*\(|@Request(?:Param|Header)\s*\(\s*(?:(?:value|name)\s*=\s*)?)"
+                          r"\s*['\"]?(?:http_x_|x[-_])?(?:debug|verbose|trace|dev|devmode|dev_mode|test|testmode|test_mode|internal|admin|is_admin|isadmin|show_?errors|diag|diagnostics)['\"]?(?![\w-])")
+_DEBUG_SINK=re.compile(r"(?i)\b(?:config|env|getenv|phpinfo|var_dump|print_r|var_export|debug_backtrace|getTraceAsString|getTrace|printStackTrace|getStackTrace|traceback|System\.getenv|System\.getProperties|dump_settings)\s*\(|process\.env|os\.environ|\.stack\b|ini_set\s*\(\s*['\"]display_errors|error_reporting\s*\(\s*E_ALL|\bapp\.config\b|settings\.__dict__|\bis_?admin\b|\$_SESSION\s*\[|->setRole\s*\(|\brole\s*=")
+_LOGLEVEL_SINK=re.compile(r"(?i)setLevel\s*\(|log_?level|logger\.level")
+_LOCAL_ONLY=re.compile(r"(?i)isLocal\s*\(|environment\s*\(\s*['\"](?:local|testing)|APP_ENV|NODE_ENV\s*[!=]==?\s*['\"]development|settings\.DEBUG\b|isDevelopment\s*\(")
+
+# The name is bounded ({0,80}) and must start right after a non-word, non-$ character, so a line like
+# "a$a$a$..." cannot restart a long scan at every letter (that was quadratic per line).
+_ASSIGN=re.compile(r"(?<![\w$])\$?([A-Za-z_]\w{0,80})['\"]?\]?\s*(?:=>|=(?![=>])|:(?![:=]))\s*([^\n]{1,300})")
+_WEAK_TOKEN_SRC=re.compile(r"(?i)\b(?:base64_encode|btoa|md5|sha1|hash|crc32|uniqid|microtime|time|b64encode|strrev|str_rot13|encodeURIComponent)\s*\(|\bDate\.now\s*\(|\bhashlib\.\w+\s*\(|\bBuffer\.from\s*\(|\bDigestUtils\.\w+\s*\(|\bgetEncoder\s*\(")
+_USER_MARKER=re.compile(r"(?i)\b(?:id|user_?id|uid|email|username|user|role|name|phone|mobile)\b|time\s*\(|Date\.now|microtime|uniqid|new\s+Date")
+_CSPRNG=re.compile(r"(?i)random_bytes|openssl_random_pseudo_bytes|Str::random|Str::uuid|random_int|crypto\.randomBytes|randomUUID|getRandomValues|\bsecrets\.|SecureRandom|token_urlsafe|token_hex|urandom|uuid4|bin2hex\s*\(\s*random|nanoid|hash_hmac|\bhmac\.|createHmac|csrf_token\s*\(|Str::password")
+_SHORT_RANGE=re.compile(r"\b(?:random_int|rand|mt_rand|randint|randrange|randomInt)\s*\(\s*(\d{1,9})\s*,\s*(\d{1,9})\s*\)|\bnextInt\s*\(\s*(\d{1,9})\s*\)|Math\.random\s*\(\s*\)\s*\*\s*(\d{1,9})\b")
+_SHORT_TOKEN=re.compile(r"(?:\bStr::random|\brandom_bytes|\bcrypto\.randomBytes|\brandomBytes|\btoken_hex|\btoken_urlsafe|\btoken_bytes)\s*\(\s*(\d{1,3})\s*\)")
+_NAME_WORDS=re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])")
+_NOT_A_TOKEN={"at","time","date","expires","expiry","expire","count","attempts","until","url","link","path","route","sent","ttl","length","len","exists","valid","is","has","enabled","field","header","name","label"}
+
+def _words(name):
+    return {w.lower() for w in _NAME_WORDS.findall(name.replace("$",""))}
+
+def _token_like(name):
+    w=_words(name)
+    if w & _NOT_A_TOKEN: return False
+    return bool(w & {"token","csrf","otp","nonce","invite","verification","verify","apikey","reset","remember"}) or \
+        {"api","key"}<=w or {"session","id"}<=w
+
+def _code_like(name):
+    w=_words(name)
+    if w & _NOT_A_TOKEN: return False
+    return bool(w & {"otp","code","pin","passcode","token"})
+
+PUBLIC_ENV=re.compile(r"\b(?:NEXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|NUXT_PUBLIC|GATSBY|VUE_APP|PUBLIC)_[A-Z0-9_]{0,80}")
+PUBLIC_ENV_SECRET_WORD=re.compile(r"SECRET|PRIVATE|PASSWORD|PASSWD|SERVICE_ROLE|SERVICE_KEY|ACCESS_KEY|ADMIN_KEY|_TOKEN$|_TOKEN_|DATABASE_URL|DB_URL|DB_PASS|SIGNING_KEY|WEBHOOK_KEY")
+PUBLIC_ENV_OK=re.compile(r"PUBLISHABLE|SITE_KEY|ANON_KEY|MAPBOX|RECAPTCHA|TURNSTILE|HCAPTCHA|POSTHOG|SENTRY_DSN|MEASUREMENT|_GA_|PUBLIC_KEY|CLIENT_ID")
+SOURCEMAP_CFG=re.compile(r"\bproductionSourceMap\s*:\s*true\b|\bproductionBrowserSourceMaps\s*:\s*true\b|\bsourcemap\s*:\s*(?:true\b|['\"]inline['\"])|"
+                         r"\bdevtool\s*:\s*['\"](?:source-map|inline-source-map|eval-source-map|cheap-module-source-map|cheap-source-map|eval)['\"]|\bGENERATE_SOURCEMAP\s*=\s*true\b")
+BUILD_DIRS={"dist","build","out"}
+
+_AUTH_PATH=re.compile(r"(?i)log-?in|sign-?in|password|passwd|reset|forgot|otp|verify|verification|2fa|two-factor|mfa|register|sign-?up|/pin\b|auth/code")
+_CODE_PATH=re.compile(r"(?i)otp|2fa|two-factor|mfa|verify|verification|/pin\b|code")
+_LARAVEL_ROUTE=re.compile(r"Route::(post|put|patch|any|match)\s*\(\s*(?:\[[^\]\n]{0,80}\]\s*,\s*)?['\"]([^'\"\n]{0,200})['\"]")
+_EXPRESS_AUTH_ROUTE=re.compile(r"\b(?:app|router|\w*[Rr]outer|api|server)\s*\.\s*(post|put|patch|all)\s*\(\s*['\"`]([^'\"`\n]{0,200})['\"`]([^\n]{0,400})")
+_LIMITER_WORD=re.compile(r"(?i)throttle|limit|slowdown|slow_down|brute|ratelimit")
+_EXPRESS_GLOBAL_LIMIT=re.compile(r"(?i)\.use\s*\([^\n]{0,200}?(?:limit|throttle|slowdown|brute)")
+_LARAVEL_LIMITER=re.compile(r"RateLimiter::|ensureIsNotRateLimited|ThrottlesLogins|->middleware\(\s*['\"]throttle")
+
+_DENY_CHECK=re.compile(r"(?i)(?:\bstr_contains|\bstripos|\bstrpos|\bstrstr|\bstristr|\bpreg_match|\.includes|\.indexOf|\.contains|\.startsWith|\.endsWith|\bin_array|\bre\.(?:search|match)|\.test)\s*\(")
+_ATTACK_LITERAL=re.compile(r"""(?i)(['"])(?:'|\\'|"|<script>?|</script>|union(?:\s+select)?|select|drop(?:\s+table)?|\.\./|--|or\s+1\s*=\s*1|javascript:|onerror|;|\||&&|%27|sleep\()\1""")
+_PY_IN_CHECK=re.compile(r"""(?i)(['"])(?:'|"|<script>?|union(?:\s+select)?|select|drop|\.\./|--|or\s+1\s*=\s*1|;|\|)\1\s+(?:not\s+)?in\s+\w""")
+# Sinks still built from strings. SQL is stricter than SQL_CONCAT here: a quote directly followed by a
+# concatenation operator, ${...}, {$...} or an f-string, so a bound parameter list ("?', [$q]") is not a sink.
+_DENY_SINKS=[re.compile(r) for k,_,r in RULES if k in ("XSS_SINK","XSS_RAW_TEMPLATE","COMMAND_INJECTION")]+[
+    re.compile(r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^\n]{0,300}?(?:[\"'`]\s*(?:\.|\+)\s*[$\w(]|\$\{|\{\$|\bf[\"'])")]
+_DENY_SINK_EXTRA=re.compile(r"(?i)\b(?:echo|print)\s+[^\n;]{0,200}?\$\w|\b(?:system|exec|passthru|shell_exec|popen)\s*\([^\n)]{0,200}?\$|\.query\s*\(\s*[`'\"][^\n]{0,300}?(?:\+|\$\{)|\bres\.send\s*\([^\n]{0,200}?\+")
+
+# PHP upgrade readiness. Each entry: (deprecated in, removed in or "", replacement). Verified on
+# 2026-11-03 against php.net migration guides (migration70.incompatible, migration70.removed-exts-sapis,
+# migration70..85.deprecated, migration80.incompatible, migration84.removed-extensions) and php-src
+# PHP-8.5 UPGRADING. https://www.php.net/manual/en/migration85.deprecated.php
+PHP_DEPRECATED_FUNCS={
+  "call_user_method":("","7.0","call_user_func"),"call_user_method_array":("","7.0","call_user_func_array"),
+  "set_magic_quotes_runtime":("","7.0","remove it"),"magic_quotes_runtime":("","7.0","remove it"),
+  "set_socket_blocking":("","7.0","stream_set_blocking"),"datefmt_set_timezone_id":("","7.0","datefmt_set_timezone"),
+  "ereg":("","7.0","preg_match"),"eregi":("","7.0","preg_match with /i"),"ereg_replace":("","7.0","preg_replace"),
+  "eregi_replace":("","7.0","preg_replace with /i"),"ldap_sort":("7.0","8.0","sort the results in PHP"),
+  "create_function":("7.2","8.0","an anonymous function"),"each":("7.2","8.0","foreach"),
+  "png2wbmp":("7.2","8.0","imagewbmp"),"jpeg2wbmp":("7.2","8.0","imagewbmp"),"gmp_random":("7.2","8.0","gmp_random_bits or gmp_random_range"),
+  "read_exif_data":("7.2","8.0","exif_read_data"),"image2wbmp":("7.3","8.0","imagewbmp"),"fgetss":("7.3","8.0","fgets plus strip_tags"),
+  "gzgetss":("7.3","8.0","gzgets plus strip_tags"),"is_real":("7.4","8.0","is_float"),"get_magic_quotes_gpc":("7.4","8.0","remove it (always false)"),
+  "get_magic_quotes_runtime":("7.4","8.0","remove it (always false)"),"hebrevc":("7.4","8.0","nl2br(hebrev(...))"),
+  "convert_cyr_string":("7.4","8.0","mb_convert_encoding or iconv"),"money_format":("7.4","8.0","NumberFormatter"),
+  "ezmlm_hash":("7.4","8.0","remove it"),"restore_include_path":("7.4","8.0","ini_restore('include_path')"),
+  "ldap_control_paged_result":("7.4","8.0","controls in ldap_search"),"ldap_control_paged_result_response":("7.4","8.0","controls in ldap_search"),
+  "libxml_disable_entity_loader":("8.0","","nothing (libxml 2.9+ blocks external entities by default; never pass LIBXML_NOENT)"),
+  "date_sunrise":("8.1","","date_sun_info"),"date_sunset":("8.1","","date_sun_info"),"strptime":("8.1","","date_parse_from_format"),
+  "strftime":("8.1","","date() or IntlDateFormatter"),"gmstrftime":("8.1","","gmdate() or IntlDateFormatter"),
+  "mhash":("8.1","","hash()"),"mhash_keygen_s2k":("8.1","","hash_pbkdf2"),"mhash_count":("8.1","","hash_algos"),
+  "mhash_get_block_size":("8.1","","hash functions"),"mhash_get_hash_name":("8.1","","hash functions"),"odbc_result_all":("8.1","","fetch rows yourself"),
+  "utf8_encode":("8.2","","mb_convert_encoding"),"utf8_decode":("8.2","","mb_convert_encoding"),"assert_options":("8.3","","zend.assertions / exceptions"),
+  "lcg_value":("8.4","","Random\\Randomizer::getFloat()"),"mysqli_ping":("8.4","","reconnect on error"),"mysqli_kill":("8.4","","SQL KILL"),
+  "mysqli_refresh":("8.4","","SQL FLUSH"),"xml_set_object":("8.4","","closures as handlers"),
+  "curl_close":("8.5","","nothing (the handle is freed automatically)"),"curl_share_close":("8.5","","nothing"),"finfo_close":("8.5","","nothing"),
+  "imagedestroy":("8.5","","nothing (GdImage is freed automatically)"),"xml_parser_free":("8.5","","nothing"),
+  "mysqli_execute":("8.5","","mysqli_stmt_execute"),"socket_set_timeout":("8.5","","stream_set_timeout"),"pg_service":("","8.5","remove it"),
+}
+PHP_DEPRECATED_PREFIX={"mysql_":("","7.0","mysqli or PDO"),"mssql_":("","7.0","PDO_SQLSRV"),"mcrypt_":("7.1","7.2","OpenSSL or sodium"),
+                       "zip_entry_":("8.0","","ZipArchive"),"imap_":("","8.4 (moved to PECL)","a maintained mail library"),
+                       "pspell_":("","8.4 (moved to PECL)","PECL pspell or another checker")}
+PHP_DEPRECATED_RX=re.compile(r"(?<![\w>:$.])\\?(" + "|".join(sorted((re.escape(k) for k in PHP_DEPRECATED_FUNCS),key=len,reverse=True)) +
+                             r"|(?:mysql_|mssql_|mcrypt_|zip_entry_|imap_|pspell_)\w{1,40})\s*\(")
+PHP_DEPRECATED_SYNTAX=[
+  (re.compile(r"\((?:boolean|integer|double|binary)\)\s*[$(\w'\"]"),"8.5","","non-canonical cast; use (bool), (int), (float), (string)"),
+  (re.compile(r"\((?:real|unset)\)\s*[$(\w'\"]"),"7.4/7.2","8.0","(real) and (unset) casts; use (float) or unset()"),
+  (re.compile(r"\"[^\"\n]{0,300}?\$\{[A-Za-z_]"),"8.2","","\"${var}\" interpolation; use \"{$var}\""),
+  (re.compile(r"(?<![\w>:$])get_(?:parent_)?class\s*\(\s*\)"),"8.3","","get_class() without an argument; use static::class or self::class"),
+  (re.compile(r"\btrigger_error\s*\([^\n]{0,200}?\bE_USER_ERROR\b"),"8.4","","trigger_error with E_USER_ERROR; throw an exception"),
+  (re.compile(r"\bE_STRICT\b"),"8.4","","E_STRICT; remove it"),
+  (re.compile(r"\bFILTER_SANITIZE_(?:STRING|STRIPPED)\b"),"8.1","","FILTER_SANITIZE_STRING; use htmlspecialchars on output"),
+  (re.compile(r"\bFILTER_SANITIZE_MAGIC_QUOTES\b|\bFILTER_FLAG_(?:SCHEME|HOST)_REQUIRED\b"),"7.3/7.4","8.0","removed filter constant"),
+  (re.compile(r"\bDATE_RFC7231\b"),"8.5","","DATE_RFC7231; use DATE_RFC1123 or a format string"),
+  (re.compile(r"\bMT_RAND_PHP\b"),"8.3","","MT_RAND_PHP; use the default MT_RAND_MT19937"),
+  (re.compile(r"\bCURLOPT_BINARYTRANSFER\b"),"8.4","","CURLOPT_BINARYTRANSFER; remove it (no effect)"),
+  (re.compile(r"\$HTTP_RAW_POST_DATA\b"),"","7.0","$HTTP_RAW_POST_DATA; read php://input"),
+  (re.compile(r"\$php_errormsg\b"),"7.2","8.0","$php_errormsg; use error_get_last()"),
+  (re.compile(r"\$http_response_header\b"),"8.5","","$http_response_header; use http_get_last_response_headers()"),
+  (re.compile(r"\bfunction\s+__autoload\s*\("),"7.2","8.0","__autoload(); use spl_autoload_register"),
+  (re.compile(r"\bfunction\s+&?\w*\s*\((?:[^)\n]{0,400}?,)?\s*(?:(?:public|private|protected|readonly)\s+){0,3}(?!(?:mixed|null)\b)[A-Za-z_\\][\w\\]{0,80}\s+&?(?:\.\.\.)?\$\w+\s*=\s*null\b"),"8.4","",
+   "implicitly nullable parameter (Type $x = null); write ?Type $x = null"),
+]
+
+def _is_example(name):
+    n=name.lower()
+    return any(x in n for x in (".example",".sample",".dist",".template","example.","sample.")) or n.endswith((".example",".sample",".dist"))
+
+def code_scan(target):
+    """Code-level heuristics from repeat pentest findings: missing input validation, client-controlled
+    debug switches, weak tokens, secrets in public env names, source maps in production builds, no
+    throttle on auth routes, deny-list "fixes" and PHP upgrade blockers. Test files are skipped."""
+    findings=[]; p=Path(target); base=p.resolve() if p.is_dir() else Path.cwd().resolve()
+    per_file={}
+    def add(rule,sev,fp,n,msg,code=""):
+        k=str(fp); per_file[k]=per_file.get(k,0)+1
+        if per_file[k]>MAX_PER_FILE: return
+        # Quoted literals of 8+ characters (salts, keys) are masked; credentials too.
+        code=_redact(re.sub(r"(['\"])[^'\"\n]{8,300}\1",r"\1[literal]\1",code.strip()))
+        findings.append({"rule":rule,"severity":sev,"file":str(fp),"line":n,"message":msg,"code":code[:180],"engine":"code-scan"})
+    files=walk_files_all(target)
+    laravel_limiter=False
+    # A linked app/ folder can point anywhere on the machine; never walk it.
+    if p.is_dir() and (p/"app").is_dir() and not is_link_dir(str(p/"app")):
+        for fp in _walk(p/"app",SKIP):
+            if fp.suffix.lower()==".php" and _LARAVEL_LIMITER.search(_read(fp)): laravel_limiter=True; break
+    for fp in files:
+        name=fp.name.lower(); suf=fp.suffix.lower()
+        parts=_rel_parts(fp,base); low_dirs=[x.lower() for x in parts[:-1]]
+        if suf==".map" and any(d in BUILD_DIRS for d in low_dirs) and not any(d in WEBROOTS for d in low_dirs):
+            add("SOURCEMAP_IN_PROD","MEDIUM",fp,0,"Source map in a production build folder. Deployed, it gives anyone the original front-end source, "
+                "including hidden routes, keys and business rules. Turn source maps off for production builds or keep them off the server.")
+            continue
+        envfile=name==".env" or name.startswith(".env.")
+        if not (envfile or suf in EXT or suf in WEB_EXT or suf in (".mjs",".cjs",".svelte",".properties")): continue
+        if is_test_path(fp,base): continue
+        try:
+            if fp.stat().st_size>3_000_000: continue
+            text=fp.read_text(encoding="utf-8-sig",errors="ignore")
+        except OSError: continue
+        lines=text.splitlines()
+        is_php=suf in PHP_EXT; is_js=suf in JS_EXT or suf in (".vue",".svelte")
+        # Secrets under public env prefixes: the bundler inlines them into the browser bundle.
+        if envfile or is_js or suf in (".json",".yml",".yaml") or name.startswith(("next.config","vite.config","nuxt.config")) or name=="dockerfile":
+            if suf!=".json" or name=="package.json":
+                seen=set()
+                for n,line in enumerate(lines,1):
+                    if len(line)>CODE_LINE_MAX: continue
+                    for m in PUBLIC_ENV.finditer(line):
+                        v=m.group(0)
+                        if v in seen or not PUBLIC_ENV_SECRET_WORD.search(v) or PUBLIC_ENV_OK.search(v): continue
+                        seen.add(v)
+                        add("PUBLIC_ENV_SECRET","HIGH",fp,n,f"{v}: a secret-looking name under a public prefix. Bundlers copy these values into the "
+                            "JavaScript every visitor downloads. Keep the secret on the server (no public prefix) and rotate it if it was ever built.",v)
+        if name.startswith(("vite.config","webpack","vue.config","next.config","nuxt.config")) and "dev" not in name or name.startswith(".env.production"):
+            for n,line in enumerate(lines,1):
+                if len(line)<=CODE_LINE_MAX and SOURCEMAP_CFG.search(line) and not line.lstrip().startswith(("//","#","*")):
+                    add("SOURCEMAP_IN_PROD","MEDIUM",fp,n,"Production build emits public source maps. Set it to false (or 'hidden' and upload maps "
+                        "to your error tracker only).",line)
+        if envfile or suf in (".json",".properties",".yml",".yaml",".xml",".sql",".md"): continue
+        # --- per-line rules on code ---
+        for n,line in enumerate(lines,1):
+            if len(line)>CODE_LINE_MAX or not line.strip(): continue
+            st=line.lstrip()
+            if st.startswith(("//","#","*","/*","--")): continue
+            # Client-controlled debug or admin switch.
+            if _DEBUG_ACCESSOR.search(line) and not _LOCAL_ONLY.search(line):
+                win="\n".join(lines[n-1:n+8])
+                cond=re.search(r"\bif\b|\?|&&|\|\||==|@Request|\bwhen\s*\(|=",line)
+                if cond and _DEBUG_SINK.search(win):
+                    add("DEBUG_FLAG_FROM_REQUEST","HIGH",fp,n,"A request parameter or header (debug, test, admin, verbose...) switches on config, env, stack "
+                        "trace or role output. Anyone can send it in production. Remove the switch, or tie it to the server environment only "
+                        "(app()->isLocal(), NODE_ENV) with no request input.",line)
+                elif cond and _LOGLEVEL_SINK.search(win):
+                    add("DEBUG_FLAG_FROM_REQUEST","MEDIUM",fp,n,"A request parameter changes the log level. Callers can flood logs or expose detail; "
+                        "control logging from server configuration only.",line)
+            # Tokens built from user data or time, short codes and short tokens.
+            m=_ASSIGN.search(line)
+            if m:
+                lhs,rhs=m.group(1),m.group(2)
+                if _token_like(lhs) and _WEAK_TOKEN_SRC.search(rhs) and _USER_MARKER.search(rhs) and not _CSPRNG.search(rhs):
+                    add("TOKEN_FROM_USER_DATA","HIGH",fp,n,f"{lhs} is built from user data or the clock (encode or hash of id, email, role or time). "
+                        "Anyone who knows the inputs can compute it. Use a CSPRNG token of at least 128 bits (random_bytes(32), "
+                        "crypto.randomBytes(32), secrets.token_urlsafe(32)), store only its hash, make it single use and expire it.",line)
+                elif _code_like(lhs):
+                    r=_SHORT_RANGE.search(rhs)
+                    if r:
+                        hi=int(next(g for g in (r.group(2),r.group(3),r.group(4)) if g))
+                        if hi<100000:
+                            add("SHORT_NUMERIC_CODE","MEDIUM",fp,n,f"{lhs} is a numeric code under 6 digits. Without a strict attempt limit it can be "
+                                "guessed in minutes. Use 6+ digits from random_int / secrets, expire it, and throttle and lock after a few wrong tries.",line)
+                if _token_like(lhs):
+                    t=_SHORT_TOKEN.search(rhs)
+                    if t and int(t.group(1))<16:
+                        add("TOKEN_TOO_SHORT","MEDIUM",fp,n,f"{lhs} is too short to be unguessable. Use at least 16 random bytes (32 hex or "
+                            "22 base64 characters), for example random_bytes(32) or Str::random(40).",line)
+            # A deny-list "fix" in front of a sink that is still built from strings.
+            if (_DENY_CHECK.search(line) and _ATTACK_LITERAL.search(line)) or _PY_IN_CHECK.search(line):
+                win=lines[n:n+10]
+                if any(len(l)<=CODE_LINE_MAX and (any(x.search(l) for x in _DENY_SINKS) or _DENY_SINK_EXTRA.search(l)) for l in win):
+                    add("DENYLIST_FIX","MEDIUM",fp,n,"Deny-list fix: the code rejects one attack-looking string, but the query, output or command below "
+                        "is still built from strings. Other spellings get through and the retest fails. Fix the sink itself (parameters, "
+                        "output encoding, argument arrays) and drop the string check.",line)
+        # Missing input validation (Laravel controllers, Express handlers).
+        starts=None
+        if is_php and re.search(r"\bclass\s+\w*Controller\b",text):
+            starts=_line_starts(text)
+            ms=list(_METHOD.finditer(text))
+            for i,mm in enumerate(ms):
+                if per_file.get(str(fp),0)>=MAX_PER_FILE: break
+                body=text[mm.end():ms[i+1].start() if i+1<len(ms) else len(text)]
+                if _FORM_REQUEST.search(mm.group(2)) or _VALIDATED_LARAVEL.search(body): continue
+                iu=_INPUT_LARAVEL.search(body)
+                if iu:
+                    ln=_line_at(starts,mm.end()+iu.start())
+                    add("MISSING_INPUT_VALIDATION","MEDIUM",fp,ln,f"{mm.group(1)}() reads request input with no validation step. Use a FormRequest "
+                        "(or $request->validate([...])) with rules for type, length and format, then read only $request->validated().",lines[ln-1] if ln<=len(lines) else "")
+        if is_js and _EXPRESS_ROUTE.search(text) and not _VALIDATOR_LIBS.search(text):
+            mb=_EXPRESS_BODY.search(text)
+            if mb:
+                ln=_line_at(starts or _line_starts(text),mb.start())
+                add("MISSING_INPUT_VALIDATION","MEDIUM",fp,ln,"Route handlers here read req.body, but no validator (zod, joi, express-validator, "
+                    "celebrate, yup, ajv) is used in this file. Validate every body against a schema at the start of the handler and use "
+                    "only the parsed result.",lines[ln-1] if ln<=len(lines) else "")
+        # No throttle on login, OTP, reset and verify routes.
+        if is_php and "routes" in low_dirs:
+            depth=0; stack=[]; thr_open=0      # thr_open: throttled groups currently open (no list scans)
+            for n,line in enumerate(lines,1):
+                if len(line)>CODE_LINE_MAX: continue
+                if "group(" in line or "Route::group" in line:
+                    header=" ".join(lines[max(0,n-4):n])
+                    thr="throttle" in header.lower()
+                    opened=line.count("{")-line.count("}")
+                    if opened>0 and len(stack)<500: stack.append((depth+1,thr)); thr_open+=thr
+                    depth+=opened
+                else:
+                    depth+=line.count("{")-line.count("}")
+                while stack and stack[-1][0]>depth: thr_open-=stack.pop()[1]
+                m=_LARAVEL_ROUTE.search(line)
+                if not m or not _AUTH_PATH.search(m.group(2)): continue
+                if per_file.get(str(fp),0)>=MAX_PER_FILE: break
+                stmt=line
+                k=n
+                while ";" not in stmt and k<len(lines) and k<n+6: stmt+=lines[k]; k+=1
+                if "throttle" in stmt.lower() or thr_open>0 or "public-object" in stmt: continue
+                sev="LOW" if laravel_limiter else ("HIGH" if _CODE_PATH.search(m.group(2)) else "MEDIUM")
+                add("AUTH_ROUTE_NO_THROTTLE",sev,fp,n,f"'{m.group(2)}' takes credentials or codes but has no throttle middleware. Add "
+                    "->middleware('throttle:5,1') (or a RateLimiter::for named limiter) and lock out after repeated failures."+
+                    (" A RateLimiter is used elsewhere in app/; confirm it covers this route." if laravel_limiter else ""),line)
+        if is_js and not _EXPRESS_GLOBAL_LIMIT.search(text):
+            for n,line in enumerate(lines,1):
+                if len(line)>CODE_LINE_MAX: continue
+                m=_EXPRESS_AUTH_ROUTE.search(line)
+                if not m or not _AUTH_PATH.search(m.group(2)) or _LIMITER_WORD.search(m.group(3)): continue
+                add("AUTH_ROUTE_NO_THROTTLE","HIGH" if _CODE_PATH.search(m.group(2)) else "MEDIUM",fp,n,f"'{m.group(2)}' takes credentials "
+                    "or codes but no rate limiter is applied (express-rate-limit or similar, on the route or with app.use). Add one and lock "
+                    "out after repeated failures.",line)
+        # PHP upgrade readiness (LOW): one finding per function or construct per file.
+        if is_php:
+            seen={}
+            blade=name.endswith(".blade.php")
+            for n,line in enumerate(lines,1):
+                if len(line)>CODE_LINE_MAX: continue
+                st=line.lstrip()
+                if st.startswith(("//","#","*","/*")): continue
+                for m in PHP_DEPRECATED_RX.finditer(line):
+                    fn=m.group(1).lower()
+                    if re.search(r"function\s+&?$",line[:m.start()]): continue
+                    if fn in PHP_DEPRECATED_FUNCS: dep,rem,rep=PHP_DEPRECATED_FUNCS[fn]
+                    else: dep,rem,rep=next(v for k,v in PHP_DEPRECATED_PREFIX.items() if fn.startswith(k))
+                    seen.setdefault(fn,(n,dep,rem,rep,line))
+                for rx,dep,rem,what in PHP_DEPRECATED_SYNTAX:
+                    if blade and "${" in rx.pattern: continue
+                    if rx.search(line): seen.setdefault(what,(n,dep,rem,"",line))
+            for key,(n,dep,rem,rep,line) in seen.items():
+                when=(f"deprecated in PHP {dep}" if dep else "")+(", " if dep and rem else "")+(f"removed in PHP {rem}" if rem else "")
+                add("PHP_DEPRECATED_API","LOW",fp,n,f"{key}: {when}. "+(f"Replace with {rep}. " if rep else "")+
+                    "Fix before moving to PHP 8.5 so the upgrade does not break or reopen old code paths.",line)
+    return findings
+
+# --- database configuration and migrations ---
+_DB_USER_KEY=re.compile(r"(?i)^\s*(?:export\s+)?(?:DB_USER(?:NAME)?|DATABASE_USER(?:NAME)?|MYSQL_USER|POSTGRES_USER|PGUSER|DB_ROOT_USER|spring\.datasource\.username|username)\s*(?:=|:)\s*['\"]?(root|sa|postgres|admin)['\"]?\s*$")
+_DB_USER_PHP=re.compile(r"(?i)['\"]username['\"]\s*=>\s*(env\(\s*['\"]\w+['\"]\s*,\s*)?['\"](root|sa|postgres)['\"]")
+_DB_URL_USER=re.compile(r"(?i)\b(?:mysql|mariadb|postgres(?:ql)?|mongodb(?:\+srv)?|sqlserver|jdbc:\w{1,20})://(root|sa|postgres|admin)(?::|@)|[?&;]user(?:name)?=(root|sa|postgres)\b")
+_DB_EMPTY_PW=re.compile(r"(?i)^\s*(?:export\s+)?(?:DB_PASSWORD|DATABASE_PASSWORD|MYSQL_PASSWORD|MYSQL_ROOT_PASSWORD|POSTGRES_PASSWORD|PGPASSWORD|spring\.datasource\.password)\s*(?:=|:)\s*(?:''|\"\")?\s*$")
+_DB_EMPTY_PW_FLAG=re.compile(r"(?i)\bMYSQL_ALLOW_EMPTY_PASSWORD\s*[=:]\s*['\"]?(?:yes|true|1)\b|\bPOSTGRES_HOST_AUTH_METHOD\s*[=:]\s*['\"]?trust\b")
+_DB_EMPTY_PW_PHP=re.compile(r"(?i)['\"]password['\"]\s*=>\s*(?:''|\"\")\s*,")
+_DB_URL_NOPW=re.compile(r"(?i)\b(?:mysql|mariadb|postgres(?:ql)?|mongodb)://[A-Za-z0-9_.-]{1,64}@")
+_DB_NO_TLS=re.compile(r"(?i)\bsslmode['\"]?\s*(?:=|:|=>)\s*['\"]?(?:disable|allow)\b|\buseSSL\s*=\s*false\b|\brequireSSL\s*=\s*false\b|\bsslMode\s*=\s*DISABLED\b|"
+                      r"[?&;](?:ssl|tls)\s*=\s*false\b|[;?&]\s*encrypt\s*=\s*false\b|\btrustServerCertificate\s*=\s*true\b|\btlsAllowInvalidCertificates\s*=\s*true\b|"
+                      r"\bsslValidate\s*=\s*false\b|MYSQL_ATTR_SSL_VERIFY_SERVER_CERT\s*=>\s*false")
+_DB_SSL_FALSE=re.compile(r"\bssl\s*:\s*false\b")
+_LOCALHOST=re.compile(r"(?i)localhost|127\.0\.0\.1|::1|host\.docker\.internal")
+_DB_BIND=re.compile(r"(?i)^\s*bind[-_]address\s*=\s*(?:0\.0\.0\.0|\*|::)\s*$|^\s*listen_addresses\s*=\s*'(?:\*|0\.0\.0\.0)'|^\s*bindIp\s*:\s*['\"]?0\.0\.0\.0|^\s*bindIpAll\s*:\s*true\b|^\s*bind\s+(?:0\.0\.0\.0|\*)(?:\s|$)")
+_DB_PORT_PUBLISHED=re.compile(r"^\s*-\s*['\"]?(?:0\.0\.0\.0:)?(3306|5432|27017|1433|1521|6379):\d{2,5}['\"]?\s*$")
+_DB_TRUST=re.compile(r"(?i)^\s*host\w*\s+\S+\s+\S+\s+(?!127\.0\.0\.1/32\b|::1/128\b)\S+\s+trust\b|^\s*authorization\s*:\s*['\"]?disabled\b")
+_DB_GRANT=re.compile(r"(?i)\bGRANT\s+ALL(?:\s+PRIVILEGES)?\s+ON\b|\bWITH\s+GRANT\s+OPTION\b|\b(?:CREATE|ALTER)\s+(?:USER|ROLE)\b[^\n;]{0,200}?\bSUPERUSER\b|"
+                     r"\bGRANT\b[^\n;]{0,300}?\bTO\s+['\"`]?\w{1,64}['\"`]?@['\"`]%['\"`]")
+_DB_LOCAL_INFILE=re.compile(r"(?i)\blocal[-_]infile\s*=\s*(?:1|on|true)\b|\bLOAD\s+DATA\s+LOCAL\s+INFILE\b|MYSQL_ATTR_LOCAL_INFILE\s*=>\s*true")
+_COL_PLAIN_PW=re.compile(r"(?i)\b(plain_?password|password_?plain|plaintext_?password|password_?plaintext|clear_?password|raw_?password|decrypted_?password|password_?text)\b")
+_COL_CARD=re.compile(r"(?i)\b(card_?number|cc_?number|credit_?card_?number|credit_?card|card_?no|pan_?number|cvv2?|cvc2?|card_?cvv|card_?cvc)\b")
+_COL_DEF=re.compile(r"(?i)\$table->|\bt\.\w+\b|models\.\w+Field|Column\s*\(|add_?column|ADD\s+COLUMN|CREATE\s+TABLE|\b(?:VARCHAR|CHAR|TEXT|INTEGER|INT|BIGINT|NUMERIC|DECIMAL|BLOB)\b|\bString\b")
+_COL_SHORT_PW=re.compile(r"(?i)['\"`]?\b(?:password|passwd|pwd)['\"`]?\s*(?:,\s*|\s+(?:var)?char\s*\(\s*)(\d{1,2})\s*\)")
+DB_CFG_NAMES=("my.cnf","mysqld.cnf","my.ini","postgresql.conf","pg_hba.conf","mongod.conf","redis.conf")
+_REDACT_URL=re.compile(r"://[^\s'\"@/]{0,300}@")
+# key=value, key: value, 'key' => 'value'; a quoted value is masked whole, spaces included.
+_REDACT_KV=re.compile(r"(?i)\b(password|passwd|pwd|pass|secret|token|PGPASSWORD|[A-Z_]*PASSWORD)(['\"]?\s*(?:=>|=|:)\s*)(?:'[^'\n]{0,300}'|\"[^\"\n]{0,300}\"|[^\s;&'\",]{1,300})")
+# SQL: IDENTIFIED BY '...', PASSWORD '...', WITH PASSWORD '...'
+_REDACT_SQL=re.compile(r"(?i)\b(IDENTIFIED\s+(?:WITH\s+\w+\s+)?BY|PASSWORD)(\s+)(?:'[^'\n]{0,300}'|\"[^\"\n]{0,300}\")")
+
+def _redact(line):
+    # Findings show the line for context; credentials in it are masked first.
+    line=_REDACT_URL.sub("://[redacted]@",line)
+    line=_REDACT_SQL.sub(r"\1\2'[redacted]'",line)
+    return _REDACT_KV.sub(r"\1\2[redacted]",line)
+
+def db_config_scan(target):
+    """MySQL, PostgreSQL and MongoDB configuration and migrations: root or default accounts, empty
+    passwords, no TLS, listening on every interface, trust auth, GRANT ALL, plaintext password or card
+    columns. MEDIUM, or LOW where the file is an example or the host is local."""
+    findings=[]; p=Path(target); base=p.resolve() if p.is_dir() else Path.cwd().resolve()
+    per_file={}
+    def add(rule,sev,fp,n,msg,code=""):
+        k=str(fp); per_file[k]=per_file.get(k,0)+1
+        if per_file[k]>MAX_PER_FILE: return
+        findings.append({"rule":rule,"severity":sev,"file":str(fp),"line":n,"message":msg,"code":_redact(code.strip())[:180],"engine":"db-config"})
+    for fp in walk_files_all(target):
+        name=fp.name.lower(); suf=fp.suffix.lower()
+        envfile=name==".env" or name.startswith(".env.") or name.endswith(".env")
+        if not (envfile or name in DB_CFG_NAMES or suf in (".php",".py",".js",".ts",".rb",".java",".properties",".yml",".yaml",".json",".xml",
+                                                          ".sql",".conf",".cnf",".ini",".toml",".prisma") or name=="dockerfile"): continue
+        if is_test_path(fp,base): continue
+        parts=_rel_parts(fp,base); low="/".join(x.lower() for x in parts)
+        example=_is_example(name)
+        migration=suf==".sql" or "migration" in low or "/migrate/" in "/"+low or name=="schema.prisma" or name=="schema.rb"
+        compose=name.startswith(("docker-compose","compose.")) and suf in (".yml",".yaml")
+        dbish=re.search(r"(?i)database|\bdb\b|knexfile|ormconfig|datasource|sequelize|prisma|typeorm|mongo|mysql|postgres|settings",low) is not None
+        try:
+            if fp.stat().st_size>3_000_000: continue
+            lines=fp.read_text(encoding="utf-8-sig",errors="ignore").splitlines()
+        except OSError: continue
+        for n,line in enumerate(lines,1):
+            if len(line)>CODE_LINE_MAX or not line.strip(): continue
+            st=line.lstrip()
+            if st.startswith(("#","//","--",";","*")): continue     # comment lines in every format we read
+            local=bool(_LOCALHOST.search(line))
+            m=_DB_USER_KEY.search(line) if (envfile or suf in (".properties",".yml",".yaml",".conf",".ini",".toml")) else None
+            if m and (envfile or "datasource" in line.lower() or dbish or "DB_" in line.upper() or compose or name.startswith(("application","bootstrap"))):
+                if m.group(1).lower()!="admin" or "datasource" in line.lower():
+                    add("DB_ROOT_USER","LOW" if example else "MEDIUM",fp,n,f"The app connects to the database as '{m.group(1)}', a superuser or "
+                        "default account. A SQL injection then owns the whole server. Create an app user with only SELECT, INSERT, UPDATE, "
+                        "DELETE on its own schema.",re.sub(r"=.*","= [user]",line))
+            m=_DB_USER_PHP.search(line) if suf==".php" else None
+            if m:
+                add("DB_ROOT_USER","LOW" if (m.group(1) or example) else "MEDIUM",fp,n,f"Database user '{m.group(2)}' is the "+
+                    ("fallback default" if m.group(1) else "configured user")+". Use a least-privilege app user and set it in the environment.",line)
+            m=_DB_URL_USER.search(line)
+            if m:
+                add("DB_ROOT_USER","LOW" if (example or local) else "MEDIUM",fp,n,f"Connection string uses the '{m.group(1) or m.group(2)}' account. "
+                    "Use a least-privilege app user.","[connection string redacted]")
+            if not example:
+                if _DB_EMPTY_PW.search(line) and (envfile or dbish or "datasource" in line.lower() or compose):
+                    add("DB_EMPTY_PASSWORD","MEDIUM",fp,n,"Database password is empty. Set a long random password from a secret store, even for "
+                        "internal networks.",line)
+                elif _DB_EMPTY_PW_FLAG.search(line):
+                    add("DB_EMPTY_PASSWORD","MEDIUM",fp,n,"The database container accepts logins without a password (empty password or trust). "
+                        "Set a password and remove this flag.",line)
+                elif suf==".php" and dbish and _DB_EMPTY_PW_PHP.search(line):
+                    add("DB_EMPTY_PASSWORD","MEDIUM",fp,n,"Database password is an empty literal. Read it from the environment and set a real one.",line)
+                elif _DB_URL_NOPW.search(line) and not re.search(r"(?i)://[^@\s]{0,64}:[^@\s]{0,200}@",line):
+                    add("DB_EMPTY_PASSWORD","LOW" if local else "MEDIUM",fp,n,"Connection string has a user but no password.","[connection string redacted]")
+            if _DB_NO_TLS.search(line) or ((dbish or "ormconfig" in name or "knexfile" in name) and suf in (".js",".ts",".yml",".yaml",".json") and _DB_SSL_FALSE.search(line)):
+                add("DB_NO_TLS","LOW" if (local or example) else "MEDIUM",fp,n,"Database connection without TLS (or without certificate checks). Credentials and data "
+                    "cross the network in clear text. Use sslmode=verify-full / useSSL=true with the server CA, or encrypt=true without trustServerCertificate.",
+                    re.sub(r"(?i)://[^\s'\"]{0,300}@","://[redacted]@",line))
+            if name in DB_CFG_NAMES or suf in (".cnf",".conf") or (name.startswith("mongod") and suf in (".yml",".yaml",".conf")):
+                if _DB_BIND.search(line):
+                    add("DB_BIND_ALL","MEDIUM",fp,n,"The database listens on every network interface. Bind it to 127.0.0.1 or the private interface, "
+                        "and firewall the port.",line)
+                if _DB_TRUST.search(line):
+                    add("DB_TRUST_AUTH","MEDIUM",fp,n,"Remote logins without a password (trust) or MongoDB authorization disabled. Use scram-sha-256 "
+                        "and enable authorization.",line)
+            if compose and _DB_PORT_PUBLISHED.search(line):
+                add("DB_BIND_ALL","LOW",fp,n,"A database port is published on every host interface. Use \"127.0.0.1:PORT:PORT\" or no ports at all "
+                    "(services reach it over the compose network).",line)
+            if migration or suf==".sql" or (suf==".php" and "DB::statement" in line):
+                if _DB_GRANT.search(line):
+                    add("DB_GRANT_ALL","MEDIUM",fp,n,"Over-broad database grant (ALL, GRANT OPTION, SUPERUSER or any host '%'). Grant only the statements "
+                        "the app needs on its own schema, from its own host.",line)
+            if _DB_LOCAL_INFILE.search(line) and (migration or suf in (".sql",".cnf",".ini",".php") or name in DB_CFG_NAMES):
+                add("DB_LOCAL_INFILE","LOW",fp,n,"LOAD DATA LOCAL / local_infile lets a malicious or injected query read files from the client host. "
+                    "Turn local_infile off unless the import truly needs it.",line)
+            if migration and _COL_DEF.search(line):
+                m=_COL_CARD.search(line)
+                if m:
+                    cvv=m.group(1).lower().replace("_","").startswith(("cvv","cvc","cardcvv","cardcvc"))
+                    add("DB_SENSITIVE_COLUMN","MEDIUM",fp,n,f"Column '{m.group(1)}' stores "+("the card security code, which PCI DSS forbids storing at all. "
+                        "Drop the column." if cvv else "a card number. Store the payment provider's token instead; if a PAN must be kept, "
+                        "encrypt it and show only the last four digits."),line)
+                m=_COL_PLAIN_PW.search(line)
+                if m:
+                    add("DB_SENSITIVE_COLUMN","MEDIUM",fp,n,f"Column '{m.group(1)}' suggests a password kept in plain or reversible form. Store "
+                        "only a password hash (bcrypt or argon2id) and drop this column.",line)
+                m=_COL_SHORT_PW.search(line)
+                if m and int(m.group(1))<60:
+                    add("DB_SENSITIVE_COLUMN","MEDIUM",fp,n,f"Password column is only {m.group(1)} characters wide, too short for a bcrypt or "
+                        "argon2 hash, so passwords are probably stored in plain text. Use password_hash / Hash::make and a 255 column.",line)
+    return findings
+
+# --- default values: guessable passwords, placeholder secret keys, predictable admin paths, open infra ---
+# A short, bundled list of the passwords seen most in default installs and leaked-password top lists.
+# Nothing is downloaded. Compared case-insensitively against the whole value.
+WEAK_PASSWORDS={"password","password1","password123","passw0rd","p@ssw0rd","p@ssword","pass","pass123","123456","1234567",
+    "12345678","123456789","1234567890","1234","12345","111111","000000","654321","qwerty","qwerty123","qwertyuiop","abc123",
+    "iloveyou","admin","admin123","admin@123","administrator","root","toor","test","test123","testing","guest","user","demo",
+    "welcome","welcome1","welcome123","letmein","changeme","change_me","changeit","secret","default","master","sa","postgres",
+    "mysql","mongo","redis","oracle"}
+WEAK_SECRETS={"secret","changeme","change_me","changeit","your-256-bit-secret","your-secret-key","your_secret_key","yoursecretkey",
+    "mysecret","my-secret","my_secret","supersecret","super-secret","keyboard cat","shhhhh","shhh","default","test","dev",
+    "development","password","jwtsecret","jwt_secret","jwt-secret","secretkey","secret_key","secret-key","s3cr3t","notasecret",
+    "insecure","123456","somerandomstring","abc123","qwerty"}
+_KV=re.compile(r"""([A-Za-z_][\w.\-]{0,80})['"]?\s*(?:=>|=|:)\s*(?:(['"])([^'"\n]{0,200})\2|([^\s'",;#)}\]]{1,200}))""")
+_PLACEHOLDER=re.compile(r"(?i)^\$\{.*\}$|^\$\w+$|^<.*>$|^%\w+%$|^\{\{.*\}\}$|^\{.*\}$|your[-_ ]|replace[-_ ]?me|^x{3,}$|\*{3,}|^\.\.\.$|^(?:null|none|nil|undefined|~)$|example|placeholder|^env\(|getenv|process\.env|os\.environ|System\.getenv")
+_HASHED_LITERAL=re.compile(r"(?i)\b(?:Hash::make|bcrypt|password_hash|make_password|set_password|generate_password_hash|passwordEncoder\.encode|encoder\.encode)\s*\(\s*['\"]([^'\"\n]{1,64})['\"]")
+_SUPERUSER=re.compile(r"\bcreate_superuser\s*\(([^)\n]{0,300})\)")
+_SA_EMPTY=re.compile(r"(?i)\b(?:user\s*id|uid|user|username)\s*=\s*sa\s*;[^\n]{0,200}?\b(?:password|pwd)\s*=\s*(?:;|$|['\"])")
+_URL_CRED=re.compile(r"://([^:/\s@'\"]{1,64}):([^@\s/'\"]{1,128})@")
+_JWT_LITERAL=re.compile(r"\bjwt\s*\.\s*(?:sign|verify)\s*\([^,\n]{1,200},\s*['\"]([^'\"\n]{0,200})['\"]")
+_SESSION_SECRET=re.compile(r"(?i)\b(?:session|cookieSession|expressSession)\s*\([^\n]{0,300}?\bsecret\s*:\s*['\"]([^'\"\n]{0,200})['\"]|\bcookieParser\s*\(\s*['\"]([^'\"\n]{0,200})['\"]")
+SENSITIVE_SEGS_HIGH={"admin","administrator","phpmyadmin","adminer","console","actuator","_profiler","telescope","horizon"}
+SENSITIVE_SEGS={"backup","debug","test"}|SENSITIVE_SEGS_HIGH
+SENSITIVE_WEB_DIRS={"backup","backups","old","bak","test","tmp","temp","dump","dumps"}
+_LARAVEL_ANY_ROUTE=re.compile(r"Route::(?:get|post|put|patch|delete|any|match|resource|view|redirect|prefix)\s*\(\s*(?:\[[^\]\n]{0,80}\]\s*,\s*)?['\"]([^'\"\n]{0,200})['\"]|['\"]prefix['\"]\s*=>\s*['\"]([^'\"\n]{0,200})['\"]")
+_LARAVEL_AUTH_MW=re.compile(r"(?i)middleware\s*\(\s*\[?[^)\n]{0,200}?['\"](?:auth|can:|role|permission|admin|is_admin|verified|password\.confirm)|['\"]middleware['\"]\s*=>\s*\[?[^\]\n]{0,200}?['\"](?:auth|can:|role|admin|verified)")
+_EXPRESS_ANY_ROUTE=re.compile(r"\b(?:app|router|\w*[Rr]outer|server)\s*\.\s*(?:use|get|post|put|patch|delete|all)\s*\(\s*['\"`]([^'\"`\n]{0,200})['\"`]([^\n]{0,400})")
+_EXPRESS_AUTH_WORD=re.compile(r"(?i)auth|ensure|require(?:Login|Admin|Role|User)|isAdmin|isAuthenticated|passport|protect|guard|verifyToken|verifyJwt|jwt|basicAuth|\bacl\b|permit|hasRole|checkRole|authorize")
+_SPRING_MAPPING=re.compile(r"@(?:Request|Get|Post|Put|Delete|Patch)Mapping\s*\(\s*(?:(?:value|path)\s*=\s*)?\{?\s*\"([^\"\n]{0,200})\"")
+_SPRING_METHOD_AUTH=re.compile(r"@(?:PreAuthorize|PostAuthorize|Secured|RolesAllowed)\b")
+_SPRING_ANY_AUTH=re.compile(r"anyRequest\s*\(\s*\)\s*\.\s*(?:authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|denyAll|fullyAuthenticated)\b")
+_SPRING_MATCHER=re.compile(r"(?:requestMatchers|antMatchers|mvcMatchers|pathMatchers)\s*\(([^)\n]{0,300})\)\s*\.\s*(hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|authenticated|denyAll|access|permitAll)\b")
+_REDIS_IMAGE=re.compile(r"(?i)^\s*image\s*:\s*['\"]?(?:[\w.-]+/)?(?:bitnami/)?(redis|mongo|mongodb)(?::|['\"]?\s*$)")
+
+def _sensitive_seg(path):
+    # First path segment for backup/debug/test; any of the first four for admin and console tools,
+    # so /api/v1/admin is caught too. {param} and :param segments are ignored.
+    segs=[s.lower() for s in path.strip().strip("/").split("/") if s and not s.startswith(("{",":"))]
+    if segs and segs[0] in SENSITIVE_SEGS: return segs[0]
+    return next((s for s in segs[:4] if s in SENSITIVE_SEGS_HIGH),None)
+
+def _weak_pw(v):
+    v=v.strip()
+    return v.lower() in WEAK_PASSWORDS
+
+def _pw_key(k):
+    k=k.lower()
+    last=re.split(r"[._\-]",k)[-1]
+    return last in ("password","passwd","pwd","pass","requirepass") or k.endswith(("password","passwd"))
+
+def _secret_key_kind(k):
+    k=k.lower().replace("-","_")
+    if k in ("app_key",): return "app_key"
+    if k=="secret_key" or k.endswith((".secret_key","django_secret_key")): return "django"
+    # A signing secret: the name says secret/key/signing AND what it signs. Lifetimes, algorithms, issuers,
+    # header names and public keys are not secrets (jwt_expires_in: 3600 is not a short secret).
+    if re.search(r"public|expire|ttl|lifetime|algo|issuer|audience|header|name$|path|refresh_?ttl|leeway|blacklist",k): return ""
+    if re.search(r"secret|signing|_key$|\.key$|^key$",k) and re.search(r"jwt|hmac|signing|token|session|cookie|app_secret|auth|encryption|secret_key_base",k):
+        return "signing"
+    return ""
+
+def default_cred_scan(target):
+    """Guessable or default passwords, placeholder secret keys, admin and debug paths without auth,
+    sensitive folders in the web root, and databases or caches left without auth. Values are never
+    echoed in a finding."""
+    findings=[]; p=Path(target); base=p.resolve() if p.is_dir() else Path.cwd().resolve()
+    per_file={}
+    def add(rule,sev,fp,n,msg,code=""):
+        k=str(fp); per_file[k]=per_file.get(k,0)+1
+        if per_file[k]>MAX_PER_FILE: return
+        findings.append({"rule":rule,"severity":sev,"file":str(fp),"line":n,"message":msg,"code":_redact(code)[:180],"engine":"default-values"})
+    files=walk_files_all(target)
+    # Project-wide: does a Spring security config already protect a path, or every request?
+    spring_any_auth=False; spring_cover=set(); spring_open=set()   # open = named in a permitAll() matcher
+    for fp in files:
+        if fp.suffix.lower() in (".java",".kt"):
+            t=_read(fp)
+            if "SecurityFilterChain" in t or "WebSecurityConfigurer" in t or "HttpSecurity" in t:
+                if _SPRING_ANY_AUTH.search(t): spring_any_auth=True
+                for m in _SPRING_MATCHER.finditer(t):
+                    target_set=spring_open if m.group(2)=="permitAll" else spring_cover
+                    for path in re.findall(r"\"([^\"\n]{0,200})\"",m.group(1)):
+                        target_set.update(s.lower() for s in path.strip("/").split("/") if s and "*" not in s)
+    seen_dirs=set()
+    for fp in files:
+        name=fp.name.lower(); suf=fp.suffix.lower()
+        parts=_rel_parts(fp,base); dirs=[x.lower() for x in parts[:-1]]
+        test=is_test_path(fp,base); example=_is_example(name)
+        # Sensitive folders and admin tools in the web root.
+        wr=[i for i,d in enumerate(dirs) if d in STRICT_WEBROOTS]
+        if wr:
+            for i in range(wr[0]+1,len(dirs)):
+                if dirs[i] in ("vendor","plugins","node_modules","bower_components","lib","libs","assets","js","css"): break
+                if dirs[i] in SENSITIVE_WEB_DIRS:
+                    key="/".join(dirs[:i+1])
+                    if key not in seen_dirs:
+                        seen_dirs.add(key)
+                        add("SENSITIVE_WEBROOT_PATH","MEDIUM",fp.parent,0,f"A '{dirs[i]}' folder is inside the public web root. Backups, old "
+                            "copies, test pages and dumps there are downloadable by anyone who guesses the name. Move it out of the web root.")
+                    break
+        if suf==".php" and (name.startswith("adminer") or (name in ("phpinfo.php","info.php","php_info.php","test.php") and not wr and len(dirs)==0)) or \
+           ("phpmyadmin" in dirs and name=="index.php" and dirs.index("phpmyadmin")<=(wr[0]+1 if wr else 0)):
+            if not (name in ("info.php","test.php") and "phpinfo(" not in _read(fp)):
+                add("EXPOSED_ADMIN_TOOL","HIGH",fp,0,f"{name}: a database admin tool or phpinfo page shipped with the site. Anyone can find it by its "
+                    "well-known name. Remove it from the deploy; run admin tools only over a VPN or SSH tunnel.")
+        textual=name==".env" or name.startswith(".env.") or name.endswith(".env") or suf in (".php",".py",".js",".mjs",".cjs",".ts",".java",".kt",
+            ".rb",".go",".cs",".properties",".yml",".yaml",".json",".toml",".ini",".conf",".cnf",".xml",".sql") or name=="dockerfile"
+        if not textual or name in ("package-lock.json","composer.lock","yarn.lock","pnpm-lock.yaml") or "node_modules" in dirs: continue
+        try:
+            if fp.stat().st_size>2_000_000: continue
+            text=fp.read_text(encoding="utf-8-sig",errors="ignore")
+        except OSError: continue
+        lines=text.splitlines()
+        # Tests, example files and model factories (Laravel's UserFactory uses 'password') are MEDIUM.
+        sev_pw="MEDIUM" if (test or example or "factories" in dirs or "factory" in name) else "HIGH"
+        if suf==".json" and any(d in ("lang","locales","locale","i18n","translations","messages") for d in dirs): continue
+        legacy_seed=("seed" in str(fp).lower() or "fixture" in str(fp).lower() or "migration" in str(fp).lower())
+        last_user=(None,0)
+        envfile=name==".env" or name.startswith(".env.")
+        compose=name.startswith(("docker-compose","compose.")) and suf in (".yml",".yaml")
+        cfg_like=envfile or example or suf in (".properties",".yml",".yaml",".ini",".conf",".cnf",".toml") or name=="dockerfile"
+        for n,line in enumerate(lines,1):
+            if len(line)>CODE_LINE_MAX or not line.strip(): continue
+            st=line.lstrip()
+            if st.startswith(("#","//","/*","*","--",";")): continue
+            if legacy_seed and WEAK_DEFAULT_CRED.search(line): continue   # already reported by config_scan
+            hit=None
+            for m in _KV.finditer(line):
+                # In code an unquoted right-hand side is an expression (X_SECRET = re.compile(...)), not a value.
+                if m.group(3) is None and not cfg_like: continue
+                k=m.group(1); v=(m.group(3) if m.group(3) is not None else m.group(4) or "").strip()
+                kl=k.lower()
+                if re.search(r"(?i)^(?:db_|database_|mysql_|postgres_|pg|spring\.datasource\.|mongo\w*_)?user(?:name)?$|^user(?:_?name)?$",kl.split(".")[-1]) and v and not _PLACEHOLDER.search(v):
+                    last_user=(v.lower(),n)
+                # Known weak values win over the placeholder test ("your-256-bit-secret" is copied from docs and deployed).
+                if not v or (_PLACEHOLDER.search(v) and v.lower() not in WEAK_SECRETS and v.lower() not in WEAK_PASSWORDS): continue
+                if v != v.lower() and v.lower()==re.split(r"[._\-]",kl)[-1]: continue   # a label: "password": "Password"
+                if _pw_key(k) and (_weak_pw(v) or (last_user[0]==v.lower() and n-last_user[1]<=5)):
+                    hit=("WEAK_DEFAULT_CREDENTIAL",sev_pw,f"{k} is a guessable or default password (a common-password list entry, or the same as the "
+                         "user name). Generate a long random password per environment and keep it in a secret store.",f"{k} = [weak value]"); break
+                kind=_secret_key_kind(k)
+                vl=v.lower()
+                if kind=="app_key" and (vl in ("somerandomstring","base64:") or vl in WEAK_SECRETS):
+                    hit=("DEFAULT_SECRET_KEY","MEDIUM" if test else "HIGH",f"{k} is a placeholder or example value. Anyone who knows it can forge "
+                         "encrypted cookies and signed URLs. Run php artisan key:generate per environment.",f"{k} = [placeholder]"); break
+                if kind=="django" and ("django-insecure" in vl or "changeme" in vl or vl in WEAK_SECRETS):
+                    hit=("DEFAULT_SECRET_KEY","MEDIUM" if test else "HIGH",f"{k} is the generated development key or a placeholder. Sessions, "
+                         "password reset tokens and signed data can be forged. Load a long random key from the environment in production.",f"{k} = [placeholder]"); break
+                if kind=="signing" and (vl in WEAK_SECRETS or len(v)<16):
+                    hit=("DEFAULT_SECRET_KEY","MEDIUM" if test else "HIGH",f"{k} is a well-known or short signing secret (under 16 characters). "
+                         "Tokens signed with it can be forged offline. Use 32+ random bytes from a secret store.",f"{k} = [weak value]"); break
+            if not hit and envfile and not example and re.match(r"\s*APP_KEY\s*=\s*$",line):
+                hit=("DEFAULT_SECRET_KEY","HIGH","APP_KEY is empty. Laravel then cannot encrypt cookies safely; run php artisan key:generate.","APP_KEY = [empty]")
+            if not hit:
+                m=_HASHED_LITERAL.search(line)
+                if m and _weak_pw(m.group(1)):
+                    hit=("WEAK_DEFAULT_CREDENTIAL",sev_pw,"A guessable password is hashed into a seeded or created account. Generate a random "
+                         "password at setup and force a change on first login.","[weak password literal]")
+            if not hit:
+                m=_SUPERUSER.search(line)
+                if m and any(_weak_pw(x) for x in re.findall(r"['\"]([^'\"\n]{1,64})['\"]",m.group(1))):
+                    hit=("WEAK_DEFAULT_CREDENTIAL",sev_pw,"Django superuser created with a guessable password. Read it from a secret at deploy time.","create_superuser([weak value])")
+            if not hit and _SA_EMPTY.search(line):
+                hit=("WEAK_DEFAULT_CREDENTIAL",sev_pw,"SQL Server 'sa' with an empty password. Disable sa, use a least-privilege login with a strong password.","sa / [empty]")
+            if not hit:
+                m=_URL_CRED.search(line)
+                if m and not _PLACEHOLDER.search(m.group(2)) and (_weak_pw(m.group(2)) or m.group(1).lower()==m.group(2).lower()):
+                    hit=("WEAK_DEFAULT_CREDENTIAL",sev_pw,"Connection string with a guessable or default password.","[connection string redacted]")
+            if not hit:
+                m=_JWT_LITERAL.search(line) or _SESSION_SECRET.search(line)
+                if m:
+                    v=next((g for g in m.groups() if g is not None),"")
+                    if v and (v.lower() in WEAK_SECRETS or (len(v)<16 and not _PLACEHOLDER.search(v))):
+                        hit=("DEFAULT_SECRET_KEY","MEDIUM" if test else "HIGH","JWT or session secret is a well-known or short literal "
+                             "(for example 'keyboard cat' from the docs). Load 32+ random bytes from the environment.","[weak secret literal]")
+            if hit:
+                add(hit[0],hit[1],fp,n,hit[2],hit[3])
+        # Admin, console and debug routes without auth.
+        if test: continue
+        if suf==".php" and "routes" in dirs:
+            depth=0; stack=[]; auth_open=0        # auth_open: auth-guarded groups currently open
+            for n,line in enumerate(lines,1):
+                if len(line)>CODE_LINE_MAX: continue
+                is_group="group(" in line or "Route::group" in line
+                own=False                            # auth flag of a group opened on this very line
+                if is_group:
+                    header=" ".join(lines[max(0,n-4):n])
+                    opened=line.count("{")-line.count("}")
+                    if opened>0 and len(stack)<500:
+                        own=bool(_LARAVEL_AUTH_MW.search(header)); stack.append((depth+1,own)); auth_open+=own
+                    depth+=opened
+                else:
+                    depth+=line.count("{")-line.count("}")
+                while stack and stack[-1][0]>depth: auth_open-=stack.pop()[1]
+                m=_LARAVEL_ANY_ROUTE.search(line)
+                if not m: continue
+                seg=_sensitive_seg(m.group(1) if m.group(1) is not None else m.group(2))
+                if not seg: continue
+                # The whole route statement: up to its ';', or for a closure route up to the line that closes
+                # it, so a ->middleware('auth') after "})" is seen.
+                stmt=line; k=n
+                if not is_group and line.count("{")>line.count("}"):
+                    bal=line.count("{")-line.count("}")
+                    while bal>0 and k<len(lines) and k<n+80:
+                        bal+=lines[k].count("{")-lines[k].count("}"); stmt+=lines[k]; k+=1
+                    if k<len(lines) and ";" not in lines[k-1]: stmt+=lines[k]
+                else:
+                    while ";" not in stmt and "{" not in stmt and k<len(lines) and k<n+6: stmt+=lines[k]; k+=1
+                guarded=(auth_open-own)>0           # an outer group's auth; the group's own header is checked below
+                if guarded or _LARAVEL_AUTH_MW.search(stmt) or "public-object" in stmt: continue
+                add("EXPOSED_ADMIN_PATH","HIGH" if seg in SENSITIVE_SEGS_HIGH else "MEDIUM",fp,n,f"'/{seg}' route has no auth middleware in this "
+                    "file. Admin, console and debug paths are the first thing scanners try. Put it behind auth plus a role check (can:, a policy), "
+                    "or remove it from production.",line.strip())
+        if suf in JS_EXT:
+            file_auth=bool(re.search(r"\.use\s*\(\s*(?:['\"`][^'\"`\n]{0,100}['\"`]\s*,\s*)?[^)\n]{0,100}?(?:auth|passport|jwt|basicAuth|ensure|protect|requireLogin)",text,re.I))
+            for n,line in enumerate(lines,1):
+                if len(line)>CODE_LINE_MAX: continue
+                m=_EXPRESS_ANY_ROUTE.search(line)
+                if not m: continue
+                seg=_sensitive_seg(m.group(1))
+                if not seg or _EXPRESS_AUTH_WORD.search(m.group(2)) or file_auth: continue
+                add("EXPOSED_ADMIN_PATH","HIGH" if seg in SENSITIVE_SEGS_HIGH else "MEDIUM",fp,n,f"'/{seg}' is mounted without an auth middleware. "
+                    "Add authentication and a role check on the route or router, or remove it from production.",line.strip())
+        if suf in (".java",".kt") and re.search(r"@(?:Rest)?Controller\b",text) and not _SPRING_METHOD_AUTH.search(text):
+            for n,line in enumerate(lines,1):
+                m=_SPRING_MAPPING.search(line)
+                if not m: continue
+                seg=_sensitive_seg(m.group(1))
+                if not seg or seg in spring_cover or (spring_any_auth and seg not in spring_open): continue
+                add("EXPOSED_ADMIN_PATH","HIGH" if seg in SENSITIVE_SEGS_HIGH else "MEDIUM",fp,n,f"'/{seg}' controller with no @PreAuthorize/@Secured "
+                    "and no security rule that requires a role for it. Protect it in the SecurityFilterChain (hasRole) or on the method.",line.strip())
+        # Caches and document stores published without auth (compose) or with protected mode off (redis.conf).
+        if compose:
+            for n,line in enumerate(lines,1):
+                m=_REDIS_IMAGE.match(line)
+                if not m: continue
+                ind=len(line)-len(line.lstrip())
+                blk=[]
+                for l in lines[n:n+60]:
+                    if l.strip() and (len(l)-len(l.lstrip()))<ind and not l.lstrip().startswith("-"): break
+                    blk.append(l)
+                b="\n".join(blk)
+                published=re.search(r"(?m)^\s*-\s*['\"]?(?!127\.0\.0\.1:)(?:0\.0\.0\.0:)?\d{2,5}:\d{2,5}",b) is not None
+                kind=m.group(1).lower()
+                noauth=(kind=="redis" and not re.search(r"(?i)requirepass|REDIS_PASSWORD|REDIS_ARGS",b)) or \
+                       (kind.startswith("mongo") and not re.search(r"(?i)MONGO_INITDB_ROOT_PASSWORD|MONGODB_ROOT_PASSWORD|--auth\b",b))
+                if noauth and published:
+                    add("DB_NO_AUTH","MEDIUM",fp,n,f"{kind} runs without a password and its port is published on every interface. Anyone who "
+                        "reaches the host can read and change the data (and Redis can be turned into code execution). Set a password and bind the "
+                        "port to 127.0.0.1 or drop it.",line.strip())
+        if name=="redis.conf" and re.search(r"(?m)^\s*protected-mode\s+no\b",text) and not re.search(r"(?m)^\s*requirepass\s+\S",text):
+            add("DB_NO_AUTH","MEDIUM",fp,0,"Redis has protected mode off and no requirepass. Set a password (or ACL users) and keep protected mode on.")
+    return findings
+
 def find_tool(name):
     # PATH only. On Windows both shutil.which and CreateProcess look in the current directory first, and
     # that is the repo being scanned, so a planted semgrep.bat would run and could fake a clean result.
@@ -423,7 +1282,7 @@ def semgrep_configs():
     # "auto" refuses to run with metrics off, so the default is explicit: org rules + registry packs.
     env=os.environ.get("SEMGREP_CONFIGS")
     if env: return [c for c in env.split(",") if c]
-    cfgs=[str(p) for p in (ORG_SEMGREP, ORG_SEMGREP.parent/"laravel-authz.yml") if p.exists()]
+    cfgs=[str(p) for p in (ORG_SEMGREP, ORG_SEMGREP.parent/"laravel-authz.yml", ORG_SEMGREP.parent/"java-spring.yml") if p.exists()]
     return cfgs+["p/default","p/owasp-top-ten","p/secrets"]
 
 # Registry rules rate many real injection classes WARNING (for example php.laravel.security.laravel-sql-injection),
@@ -692,7 +1551,7 @@ def main():
     ap.add_argument("--report",action="store_true",help="also write .security/ reports in quick mode")
     args=ap.parse_args()
     root=Path(".").resolve(); target=args.changed_file or args.target
-    findings=local_scan(target)+agent_scan(target)+library_scan(target)+config_scan(target)
+    findings=local_scan(target)+agent_scan(target)+library_scan(target)+config_scan(target)+malware_scan(target)+code_scan(target)+db_config_scan(target)+default_cred_scan(target)
     status={}; errors={}; notes=[]
     required=["semgrep","trivy","gitleaks"]
     if args.mode in ("full","ci"):
