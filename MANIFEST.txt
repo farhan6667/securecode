@@ -346,6 +346,7 @@ Added after the 6.2 review
 - tests/test_v7_integration_fixes.py
 - tests/test_v7_pentest.py
 - tests/test_v7_pentest2.py
+- tests/test_v7_pentest3.py
 - tests/test_v7_rules.py
 - tests/vulnerable_sample.py
 - verify-global.py
