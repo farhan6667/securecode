@@ -174,7 +174,7 @@ def test_engine_readers_survive_hostile_reports(tmp_path):
 
 # --- V7I-03 stray control characters and duplicate v-html ---------------------------------------------------
 
-HIDDEN = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f​-‏‪-‮⁠-⁤⁦-⁩﻿]")
+HIDDEN = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 
 
 def test_rule_patterns_hold_no_control_characters():

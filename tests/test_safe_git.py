@@ -99,6 +99,24 @@ def test_scanner_runs_get_the_safe_git_environment(tmp_path):
     assert keys["core.hookspath"] == str(tmp_path / "nohooks") and keys["filter.evil.required"] == "false"
 
 
+def test_engine_env_keeps_its_values_but_gets_the_safe_git_settings(tmp_path):
+    # Merge of v7 (engines pass their own env, e.g. GOTOOLCHAIN=local) and v7-guard (safe git): an engine run must
+    # keep its own variables, lose any GIT_* it carries and still run nothing from the repo's .git/config.
+    repo, marks = hostile_repo(tmp_path)
+    g = load("secgate")
+    base = dict(os.environ, NFSC_ENGINE_MARK="kept", GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.fsmonitor",
+                GIT_CONFIG_VALUE_0="sh evil", GIT_DIR=str(tmp_path / "elsewhere"))
+    env = g.scanner_env(repo, str(tmp_path / "nohooks"), base)
+    assert env["NFSC_ENGINE_MARK"] == "kept" and "GIT_DIR" not in env
+    keys = {env[f"GIT_CONFIG_KEY_{i}"].lower(): env[f"GIT_CONFIG_VALUE_{i}"] for i in range(int(env["GIT_CONFIG_COUNT"]))}
+    assert keys["core.fsmonitor"] == "false" and keys["filter.evil.clean"] == "cat"
+    rc, out, err = g.run(["git", "status"], repo, env=base)
+    assert rc == 0, err
+    rc, out, err = g.run(["git", "diff", "--no-ext-diff", "HEAD"], repo, env=base)
+    assert rc == 0 and "print(2)" in out, err
+    assert not list(marks.iterdir()), [p.name for p in marks.iterdir()]
+
+
 def test_inherited_git_variables_are_dropped(monkeypatch, tmp_path):
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere"))
     monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'core.fsmonitor=evil'")
