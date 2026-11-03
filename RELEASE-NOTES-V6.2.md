@@ -1,3 +1,12 @@
+# NexaForge SecureCode 6.2.1
+
+- English trigger phrases: "Run Security Test" and "Run Advisory QA". The Roman Urdu phrases still work, and so
+  does asking in your own words.
+- The gate now spots Windows folder junctions on Python 3.10 and 3.11 too (it read a newer Python API before).
+- README: one-line install prompt, auto-update section and the full feature list.
+
+Updating from 6.2.0 happens by itself within a day, or run the updater by hand.
+
 # NexaForge SecureCode 6.2.0 (first public release, public preview)
 
 NexaForge SecureCode is a security layer for AI-assisted coding in Claude Code, Cursor and Codex. This is
