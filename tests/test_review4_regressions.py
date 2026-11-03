@@ -69,10 +69,20 @@ ALLOW = [
     bash("cp -r .claude/commands backup/"),
     bash("cd src/components && cp a.tsx b.tsx"),
     bash("npm run build > build.log 2>&1"),
+]
+
+# 7.0 positive model: allowed in 6.2, now the "unknown" class (outside the project, inline code): the managed default
+# of the repo checkout denies them, owner mode asks (see test_guard_positive_model.py).
+UNMODELLED = [
     bash("cat ~/.claude/settings.json"),
     bash("ls ~/.claude/skills"),
-    bash("python -c \"import os; e = {**os.environ}\""),          # .environ is not .env
+    bash("python -c \"import os; e = {**os.environ}\""),          # .environ is not .env: never a secret deny
 ]
+
+
+def test_review4_unmodelled_is_denied_under_managed_default():
+    bad = [(e["tool_input"], r) for e in UNMODELLED if (r := decide(e)) != "deny"]
+    assert not bad, bad
 
 
 def test_review4_bypasses_are_denied():

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      { "command": "\"<PYTHON>\" -I \"<APP>/scripts/adapters/cursor_hook.py\"", "timeout": 20, "failClosed": true }
+    ],
+    "beforeMCPExecution": [
+      { "command": "\"<PYTHON>\" -I \"<APP>/scripts/adapters/cursor_hook.py\"", "timeout": 20, "failClosed": true }
+    ],
+    "beforeReadFile": [
+      { "command": "\"<PYTHON>\" -I \"<APP>/scripts/adapters/cursor_hook.py\"", "timeout": 20, "failClosed": true }
+    ]
+  }
+}

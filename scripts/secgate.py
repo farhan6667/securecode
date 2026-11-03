@@ -1302,6 +1302,23 @@ def _engines():
 # argument contains a character cmd.exe would interpret.
 CMD_META=re.compile(r'["&|<>^%!\r\n]')
 
+def scanner_env(cwd,hooks_dir,base=None):
+    # Scanners run git inside the scanned repo (gitleaks runs git log -p, semgrep git ls-files). The repo's own
+    # .git/config must not be able to run programs there (fsmonitor, hooks, textconv and filter drivers): see safe_git.py.
+    # base is an engine's own environment (Go engines pin GOTOOLCHAIN, for example); the safe git settings are laid
+    # over it and any GIT_* variable it carries is dropped, so an engine cannot switch them off again.
+    try:
+        here=os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path: sys.path.insert(0,here)
+        import safe_git
+        safe=safe_git.safe_git_env(find_tool("git"),cwd,hooks_dir)
+    except Exception:
+        return None
+    if base is None: return safe
+    merged={k:v for k,v in base.items() if not str(k).upper().startswith("GIT_")}
+    merged.update({k:v for k,v in safe.items() if k.upper().startswith("GIT_")})
+    return merged
+
 def run(cmd,cwd,timeout=600,env=None):
     # Run exactly the executable find_tool chose, never a bare name that the OS would resolve itself.
     exe=find_tool(cmd[0])
@@ -1309,12 +1326,16 @@ def run(cmd,cwd,timeout=600,env=None):
     if exe.lower().endswith((".bat",".cmd")) and any(CMD_META.search(str(a)) for a in cmd[1:]):
         return 126,"","refused: an argument contains a character cmd.exe would interpret"
     cmd=[exe,*cmd[1:]]
+    hooks=tempfile.mkdtemp(prefix="nfsc-nohooks-")
     try:
+        env=scanner_env(cwd,hooks,env)
+        if env is None: return 125,"","could not prepare a safe git environment for the scanner"
         p=subprocess.run(cmd,cwd=str(cwd),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=timeout,env=env)
         return p.returncode,p.stdout,p.stderr
     except FileNotFoundError: return 127,"",f"missing executable: {cmd[0]}"
     except subprocess.TimeoutExpired: return 124,"",f"timeout: {' '.join(cmd)}"
     except Exception as e: return 125,"",str(e)
+    finally: shutil.rmtree(hooks,ignore_errors=True)
 
 ORG_SEMGREP=Path(__file__).resolve().parent.parent/"semgrep"/"org-security.yml"
 

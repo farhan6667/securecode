@@ -29,7 +29,9 @@ Honest limitations
 - The per-edit check is heuristics, not SAST.
 - Hooks and permission patterns reduce risk; they are not a sandbox or a security boundary.
 - Native Windows has no Claude Code OS sandbox; use WSL2 or a devcontainer for untrusted repos.
-- Cursor gets rules and ignore files only; its hook format differs and is not wired yet.
+- Claude Code gets the full hooks. Cursor and Codex get guard adapters you install by hand (in Codex an ask
+  becomes a deny; Cursor has no hook before its own file edits). Gemini CLI and Antigravity get rules and
+  the gate only; hooks exist there but wiring them is future work.
 - Business logic, IDOR/BOLA and mobile runtime behaviour still need app-specific tests and review.
 - This package is AppSec automation, not proof of vulnerability-free software.
 
@@ -37,16 +39,26 @@ Added after review (V6.2 final)
 - Deep source review modes: "Run Security Test", "Run Advisory QA" (/advisory-qa); docs/SOURCE-CODE-REVIEW.md
 - docs/COMMON-FINDINGS.md (common pentest findings); library_scan and config_scan rules
 - scripts/stop_gate.py (Stop hook), scripts/updater.py (signed auto-update), scripts/release/make_release.py
+- scripts/safe_git.py (7.0): git for the stop gate and the scanners without the repo's fsmonitor, hooks or drivers
+- scripts/agent_guard.py (7.0): positive model; tests/test_guard_positive_model.py and tests/test_fuzz_guard.py
 - install-managed.py (organization-enforced install), SECURITY-CONTEXT.md, docs/THIRD-PARTY-REVIEW.md
 
-Automated pentest (7.0 branch, not yet released)
+7.0 guard
+- config/guard-policy.json (written by the installers, not shipped): owner mode asks with the literal command
+  for force push, hard reset, force branch delete, public repo or gist and package publish; managed mode
+  denies them; missing or malformed policy means managed. Asks are logged to .security/guard-audit.jsonl.
+- scripts/adapters/cursor_hook.py and scripts/adapters/codex_hook.py; templates/cursor/hooks.json and
+  templates/codex/hooks.json.
+- scripts/stop_gate.py offers "Run Security Test" once per substantial change set (3+ code files or 40+ lines).
+
+7.0 automated pentest
 - scripts/report.py: REPORT.md and print-ready REPORT.html (optional PDF) with executive summary, scope and
   method, findings with CIA impact and retest outcome labels, attack chains, artifacts and limits
 - scripts/report_lint.py: required sections, labels, evidence, no overclaims, no unmasked secrets
 - scripts/local_dast.py: OWASP ZAP baseline or API scan of the developer's app on loopback only
 - scripts/fix_pr.py: dry-run-first fix branch and draft PR, never the default branch, gitleaks on the diff
 
-7.0 rules (branch v7-rules, not released yet)
+7.0 rules and labs
 - semgrep/java-spring.yml: 21 Java and Spring Boot rules (deserialization, XXE, JNDI, SpEL, JPQL/JDBC
   concatenation, permitAll, CSRF off, Actuator, IDOR, mass assignment, @RequestBody without @Valid,
   trust-all TLS, weak password hash, java.util.Random tokens), fixtures in tests/fixtures/java-spring/

@@ -24,6 +24,14 @@ output, rate limit; an upload: the upload section; a query: injection; a depende
 fix what you find. The Stop hook runs the quick gate on changed files and will send you back if a
 High or Critical finding is still open.
 
+**End-of-task offer (all agents).** When a substantial task is finished (3 or more code files or 40 or
+more changed lines since the last offer) and no "Run Security Test" has run since those changes, ask the
+developer once: "Do you want me to run a full security test now (Run Security Test)?" Start Mode B only
+after a yes. A no or "later" is respected for that change set; do not repeat it. Tiny edits, docs-only
+changes and questions get no offer. Claude Code and Codex: the Stop hook sends this reminder once and
+records it in `.security/pentest-offer.json` (`{"disabled": true}` there turns it off for a project).
+Cursor: follow this rule yourself.
+
 **Mode B: "Run Security Test" (find, fix, re-test).** Triggered by that phrase or "Security Test Karo" (any casing), by
 `/security-gate`, or by a request for a security test before handover. Run the Deep Review Protocol
 below on the whole project, fix every finding that is safe to fix, re-run, and report.

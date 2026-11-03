@@ -1,0 +1,21 @@
+{
+  "description": "NexaForge SecureCode agent guard and stop gate for Codex. Replace <PYTHON> and <APP>, then trust the hooks in /hooks.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "\"<PYTHON>\" -I \"<APP>/scripts/adapters/codex_hook.py\"", "timeout": 20,
+            "statusMessage": "Org AI agent guard" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"<PYTHON>\" -I \"<APP>/scripts/stop_gate.py\"", "timeout": 90 }
+        ]
+      }
+    ]
+  }
+}

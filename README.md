@@ -9,8 +9,8 @@
 
 **NexaForge SecureCode is a virtual pentester that sits next to every developer.** It makes AI coding agents
 write secure code, finds and fixes security holes while you work, and keeps the agent away from your secrets.
-Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity (rules and gate in all five; the hooks only
-in Claude Code). Free and open source (MIT), for anyone who builds web apps, APIs or Android apps with AI.
+Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity (rules and gate in all five; the full hooks in
+Claude Code, guard adapters for Cursor and Codex). Free and open source (MIT), for anyone who builds web apps, APIs or Android apps with AI.
 
 <p align="center">
   <a href="#install-with-one-prompt">Install</a> ·
@@ -130,7 +130,7 @@ change its own settings or push your code somewhere public.
 | Access control (IDOR) rules and tests | rarely | sometimes | no | **yes** |
 | Guards your machine from the agent | no | no | no | **yes** |
 | Signed auto-updates | varies | no | no | **yes** |
-| Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity | n/a | one tool | one tool | **all five (hooks: Claude Code)** |
+| Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity | n/a | one tool | one tool | **all five (guard: Claude Code, Cursor, Codex)** |
 | Measured on a lab with planted bugs | varies | no | no | **yes, 17 of 18** |
 
 Everything runs on your machine. Your code is not sent to any NexaForge service (your AI tool still talks to its own model provider, as usual). The limits are listed
@@ -144,7 +144,7 @@ plainly under [Honest limits](#honest-limits).
 | Deep review: `Run Security Test` | the agent walks every entry point with [docs/SOURCE-CODE-REVIEW.md](docs/SOURCE-CODE-REVIEW.md), fixes what it safely can, re-runs the gate and reports a verdict |
 | Readiness advisory: `Run Advisory QA` | the same review, but nothing changes until you agree |
 | The gate, `secgate.py` | Semgrep (our rules, Laravel authorization rules, registry packs), Trivy, Gitleaks, your project's tests, and built-in checks for outdated front-end libraries, web-root exposure, cookies, headers, TLS, default credentials, raw template output and Android manifests. `ci` mode fails closed |
-| Agent guard | a Claude Code hook that blocks reading secrets, writing to the agent's own settings, pipe-to-shell, force pushes and public repo creation, and asks before pushes and installs |
+| Agent guard | a Claude Code hook (with adapters for Cursor and Codex) that blocks reading secrets, writing to the agent's own settings, pipe-to-shell, force pushes and public repo creation, and asks before pushes and installs |
 | CI templates | GitHub and GitLab, with actions pinned to commit SHAs and scanners pinned by SHA-256 |
 | Templates | Laravel security headers, session, throttling, upload and webhook scaffolds, plus example security tests |
 
@@ -294,15 +294,28 @@ ship the package under its own internal name and still receive the signed update
 
 ## Honest limits
 
-- The guard matches patterns. It reduces risk, it is not a sandbox, and native Windows has no Claude Code OS sandbox.
+- The guard (7.0) allows only what it understands: everyday development commands whose every path stays inside your
+  project or a temp folder. Anything else is shown to you for approval in owner mode and refused in managed mode;
+  secrets, your agent's own config, startup files and the scanner tools folder are always refused. In our
+  everyday-commands test, under 1 in 100 commands prompts. It still is not a sandbox: a script your agent wrote in an
+  earlier step can do anything once it runs, and native Windows has no Claude Code OS sandbox. Use the native
+  sandbox where you have it.
 - The deep review is done by the AI and can miss things, especially business logic. Keep the human pentest.
 - Server settings (TLS ciphers, open ports, admin panels on the host) are outside the code and are listed for the server team.
-- Cursor, Codex, Gemini CLI and Antigravity get the rules and the gate, but not the Claude Code hooks.
+- Claude Code gets the full hooks. Cursor and Codex get guard adapters that you install by hand, with gaps: Cursor
+  has no hook before its own file edits, and Codex hooks cannot ask yet, so an "ask" is a deny there. Gemini CLI
+  and Antigravity get the rules and the gate; both have pre-tool hooks, but wiring the guard to them is future work.
+  Details in [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
 - The review history up to 6.2.2 is five internal review rounds and two outside-style attack rounds (the second
   with fuzzing), each fix with a regression test. That is not a third-party audit.
 - Local DAST is a passive ZAP scan by default and needs Docker or ZAP; it finds configuration and header
   issues far more often than logic bugs. Attack chains in the report are a simple heuristic for a person to confirm.
 - No tool proves software is free of vulnerabilities. Known gaps are in [SECURITY-CONTEXT.md](SECURITY-CONTEXT.md).
+
+**Owner mode.** On your own machine the guard asks instead of refusing when you may really want the action: a force
+push, `git reset --hard`, a public repo or gist, `npm publish`. The prompt shows the exact command, and every ask is
+logged to `.security/guard-audit.jsonl`. Secrets and pipe-to-shell are still refused. Managed installs keep refusing
+all of it. When you finish a bigger change, the agent also offers to run "Run Security Test" once.
 
 ## Frequently asked questions
 
@@ -311,10 +324,11 @@ A set of rules, a code review method, a scanner gate and Claude Code hooks that 
 more secure code and protect the developer's machine from the agent. It is free and MIT licensed.
 
 **Does it work with Cursor, Codex, Gemini CLI and Antigravity, or only Claude Code?**
-The rules, the deep review and the gate work with all five. The hooks (agent guard, per-edit check, stop gate)
-run in Claude Code only, so the other tools get their own settings instead, described in
+The rules, the deep review and the gate work with all five. The agent guard runs in Claude Code through its hooks,
+and in Cursor and Codex through small adapters you install by hand (Cursor: shell, MCP and file reads; Codex: shell,
+patches and MCP, plus the stop gate). The per-edit check and the injection watch are Claude Code only. Gemini CLI
+and Antigravity have pre-tool hooks too; wiring the guard to them is planned, not done. Setup is in
 [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md) and [templates/gemini/README.md](templates/gemini/README.md).
-Gemini CLI and Antigravity both have pre-tool hooks now; porting the guard to them is planned, not done.
 
 **Will it make my app pass a pentest?**
 It removes the findings pentests report most often and makes the agent test access control route by route, so

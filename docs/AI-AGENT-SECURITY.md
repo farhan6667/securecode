@@ -1,4 +1,4 @@
-# AI agent security (V6.2)
+# AI agent security (7.0)
 
 AI coding agents read untrusted text (repo files, web pages, tool and MCP output) and can run
 commands on the developer's machine. That makes the agent itself an attack surface, separate
@@ -26,7 +26,8 @@ Sources: see `docs/SOURCES.md`.
 | Control | Claude Code | Cursor | Codex | Gemini CLI | Antigravity |
 |---|---|---|---|---|---|
 | Org rules (`AGENTS.md` / global CLAUDE.md block) | yes, auto | User Rules (paste) | `~/.codex/AGENTS.md` | `~/.gemini/AGENTS.md` + `context.fileName` | `~/.gemini/AGENTS.md` (read natively) |
-| PreToolUse agent guard (secrets, pipe-to-shell, force push, startup files) | yes | not yet (different hook format) | use `templates/codex/rules/org.rules` | not yet (`BeforeTool` hooks exist; future work) | not yet (`PreToolUse` hooks exist; future work) |
+| PreToolUse agent guard (secrets, pipe-to-shell, force push, startup files) | yes, every tool | shell, MCP and file reads through `scripts/adapters/cursor_hook.py`, installed by hand (no hook exists before Cursor's own edits) | shell, `apply_patch` and MCP through `scripts/adapters/codex_hook.py`, installed by hand ("ask" becomes deny: Codex hooks cannot ask yet), plus `templates/codex/rules/org.rules` | not yet (`BeforeTool` hooks exist; future work) | not yet (`PreToolUse` hooks exist; future work) |
+| End-of-task "Run Security Test" offer | Stop hook + rule | rule only | Stop hook (`stop_gate.py`) + rule | rule only | rule only |
 | Deny/ask permissions | yes (`config/agent-permissions.json`) | `.cursorignore` for `.env*`, approval prompts | `approval_policy`, execpolicy rules | tool approval prompts | permission settings |
 | Per-edit heuristic scan | yes | no | no | no | no |
 | Injection watch on Read/WebFetch/MCP output | yes (advisory) | no | no | no | no |
@@ -42,8 +43,16 @@ Sources: see `docs/SOURCES.md`.
 - **Cursor**: paste `AGENTS.md` into Settings > Rules > User Rules; add `.env*`, `*.pem`, `*.key` to
   `.cursorignore` in each project; turn on Workspace Trust (`security.workspace.trust.enabled`);
   approve MCP servers one at a time. `.cursorignore` does not cover terminal or MCP tools.
+  Guard hooks: copy `templates/cursor/hooks.json` to `~/.cursor/hooks.json` (or the enterprise path
+  `C:\ProgramData\Cursor\hooks.json`), replace `<PYTHON>` with the full path of the Python that installed
+  SecureCode and `<APP>` with the runtime folder. Keep `"failClosed": true`: without it Cursor lets the action
+  through when the hook crashes or times out. Cursor's `beforeReadFile` cannot ask, so an "ask" there is a deny.
 - **Codex**: copy `AGENTS.md` to `~/.codex/AGENTS.md`, merge `templates/codex/config.toml` into
-  `~/.codex/config.toml`, copy `templates/codex/rules/org.rules` to `~/.codex/rules/`.
+  `~/.codex/config.toml`, copy `templates/codex/rules/org.rules` to `~/.codex/rules/`. Guard and stop hooks:
+  copy `templates/codex/hooks.json` to `~/.codex/hooks.json`, fill in `<PYTHON>` and `<APP>`, then trust the
+  hooks in `/hooks` (Codex skips untrusted hooks; managed `requirements.toml` hooks are trusted by policy).
+  Codex parses a hook "ask" but does not support it yet and would run the tool, so the adapter turns every
+  ask into a deny with the reason; the developer runs such a command themselves.
 - **Gemini CLI**: copy `AGENTS.md` to `~/.gemini/AGENTS.md` and merge `templates/gemini/settings.json`
   (`"context": {"fileName": ["AGENTS.md", "GEMINI.md"]}`) into `~/.gemini/settings.json`; or copy
   `templates/gemini/GEMINI.md` (it imports `AGENTS.md` with `@./AGENTS.md`). Check with `/memory show`.
@@ -54,6 +63,25 @@ Sources: see `docs/SOURCES.md`.
   `.agents/hooks.json`, https://antigravity.google/docs/hooks/) both have pre-tool hooks today. Porting the
   agent guard to them is future work; Antigravity's docs do not say whether a failing hook blocks the call,
   so that has to be tested first. Details: `templates/gemini/README.md`.
+
+## Owner mode and managed mode
+
+The guard reads `config/guard-policy.json` from its own runtime folder (never from the project).
+
+| Class | Examples | Owner mode (per-user default) | Managed mode |
+|---|---|---|---|
+| secret | read or send `.env`, keys, credentials | deny | deny |
+| pipe-to-shell | `curl ... \| sh`, `iex (irm ...)` | deny | deny |
+| agent config | hooks, skills, runtime, update keys, the policy file itself | deny (CLAUDE.md, rules, settings.json: ask) | same |
+| destructive | force, mirror or delete push, `git reset --hard`, `git branch -D` | ask, showing the literal command | deny |
+| exposure | public repo or gist, `npm publish`, `twine upload`, `cargo publish` ... | ask, showing the literal command | deny |
+| install | `npm i x`, `pip install x`, `composer require x` ... | ask | ask |
+
+A missing, unreadable or malformed policy, or a managed install on the machine (managed-settings.json or the
+runtime under Program Files), means managed mode. Every ask is appended to `.security/guard-audit.jsonl` in the
+project (time, mode, tool, the command with token-like values removed, the reason), which the agent may not edit.
+`verify-global.py` prints the mode the installed guard really uses. Change it with
+`py -I install-global.py --guard-mode owner|managed`.
 
 ## Strict instruction-source mode
 

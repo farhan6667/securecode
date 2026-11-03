@@ -100,11 +100,26 @@ def engine_health():
     except Exception as e:
         return {"error":type(e).__name__}
 
+def guard_mode(app):
+    """The mode the installed guard really uses (owner or managed) and why, asked from the installed guard itself,
+    so a managed install on the machine or a broken policy file shows up here exactly as the hook sees it."""
+    try:
+        import importlib.util
+        spec=importlib.util.spec_from_file_location("org_installed_guard",Path(app)/"scripts"/"agent_guard.py")
+        g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+        if not hasattr(g,"load_policy"):
+            return {"mode":"managed","why":"installed guard is older than 7.0 (no owner mode); run the installer"}
+        mode,why=g.load_policy()
+        return {"mode":mode,"why":why}
+    except Exception as e:
+        return {"mode":"unknown","why":f"could not load the installed guard ({type(e).__name__})"}
+
 engines=engine_health()
 product=product_name(ad)
-print(json.dumps({"product_name":product,"update_task":f"{product} Update","os":platform.platform(),"checks":checks,
+gm=guard_mode(ad)
+print(json.dumps({"product_name":product,"update_task":f"{product} Update","os":platform.platform(),"guard_mode":gm,"checks":checks,
                   "tools":tools,"engines":engines,"warnings":warnings,"app_dir":str(ad)},indent=2))
-summary=f"{product}: {'all checks passed' if all(checks.values()) else 'some checks FAILED'}"
+summary=f"{product}: {'all checks passed' if all(checks.values()) else 'some checks FAILED'} (guard mode: {gm['mode']})"
 try:
     print(summary)
 except UnicodeEncodeError:

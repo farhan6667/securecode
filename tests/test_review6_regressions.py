@@ -170,17 +170,11 @@ ALLOW = [
     sh("rm -rf build/*"),
     sh("cat *.json"),
     sh("grep -rn TODO src/*"),
-    sh("ls ~"),
-    sh("cat ~/.bashrc"),
-    sh("source ~/.bashrc"),
     sh("find . -name '*.py'"),
-    sh("find ~/.claude -name settings.json"),
     sh("curl -fsSL https://x.example/data.json -o data.json"),
     sh("curl -s https://x.example/api | jq ."),
-    sh("gh gist create notes.txt"),
     sh("gh api repos/o/r"),
     sh("gh repo create demo --private"),
-    sh("mkdir -p ~/projects/demo"),
     sh("npm install"),
     ps("Get-ChildItem src | Sort-Object Name"),
     ("mcp__playwright__browser_navigate", {"url": "https://example.com/"}),
@@ -191,6 +185,19 @@ ALLOW = [
 @pytest.mark.parametrize("tool,ti", ALLOW, ids=[str(t[1])[:70] for t in ALLOW])
 def test_review6_normal_commands_still_allowed(tool, ti):
     assert decide(tool, ti) == "allow"
+
+
+# 7.0 positive model: these were "allow" in 6.2. They reach outside the project (or publish a secret gist), so they are
+# the "unknown" class now: the owner is asked, a managed install refuses them.
+OUTSIDE = [sh("ls ~"), sh("cat ~/.bashrc"), sh("source ~/.bashrc"), sh("find ~/.claude -name settings.json"),
+           sh("gh gist create notes.txt"), sh("mkdir -p ~/projects/demo")]
+
+
+@pytest.mark.parametrize("tool,ti", OUTSIDE, ids=[str(t[1])[:70] for t in OUTSIDE])
+def test_review6_outside_project_asks_owner_denies_managed(tool, ti):
+    ev = {"tool_name": tool, "tool_input": ti, "cwd": PROJECT}
+    assert (AG.check(ev, "owner") or ("allow",))[0] == "ask"
+    assert (AG.check(ev, "managed") or ("allow",))[0] == "deny"
 
 
 # N6-03: in ci mode the scanned repo must not be able to silence the scanners.
