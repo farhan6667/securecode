@@ -29,8 +29,9 @@ def run(lab, mode="quick"):
 
 
 def test_quick_mode_lab_floor():
-    found, _, _, out = run("laravel")
+    found, _, noisy, out = run("laravel")
     assert found >= 11, out
+    assert noisy == 0, out
     assert re.search(r"\| L16 \|[^\n]*\| found \|", out), out          # Blade {!! !!}
 
 
@@ -55,6 +56,17 @@ def test_spring_lab_quick_floor():
     # The clean controller binds "%" + note + "%" through setParameter on the same line as a parameterized
     # query. That is safe, and since V7I-05 SQL_CONCAT no longer reports it: no clean file may be reported.
     assert noisy == 0, out
+
+
+@pytest.mark.skipif(find_semgrep() is None, reason="semgrep is not on PATH")
+def test_laravel_lab_full_floor():
+    # Full mode adds Semgrep. L18 (IDOR through route model binding) is found since OPEN-01 was closed,
+    # and the clean controllers (policy, FormRequest, route ->can(), owner guard) must stay quiet.
+    found, total, noisy, out = run("laravel", "full")
+    assert found == total == 18, out
+    assert noisy == 0, out
+    assert "Clean files reported: 0 of 4" in out, out
+    assert re.search(r"\| L18 \|[^\n]*\| found \| laravel-idor-route-model-binding", out), out
 
 
 @pytest.mark.skipif(find_semgrep() is None, reason="semgrep is not on PATH")

@@ -1449,9 +1449,233 @@ def collect_semgrep(root, findings, mode="full"):
                 "confidence":conf,"engine":"semgrep"})
     except ScannerOutputError as e:
         return False,_unreadable("semgrep",e)
+    try: new=laravel_binding_context(root,new)
+    except Exception: pass      # context can only drop findings; on any error every finding stays
     findings.extend(new)
     # rc 0 = clean, 1 = findings; anything else (config or network error) is a failed scan.
     return rc in (0,1), "semgrep completed" if rc in (0,1) else f"semgrep exited {rc}: {(err or '').strip()[-300:]}"
+
+# --- Laravel route model binding: context Semgrep cannot see (OPEN-01, benchmark L18) ------------------
+# laravel-idor-route-model-binding works on one controller file. Three controls live in other files:
+# authorization middleware on the route (->can(), can:, an admin role) in routes/*.php, ->scopeBindings()
+# for a child whose parent the method checks, and a FormRequest whose authorize() checks the user. This
+# reads only routes/*.php and app/Http/Requests under the scanned root (no symlinks or junctions, files
+# under 2 MB, at most 2000 request files), strips comments first and works in one pass per file. It only
+# ever drops a finding it can tie to a route or request; anything it cannot read or match stays reported.
+# Not modelled: middleware registered in bootstrap/app.php or Kernel.php, Route::bind(), global scopes,
+# dynamic policies, and two controllers with the same short class name.
+BINDING_RULE="laravel-idor-route-model-binding"
+# can:ability or can:ability,routeParam. can:viewAny,App\Models\Order (a class) checks no row, so it does not count.
+_AUTHZ_MW=r"(?:can:[^'\",]{1,200}(?:,\w{1,100})?|(?:role|permission|role_or_permission):[^'\"]{0,200}?(?:admin|staff|super|manage|moderat|operator|backoffice)[^'\"]{0,200}|(?:is_?)?admin|super_?admin)"
+_AUTHZ_MW_RX=re.compile(r"(?i)['\"]"+_AUTHZ_MW+r"['\"]|\b[\w\\]{0,200}Admin\w{0,80}::class")
+_MW_CALL_RX=re.compile(r"(?:->|::)middleware\(([^()]{0,2000})\)|['\"]middleware['\"]\s*=>\s*(\[[^\]]{0,2000}\]|['\"][^'\"]{0,300}['\"])")
+_RESOURCE_METHODS={"resource":("index","create","store","show","edit","update","destroy"),
+                   "apiResource":("index","store","show","update","destroy")}
+
+def _bounded_file(root,fp):
+    """Text of a file inside root that is not a symlink and under 2 MB, else ''."""
+    try:
+        if os.path.islink(fp) or not os.path.isfile(fp) or os.path.getsize(fp)>=2_000_000: return ""
+        real=os.path.realpath(fp); base=os.path.realpath(root)
+        if os.path.commonpath([real,base])!=base: return ""
+        with open(fp,encoding="utf-8-sig",errors="ignore") as fh: return fh.read()
+    except (OSError,ValueError): return ""
+
+def _php_strip_comments(t):
+    """PHP source with // # and /* */ comments blanked (strings kept, newlines kept). One pass."""
+    out=[]; i=0; n=len(t); q=None
+    while i<n:
+        c=t[i]
+        if q:
+            out.append(c)
+            if c=="\\" and i+1<n: out.append(t[i+1]); i+=2; continue
+            if c==q: q=None
+            i+=1; continue
+        if c in "'\"": q=c; out.append(c); i+=1; continue
+        if c=="/" and t.startswith("/*",i):
+            j=t.find("*/",i+2); j=n if j<0 else j+2
+            out.append(re.sub(r"[^\n]"," ",t[i:j])); i=j; continue
+        if (c=="/" and t.startswith("//",i)) or (c=="#" and not t.startswith("#[",i)):
+            j=t.find("\n",i); j=n if j<0 else j
+            out.append(" "*(j-i)); i=j; continue
+        out.append(c); i+=1
+    return "".join(out)
+
+def _route_flags(text):
+    """(authorization middleware, scoped bindings) present in one statement or group prefix."""
+    # ->can('ability') or ->can('ability', 'routeParam'); ->can('viewAny', Order::class) checks no row.
+    authz=bool(re.search(r"->can\(\s*['\"][^'\"]{1,200}['\"]\s*(?:\)|,\s*['\"])",text)) or any(_AUTHZ_MW_RX.search(m.group(1) or m.group(2) or "") for m in _MW_CALL_RX.finditer(text))
+    scoped=bool(re.search(r"(?:->|::)scopeBindings\(|->scoped\(",text))
+    return authz,scoped
+
+def _uri_params(uri):
+    names=[m.group(1) for m in re.finditer(r"\{(\w{1,80})(?::\w{1,80})?\??\}",uri)]
+    keyed=[bool(m.group(1)) for m in re.finditer(r"\{\w{1,80}(:\w{1,80})?\??\}",uri)]
+    return names,keyed
+
+def laravel_routes(root):
+    """{(controller short name, method): [{"authz":bool,"scoped":bool,"params":[...]}, ...]} from routes/*.php."""
+    table={}; rdir=os.path.join(str(root),"routes")
+    if is_link_dir(rdir) or not os.path.isdir(rdir): return table
+    # Only route files Laravel loads: web.php, api.php, and files named in bootstrap/app.php, the
+    # RouteServiceProvider or one of those two. A stray routes/x.php that nothing loads cannot add a
+    # ->can() that the running app never applies.
+    refs="\n".join(_bounded_file(root,os.path.join(str(root),*p)) for p in
+                   (("bootstrap","app.php"),("app","Providers","RouteServiceProvider.php"),("routes","web.php"),("routes","api.php")))
+    for name in sorted(os.listdir(rdir))[:200]:
+        if not name.endswith(".php"): continue
+        if name not in ("web.php","api.php") and not re.search(r"[/'\"]"+re.escape(name)+r"['\"]",refs): continue
+        t=_php_strip_comments(_bounded_file(root,os.path.join(rdir,name)))
+        # One frame per open brace: (outer statement buffer, authz, scoped, controller), each already
+        # combined with the frames around it, so a statement costs O(1) however deep it sits. Group
+        # flags are read from the last 2000 characters before the brace only.
+        frames=[]; buf=[]; q=None; esc=False; braces=0
+        for c in t:
+            if q:
+                buf.append(c)
+                if esc: esc=False
+                elif c=="\\": esc=True
+                elif c==q: q=None
+                continue
+            if c in "'\"": q=c; buf.append(c); continue
+            if c=="{":
+                braces+=1
+                if braces>20000: break      # no real routes file has this many; stop instead of slowing down
+                prefix="".join(buf[-2000:]); a,s=_route_flags(prefix)
+                ctl=re.search(r"Route::controller\(\s*\\?([\w\\]{1,200})::class",prefix)
+                up=frames[-1] if frames else (None,False,False,None)
+                frames.append((buf,a or up[1],s or up[2],ctl.group(1).split("\\")[-1] if ctl else up[3])); buf=[]; continue
+            if c=="}":
+                if frames: buf=frames.pop()[0]; buf.append("{}")
+                continue
+            if c==";":
+                _route_statement("".join(buf[:20000]),frames[-1] if frames else None,table); buf=[]; continue
+            buf.append(c)
+    return table
+
+def _route_statement(st,frame,table):
+    if "Route::" not in st and "->" not in st: return
+    a,s=_route_flags(st)
+    if frame: a=a or frame[1]; s=s or frame[2]
+    ctl=frame[3] if frame else None
+    m=re.search(r"Route::(get|post|put|patch|delete|options|any|match)\(\s*(?:\[[^\]]{0,200}\]\s*,\s*)?['\"]([^'\"]{0,500})['\"]\s*,\s*(.{0,600})",st,re.S)
+    if m:
+        uri,rest=m.group(2),m.group(3); names,keyed=_uri_params(uri)
+        # Laravel scopes a child automatically when it uses a custom key ({post:slug}) after a parent.
+        scoped=s or any(keyed[1:])
+        acts=[]
+        x=re.match(r"\[\s*\\?([\w\\]{1,200})::class\s*,\s*['\"](\w{1,100})['\"]\s*\]",rest)
+        y=re.match(r"['\"]([\w\\]{1,200})@(\w{1,100})['\"]",rest)
+        z=re.match(r"\\?([\w\\]{1,200})::class\s*\)",rest)
+        w=re.match(r"['\"](\w{1,100})['\"]\s*\)",rest)
+        if x: acts.append((x.group(1),x.group(2)))
+        elif y: acts.append((y.group(1),y.group(2)))
+        elif z: acts.append((z.group(1),"__invoke"))
+        elif w and ctl: acts.append((ctl,w.group(1)))
+        for cls,meth in acts:
+            table.setdefault((cls.split("\\")[-1],meth),[]).append({"authz":a,"scoped":scoped,"params":names})
+        return
+    r=re.search(r"Route::(resource|apiResource)\(\s*['\"]([\w./-]{1,300})['\"]\s*,\s*\\?([\w\\]{1,200})::class",st)
+    if r:
+        segs=[p for p in re.split(r"[./]",r.group(2)) if p]
+        names=[p[:-3]+"y" if p.endswith("ies") else (p[:-1] if p.endswith("s") else p) for p in segs]
+        names=[re.sub(r"-(\w)",lambda k:k.group(1).upper(),p) for p in names]
+        for meth in _RESOURCE_METHODS[r.group(1)]:
+            table.setdefault((r.group(3).split("\\")[-1],meth),[]).append({"authz":a,"scoped":s,"params":names})
+
+def _method_signature(text,starts,line,method):
+    """(class short name, [(type, var)]) of the method declared at or just above line."""
+    # The finding sits on the parameter, so the declaration is the last one that starts on or before that line.
+    pos=starts[min(max(line,1),len(starts))-1]
+    end=text.find("\n",pos); end=len(text) if end<0 else end
+    sig=None
+    for m in re.finditer(r"\bfunction\s+"+re.escape(method)+r"\s*\(",text[:end]): sig=m
+    if not sig: return None,[]
+    cls=None
+    for c in re.finditer(r"\bclass\s+(\w{1,200})",text[:sig.start()]): cls=c.group(1)
+    j=sig.end(); depth=1; k=j
+    while k<len(text) and depth and k-j<4000:
+        if text[k]=="(": depth+=1
+        elif text[k]==")": depth-=1
+        k+=1
+    params=[(p.group(1) or "",p.group(2)) for p in re.finditer(r"(?:\??([\w\\]{1,200})\s+)?&?(?:\.\.\.)?\$(\w{1,100})",text[j:k-1])]
+    return cls,params
+
+_REQ_SIGNAL=re.compile(r"->can\(|->cannot\(|->cant\(|Gate::|->authorize\w{0,20}\(")
+_REQ_OWNER=re.compile(r"->is\(|->isNot\(|->owns\(|===|==|!==|!=")
+
+def _form_request_authorizes(root,cls,cache):
+    """True when app/Http/Requests holds class cls and its authorize() checks the user against the route."""
+    if "index" not in cache:
+        idx={}; base=os.path.join(str(root),"app","Http","Requests"); seen=0
+        if os.path.isdir(base) and not is_link_dir(base):
+            for r,d,fs in os.walk(base):
+                d[:]=[x for x in d if not is_link_dir(os.path.join(r,x))]
+                for f in fs:
+                    seen+=1
+                    if seen>2000: break
+                    if f.endswith(".php"): idx.setdefault(f[:-4],os.path.join(r,f))
+        cache["index"]=idx
+    fp=cache["index"].get(cls)
+    if not fp: return False
+    t=_php_strip_comments(_bounded_file(root,fp))
+    m=re.search(r"\bfunction\s+authorize\s*\(\s*\)\s*(?::\s*\??\w{1,20}\s*)?\{",t)
+    if not m: return False
+    j=m.end(); depth=1; k=j
+    while k<len(t) and depth and k-j<20000:
+        if t[k]=="{": depth+=1
+        elif t[k]=="}": depth-=1
+        k+=1
+    body=t[j:k-1]
+    if re.fullmatch(r"\s*return\s+true\s*;\s*",body,re.I): return False
+    if _REQ_SIGNAL.search(body): return True
+    return bool(_REQ_OWNER.search(body)) and bool(re.search(r"route\(|_id\b|->id\b|getKey\(",body)) and \
+           bool(re.search(r"user\(\)|auth\(|Auth::",body))
+
+def laravel_binding_context(root,findings):
+    """findings without the route model binding results that route middleware, scopeBindings() with a checked
+    parent, or a FormRequest's authorize() already cover. Every other finding is returned unchanged."""
+    if not any(str(f.get("rule","")).endswith(BINDING_RULE) for f in findings): return findings
+    routes=laravel_routes(root); req_cache={}; parsed={}; info={}
+    # (file, class, method) -> bound variables the rule reported, to know whether a parent was checked.
+    reported={}
+    for i,f in enumerate(findings):
+        if not str(f.get("rule","")).endswith(BINDING_RULE): continue
+        m=re.search(r"\(binding: \$(\w{1,100}) in (\w{1,100})\(\)\)",str(f.get("message","")))
+        if not m: continue
+        rel=str(f.get("file",""))
+        if rel not in parsed:
+            text=_php_strip_comments(_bounded_file(root,os.path.join(str(root),rel)))
+            parsed[rel]=(text,_line_starts(text))
+        try: line=int(f.get("line") or 0)
+        except (TypeError,ValueError): continue
+        text,starts=parsed[rel]
+        cls,params=_method_signature(text,starts,line,m.group(2)) if text else (None,[])
+        if not cls: continue
+        # Parameters whose type the file imports from a Models namespace: the rule would have reported them.
+        models={v for t,v in params if t and ("\\Models\\" in t or
+                re.search(r"(?m)^\s*use\s+[\w\\]{0,300}\\Models\\"+re.escape(t)+r"\s*;",text))}
+        info[i]=(m.group(1),m.group(2),cls,params,models)
+        reported.setdefault((rel,cls,m.group(2)),set()).add(m.group(1))
+    out=[]
+    for i,f in enumerate(findings):
+        if i not in info: out.append(f); continue
+        var,meth,cls,params,models=info[i]
+        # A FormRequest whose authorize() checks the user covers the whole method.
+        if any(t and t.split("\\")[-1].endswith("Request") and t.split("\\")[-1]!="Request" and
+               _form_request_authorizes(root,t.split("\\")[-1],req_cache) for t,_ in params):
+            continue
+        rts=routes.get((cls,meth))
+        if rts:
+            if all(r["authz"] for r in rts): continue
+            # A scoped child whose parent the method checks: the parent is the first route parameter, a
+            # model parameter of this method (so the rule looked at it), and the rule did not report it.
+            done=reported.get((str(f.get("file","")),cls,meth),set())
+            if all(r["scoped"] and len(r["params"])>=2 and r["params"][0]!=var and r["params"][0] in models
+                   and r["params"][0] not in done for r in rts):
+                continue
+        out.append(f)
+    return out
 
 def collect_trivy(root,findings,mode="full"):
     if not find_tool("trivy"): return False,"trivy missing"

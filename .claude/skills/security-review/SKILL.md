@@ -113,7 +113,11 @@ until the developer agrees: produce the Advisory QA report (format below), then 
    `actingAs($userB)->getJson("/api/orders/{$orderOfUserA->id}")->assertStatus(403)` (403 or 404,
    whichever the app returns for objects the caller may not know about). Ready-made tests are in
    `<APP>/templates/security-tests/laravel/`. The `laravel-*` Semgrep rules point at likely gaps,
-   but the matrix is the coverage list.
+   but the matrix is the coverage list. `laravel-idor-route-model-binding` reports
+   `show(Order $order)` with no policy, gate or owner guard; the gate drops it when the route has
+   `->can()`/`can:` (or an admin role), a checked parent with `scopeBindings()`, or a FormRequest whose
+   `authorize()` checks the user. A check in a helper method, in one branch only, or in middleware set
+   in `bootstrap/app.php` is not seen: verify those rows by hand.
    A row without a passing test is open.
 4. **Fix (Mode B).** Root-cause fixes using the framework's own mechanism (policies/guards, scoped
    queries, parameter binding, auto-escaping, validated upload rules). Add a negative test per fix

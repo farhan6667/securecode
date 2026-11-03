@@ -72,6 +72,12 @@ class SafeOrderController extends Controller
         return view('receipt', ['order' => $order]);
     }
 
+    public function membership(Request $request)
+    {
+        // The key is the caller's own id.
+        return Order::query()->whereKey($request->user()->id)->exists();
+    }
+
     public function byName(Request $request)
     {
         // Lookups by something other than the id are out of scope for this rule.
