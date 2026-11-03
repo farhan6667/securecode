@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "org-ai-agent-guard",
+            "type": "command",
+            "command": "& \"<PYTHON>\" -I \"<APP>/scripts/adapters/gemini_hook.py\"",
+            "timeout": 20000,
+            "description": "NexaForge SecureCode agent guard (Windows: Gemini CLI runs hooks in PowerShell, so the line starts with &)"
+          }
+        ]
+      }
+    ]
+  }
+}

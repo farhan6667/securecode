@@ -46,12 +46,19 @@ Antigravity workflows (saved prompts started with `/name`) are not needed: say "
 Both tools get the agent guard through a small adapter. Replace `<PYTHON>` with the full path of your Python and
 `<APP>` with the installed runtime folder (Windows: `%LOCALAPPDATA%\OrgAISecureAppSec`), using forward slashes.
 
-**Gemini CLI.** Merge `settings.hooks.json` from this folder into `~/.gemini/settings.json` (keep your other keys).
-It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every tool. Shell commands, file writes,
+**Gemini CLI.** Merge `settings.hooks.json` (macOS and Linux) or `settings.hooks.windows.json` (Windows) from this
+folder into `~/.gemini/settings.json` (keep your other keys). Use the Windows file on Windows: Gemini CLI runs hook
+commands in PowerShell there, and a line that starts with a quoted path needs PowerShell's `&` in front. Without it
+PowerShell stops with a parse error, the hook fails, and Gemini CLI runs the tool anyway (checked live with Gemini
+CLI 0.50.0, finding V7L-01). After installing, check that a blocked action really is blocked (see below). It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every tool. Shell commands, file writes,
 edits, reads, searches, web fetches and MCP calls are checked. Gemini CLI has no "ask" decision, so anything the
 guard would ask about is refused with the reason, and you run it yourself if you meant it. Gemini CLI lets a tool
 run when a hook exits with a code other than 0 or 2 or prints something that is not JSON, so the adapter only ever
 exits 0 (allow) or 2 (deny), and every error is a deny. Source: https://geminicli.com/docs/hooks/reference/
+That promise only holds once Python is started: a wrong `<PYTHON>` path, a missing `&` on Windows or a broken
+quote fails before the adapter runs, and Gemini CLI then lets the tool run. Project-level hooks also load only in a
+trusted folder. Quick check after installing: ask Gemini CLI to read `.env` in a test folder; it must answer that
+the agent guard blocked it, not that the file is missing.
 
 **Antigravity.** Copy `../antigravity/hooks.json` to `~/.gemini/config/hooks.json` (all workspaces) or to
 `.agents/hooks.json` in one workspace, then check it with `/hooks` in the Antigravity CLI. It runs

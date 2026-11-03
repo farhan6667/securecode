@@ -872,6 +872,22 @@
       "what": "setup --engine gitleaks with gitleaks present said 'every engine this project needs is already present'; an explicit --engine request now says '<name> is already installed'. The make_release.py docstring named 6.2.1 and RELEASE-NOTES-V6.2.md; it is now version neutral. The README now explains RESULT: BLOCKED and the exit codes (0 pass, 2 a finding at or above --fail-on, 3 ci with a required scanner missing or failed), checked against secgate.main",
       "check": "tests/test_v7_engines.py::test_setup_for_an_engine_already_installed_names_that_engine; README and docstring by reading",
       "status": "fixed"
+    },
+    {
+      "id": "V7L-01",
+      "severity": "high",
+      "where": "templates/gemini/settings.hooks.json (Windows use), templates/gemini/README.md, docs/AI-AGENT-SECURITY.md",
+      "what": "Live test in Gemini CLI 0.50.0 on Windows: the CLI runs hook commands through PowerShell (pwsh -Command), and the template line '\"<PYTHON>\" -I \"...\"' is a PowerShell parse error. The hook exits 1, Gemini CLI treats that as a failed hook and runs the tool (fail open), so on Windows the guard never ran and nothing was blocked. Fix: settings.hooks.windows.json with the PowerShell call operator (& \"<PYTHON>\" ...), docs tell Windows users to use it and to test one blocked action. Rerun live: read of fake-secret/.env, shell read of it, git push --force and a write to .security/guard-audit.jsonl were all blocked (hook exit 2, tool failed, file not created); git status and a normal write ran",
+      "check": "tests/test_v7_guard.py::test_gemini_template_command_really_runs_in_the_cli_shell (runs the filled-in template line through the same shell wrapper Gemini CLI uses)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7L-02",
+      "severity": "medium",
+      "where": "templates/codex/hooks.json, templates/antigravity/hooks.json",
+      "what": "Same '\"<PYTHON>\" -I ...' line shape as V7L-01. Not verified live: the Codex live run was stopped before a hook fired, and Antigravity is a GUI. If either runs hook commands through PowerShell on Windows, the guard fails open there too. Codex documents a commandWindows override that could carry a Windows form",
+      "check": "live test still to do: one blocked action per tool on Windows, with hook log evidence",
+      "status": "open"
     }
   ]
 }
