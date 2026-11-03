@@ -1,6 +1,6 @@
 # Deep source code review checklist (V6.2)
 
-Used by the agent in "Security Test Karo" and "Advisory QA Karo", and for self-review before saying
+Used by the agent in "Run Security Test" and "Run Advisory QA", and for self-review before saying
 a feature is done. Organized by OWASP Top 10 2021 and API Security Top 10 2023. For each class:
 what to look for, the fix, and the negative test to add. Examples cover the stacks we see most
 (Laravel/PHP, Node/Express, ASP.NET Core, Django/Python, React/Vue); apply the same idea elsewhere.

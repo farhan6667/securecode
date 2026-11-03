@@ -72,9 +72,9 @@ deletes over GET, and the Critical ones: IDOR and broken access control. Full li
 pitfalls: `docs/COMMON-FINDINGS.md` (your organization may add `docs/ORG-FINDINGS.md`, which takes priority).
 Never "fix" by commenting code out, hiding a button, or adding headers to one page only.
 
-## 7. "Security Test Karo" and "Advisory QA Karo"
+## 7. "Run Security Test" and "Run Advisory QA"
 
-When the developer writes **Security Test Karo** (or asks for a security check before handover):
+When the developer writes **Run Security Test** (or the Roman Urdu "Security Test Karo") (or asks for a security check before handover):
 1. Threat-model the project: assets, users, entry points, trust boundaries.
 2. Run the org gate from the project root:
    `python "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests`
@@ -85,7 +85,7 @@ When the developer writes **Security Test Karo** (or asks for a security check b
    (# | issue | severity | file | impact and root cause), the fixed code, and the command the
    developer can run to confirm. Never call the project "100% secure"; list what was not checked.
 
-"Advisory QA Karo" runs the same review (entry point by entry point, using `docs/SOURCE-CODE-REVIEW.md`)
+"Run Advisory QA" (or "Advisory QA Karo") runs the same review (entry point by entry point, using `docs/SOURCE-CODE-REVIEW.md`)
 but changes nothing until the developer agrees. It ends with an OWASP Top 10 status table and a plain
 readiness call: ready for the security team, ready after fixes 1-3, or not ready.
 

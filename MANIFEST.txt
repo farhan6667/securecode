@@ -7,7 +7,7 @@ Code security (unchanged core, fixed)
 - Secure coding policy in global CLAUDE.md block and AGENTS.md
 - PostToolUse fast heuristic check after every edit (Claude Code)
 - Full/CI gate: Semgrep SAST, Trivy (vuln, misconfig, secret), Gitleaks, project tests, SARIF + JSON
-- "Security Test Karo" trigger with the standard report: verdict, findings table, fixed code, verify command
+- "Run Security Test" trigger with the standard report: verdict, findings table, fixed code, verify command
 - Web + mobile test matrix, ZAP templates for authorized staging only, API BOLA/IDOR scaffold
 - GitHub Actions and GitLab templates that install pinned, checksum-verified scanners
 
@@ -34,7 +34,7 @@ Honest limitations
 - This package is AppSec automation, not proof of vulnerability-free software.
 
 Added after review (V6.2 final)
-- Deep source review modes: "Security Test Karo", "Advisory QA Karo" (/advisory-qa); docs/SOURCE-CODE-REVIEW.md
+- Deep source review modes: "Run Security Test", "Run Advisory QA" (/advisory-qa); docs/SOURCE-CODE-REVIEW.md
 - docs/COMMON-FINDINGS.md (common pentest findings); library_scan and config_scan rules
 - scripts/stop_gate.py (Stop hook), scripts/updater.py (signed auto-update), scripts/release/make_release.py
 - install-managed.py (organization-enforced install), SECURITY-CONTEXT.md, docs/THIRD-PARTY-REVIEW.md

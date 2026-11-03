@@ -65,7 +65,7 @@ def main() -> int:
         return 0
     lines = [f"- [{f['severity']}] {f['rule']} {Path(f['file']).name}:{f.get('line', 0)}: {f['message'][:160]}" for f in serious[:15]]
     reason = ("Org AppSec stop gate: changed files still have High/Critical findings. Fix them (or explain "
-              "clearly why each is a false positive), then finish. Run 'Security Test Karo' for the full gate.\n" + "\n".join(lines))
+              "clearly why each is a false positive), then finish. Run 'Run Security Test' for the full gate.\n" + "\n".join(lines))
     print(json.dumps({"decision": "block", "reason": reason}))
     return 0
 

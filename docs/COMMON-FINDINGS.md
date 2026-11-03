@@ -1,6 +1,6 @@
 # What pentests of AI-built web apps keep finding (and how to pass the first time)
 
-The agent uses this list as its priority order in "Security Test Karo" and "Advisory QA Karo", and checks
+The agent uses this list as its priority order in "Run Security Test" and "Run Advisory QA", and checks
 every item before handover. It reflects what security teams commonly report on business web apps
 (PHP/Laravel, WordPress, Node, .NET) and Android apps. If your organization installed its own
 `docs/ORG-FINDINGS.md` next to this file, that list takes priority.

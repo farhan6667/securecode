@@ -15,9 +15,9 @@ user account.
 4. Tell me that a daily task now checks GitHub for newer signed releases and installs them, and how to
    turn it off (ENTERPRISE_DEPLOYMENT.md). The public repo needs no GitHub login; a private fork does.
 5. Back up every file before changing it and never overwrite my existing settings or rules.
-From now on follow these security rules in every project by default. When I write "Security Test Karo",
+From now on follow these security rules in every project by default. When I write "Run Security Test",
 review the source code deeply, fix what you safely can, run the gate again and show me the verdict,
-the findings table and the fixed code. When I write "Advisory QA Karo", give me the readiness advisory
+the findings table and the fixed code. When I write "Run Advisory QA", give me the readiness advisory
 first and change nothing until I agree. Finish with a short report: what was installed, versions,
 checks passed, and anything I still need to do.
 ```

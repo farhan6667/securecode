@@ -112,7 +112,7 @@ rate-limit or captcha settings.
 
 ## 9. Pre-PR checklist
 
-- [ ] `Security Test Karo` run: verdict PASSED, or every finding fixed or accepted with an owner and expiry.
+- [ ] `Run Security Test` run: verdict PASSED, or every finding fixed or accepted with an owner and expiry.
 - [ ] No secrets or real customer data in the diff (`git diff | grep -iE 'token|secret|password'`).
 - [ ] New queries on tenant tables use the scope helper; new endpoints have a cross-user negative test.
 - [ ] New secret columns are hidden (and encrypted if stored reversibly).

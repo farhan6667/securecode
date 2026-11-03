@@ -29,7 +29,7 @@ poisoned file into reading your `.env` or pushing your code somewhere public.
 SecureCode fixes both:
 
 - **Secure by default.** The agent follows a security checklist while it writes.
-- **Checked before handover.** Type `Security Test Karo` and it reviews, fixes and re-tests the code.
+- **Checked before handover.** Type `Run Security Test` and it reviews, fixes and re-tests the code.
 - **A guard on your machine.** It keeps the agent away from secrets, force pushes and other risky commands.
 
 ## Install with one prompt
@@ -37,11 +37,11 @@ SecureCode fixes both:
 Open Claude Code, Cursor or Codex and paste this one line:
 
 ```
-Install NexaForge SecureCode for me: download the latest release from https://github.com/farhan6667/nexaforge-securecode/releases, verify its signature as SECURITY.md says, then follow ONE_PROMPT_INSTALL.md inside it.
+Install NexaForge SecureCode for me: download the latest release from https://github.com/farhan6667/nexaforge-securecode/releases, verify its signature as https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md explains, then follow ONE_PROMPT_INSTALL.md inside the zip.
 ```
 
 The agent downloads it, checks the signature, installs it and the scanners, and tells you what it did. It asks
-before installing anything, so just say yes. Then type `Security Test Karo` in any project.
+before installing anything, so just say yes. Then type `Run Security Test` in any project.
 
 <details>
 <summary>Install by hand instead</summary>
@@ -80,7 +80,7 @@ line. Three layers work together:
 
 1. **While writing**, the agent follows the rules, so the safe version is what gets written.
 2. **After every edit** (Claude Code), a quick check flags risky code right away, and the agent fixes it in the same session.
-3. **Before handover**, `Security Test Karo` reviews the whole project, fixes what it safely can, re-tests it,
+3. **Before handover**, `Run Security Test` reviews the whole project, fixes what it safely can, re-tests it,
    and the gate blocks anything still high risk.
 
 | Risk (OWASP Top 10 and common pentest findings) | What the agent does for you |
@@ -121,15 +121,14 @@ plainly under [Honest limits](#honest-limits).
 | Part | What it does |
 |---|---|
 | Secure-by-default rules | `AGENTS.md` and a global `CLAUDE.md` block: validate input on the server, parameterized queries, output encoding, authorization on every route, no secrets in code, ask before new dependencies |
-| Deep review: `Security Test Karo` | the agent walks every entry point with [docs/SOURCE-CODE-REVIEW.md](docs/SOURCE-CODE-REVIEW.md), fixes what it safely can, re-runs the gate and reports a verdict |
-| Readiness advisory: `Advisory QA Karo` | the same review, but nothing changes until you agree |
+| Deep review: `Run Security Test` | the agent walks every entry point with [docs/SOURCE-CODE-REVIEW.md](docs/SOURCE-CODE-REVIEW.md), fixes what it safely can, re-runs the gate and reports a verdict |
+| Readiness advisory: `Run Advisory QA` | the same review, but nothing changes until you agree |
 | The gate, `secgate.py` | Semgrep (our rules, Laravel authorization rules, registry packs), Trivy, Gitleaks, your project's tests, and built-in checks for outdated front-end libraries, web-root exposure, cookies, headers, TLS, default credentials, raw template output and Android manifests. `ci` mode fails closed |
 | Agent guard | a Claude Code hook that blocks reading secrets, writing to the agent's own settings, pipe-to-shell, force pushes and public repo creation, and asks before pushes and installs |
 | CI templates | GitHub and GitLab, with actions pinned to commit SHAs and scanners pinned by SHA-256 |
 | Templates | Laravel security headers, session, throttling, upload and webhook scaffolds, plus example security tests |
 
-The two trigger phrases are Roman Urdu ("run a security test", "do an advisory QA"). They work as written in any
-language you chat in, and `/security-gate` and `/advisory-qa` do the same.
+You can also use `/security-gate` and `/advisory-qa`, or just ask in your own words.
 
 ### Everything it does for you
 
@@ -145,8 +144,8 @@ language you chat in, and `/security-gate` and `/advisory-qa` do the same.
   still open.
 
 **When you ask for a review**
-- `Security Test Karo`: a pentester-style source review of every route and API, then fix, re-test and a verdict.
-- `Advisory QA Karo`: the same review as a readiness report; nothing changes until you agree.
+- `Run Security Test`: a pentester-style source review of every route and API, then fix, re-test and a verdict.
+- `Run Advisory QA`: the same review as a readiness report; nothing changes until you agree.
 - `/sec-review`: a threat model plus a deep review of the repo and your latest changes, with fixes and re-tests.
 - Checks Android manifests (debuggable, backups, cleartext traffic, exported components).
 - A matrix of who may do what (roles against routes), where every row needs a passing test.
@@ -223,9 +222,10 @@ GitHub repo for new releases. Your AI tool itself talks to its own provider as u
 It installs only releases signed with the NexaForge release key, never an older version, and it refuses unsafe
 paths inside the zip. A stolen GitHub login alone cannot push an update to your machine.
 
-**What does "Security Test Karo" mean?**
-It is Roman Urdu for "run a security test". The phrase was kept because the first users write it that way; the
-slash commands do the same thing in English.
+**Do I have to type the phrases exactly?**
+No. "Run Security Test" and "Run Advisory QA" are the shortcuts, and `/security-gate` and `/advisory-qa` do the
+same. Asking in your own words, like "check this project for security issues before I ship", works too. The
+Roman Urdu versions "Security Test Karo" and "Advisory QA Karo" also work.
 
 ## Contribute
 

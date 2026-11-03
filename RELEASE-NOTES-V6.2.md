@@ -7,7 +7,7 @@ Windows with Claude Code, and reports from other setups are very welcome.
 ## What it does
 - **Secure by default.** Rules for the agent (`AGENTS.md`, a global CLAUDE.md block) and a self-review of
   every change before the agent says "done".
-- **Deep source code review.** "Security Test Karo" (find, fix, re-test) and "Advisory QA Karo" (readiness
+- **Deep source code review.** "Run Security Test" (find, fix, re-test) and "Run Advisory QA" (readiness
   advisory, no changes until approved), with OWASP Top 10 and API Top 10 checklists. For access control the
   agent writes `.security/authz-matrix.md` and one cross-user test per route; a row without a passing test
   stays open.

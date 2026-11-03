@@ -1,6 +1,6 @@
 ---
 name: org-appsec-security
-description: Organization secure coding, deep source code security review and AppSec gate. Use for any web, API or mobile coding; run the full protocol when the user writes "Security Test Karo" or "Advisory QA Karo", runs /security-gate, or asks for a security check, source code review, IDOR check, pentest readiness or QA before handover.
+description: Organization secure coding, deep source code security review and AppSec gate. Use for any web, API or mobile coding; run the full protocol when the user writes "Run Security Test" or "Run Advisory QA" (Roman Urdu "Security Test Karo" / "Advisory QA Karo" also work), runs /security-gate, or asks for a security check, source code review, IDOR check, pentest readiness or QA before handover.
 ---
 # Org AppSec Security Review V6.2
 
@@ -24,11 +24,11 @@ output, rate limit; an upload: the upload section; a query: injection; a depende
 fix what you find. The Stop hook runs the quick gate on changed files and will send you back if a
 High or Critical finding is still open.
 
-**Mode B: "Security Test Karo" (find, fix, re-test).** Triggered by that phrase (any casing), by
+**Mode B: "Run Security Test" (find, fix, re-test).** Triggered by that phrase or "Security Test Karo" (any casing), by
 `/security-gate`, or by a request for a security test before handover. Run the Deep Review Protocol
 below on the whole project, fix every finding that is safe to fix, re-run, and report.
 
-**Mode C: "Advisory QA Karo" (readiness advisory).** Triggered by that phrase or a request for an
+**Mode C: "Run Advisory QA" (readiness advisory).** Triggered by that phrase, "Advisory QA Karo", or a request for an
 advisory, readiness check or "will this pass pentest". Run the same protocol but do not change code
 until the developer agrees: produce the Advisory QA report (format below), then offer to fix.
 

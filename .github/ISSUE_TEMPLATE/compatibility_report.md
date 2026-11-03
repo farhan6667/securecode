@@ -12,7 +12,7 @@ labels: compatibility
 
 **What you tried**
 - [ ] Install and `verify-global.py`
-- [ ] `Security Test Karo` or `Advisory QA Karo`
+- [ ] `Run Security Test` or `Run Advisory QA`
 - [ ] `secgate.py --mode ci` on a real project (which stack?)
 - [ ] The CI template (GitHub or GitLab)
 - [ ] The signed auto-update

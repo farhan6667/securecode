@@ -28,7 +28,7 @@ Security is mandatory for all AI-generated or AI-assisted code. This file is a d
 When you modify code, you are responsible for both implementation and verification. If a security finding cannot be safely auto-fixed, stop and explain the exact manual decision required.
 
 During normal development, apply this baseline by default without interrupting the
-developer. If the developer's message contains the exact phrase **"Security Test Karo"**,
+developer. If the developer's message contains the phrase **"Run Security Test"** or **"Security Test Karo"**,
 stop passive work and run the full Deep QA Pentest Protocol in
 the `org-appsec-security` skill (Web + Mobile matrix in
 `docs/SECURITY-TEST-MATRIX.md`, agent rules in `AGENTS.md`), reporting in that skill's Standardized Deliverable
