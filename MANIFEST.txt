@@ -45,3 +45,20 @@ Automated pentest (7.0 branch, not yet released)
 - scripts/report_lint.py: required sections, labels, evidence, no overclaims, no unmasked secrets
 - scripts/local_dast.py: OWASP ZAP baseline or API scan of the developer's app on loopback only
 - scripts/fix_pr.py: dry-run-first fix branch and draft PR, never the default branch, gitleaks on the diff
+
+7.0 rules (branch v7-rules, not released yet)
+- semgrep/java-spring.yml: 21 Java and Spring Boot rules (deserialization, XXE, JNDI, SpEL, JPQL/JDBC
+  concatenation, permitAll, CSRF off, Actuator, IDOR, mass assignment, @RequestBody without @Valid,
+  trust-all TLS, weak password hash, java.util.Random tokens), fixtures in tests/fixtures/java-spring/
+- secgate malware_scan (legacy audit): WEBSHELL_OBFUSCATED_EVAL, BACKDOOR_REQUEST_EXEC, REQUEST_DYNAMIC_CALL,
+  PREG_REPLACE_EVAL, PHP_IN_UPLOAD_DIR, PHP_IN_IMAGE_FILE, SUSPICIOUS_OBFUSCATION
+- secgate code_scan: MISSING_INPUT_VALIDATION, DEBUG_FLAG_FROM_REQUEST, TOKEN_FROM_USER_DATA,
+  SHORT_NUMERIC_CODE, TOKEN_TOO_SHORT, PUBLIC_ENV_SECRET, SOURCEMAP_IN_PROD, AUTH_ROUTE_NO_THROTTLE,
+  DENYLIST_FIX, PHP_DEPRECATED_API (up to PHP 8.5)
+- secgate db_config_scan: DB_ROOT_USER, DB_EMPTY_PASSWORD, DB_NO_TLS, DB_BIND_ALL, DB_TRUST_AUTH,
+  DB_GRANT_ALL, DB_SENSITIVE_COLUMN
+- secgate default_cred_scan: WEAK_DEFAULT_CREDENTIAL (extended beyond seeders: compose, Spring, .env, connection
+  strings, Django superusers), DEFAULT_SECRET_KEY, EXPOSED_ADMIN_PATH, EXPOSED_ADMIN_TOOL, SENSITIVE_WEBROOT_PATH,
+  DB_NO_AUTH
+- benchmark/spring-lab.json, legacy-lab.json, web-lab.json; run_lab.py scores every lab and its clean files
+- docs/STANDARDS-COVERAGE.md; Legacy Audit step in the security-review skill

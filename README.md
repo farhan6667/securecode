@@ -167,6 +167,13 @@ You can also use `/security-gate` and `/advisory-qa`, or just ask in your own wo
 - `Run Security Test`: a pentester-style source review of every route and API, then fix, re-test and a verdict.
 - `Run Advisory QA`: the same review as a readiness report; nothing changes until you agree.
 - `/sec-review`: a threat model plus a deep review of the repo and your latest changes, with fixes and re-tests.
+- `Run Legacy Audit` (part of the security test for old or inherited code): finds webshells, request-driven
+  backdoors, PHP hidden in upload or image folders and encoded payloads, and shows them to you before anything
+  is deleted. It also lists functions that break on the way to PHP 8.5.
+- Java and Spring Boot rules: IDOR, mass assignment, SQL/JPQL concatenation, XXE, unsafe deserialization,
+  SpEL and JNDI injection, permitAll on admin paths, disabled CSRF, exposed Actuator, trust-all TLS.
+- Database settings: root or default users, empty passwords, no TLS, listening on every interface, GRANT ALL,
+  card and plain-text password columns.
 - Checks Android manifests (debuggable, backups, cleartext traffic, exported components).
 - A matrix of who may do what (roles against routes), where every row needs a passing test.
 
@@ -180,8 +187,12 @@ You can also use `/security-gate` and `/advisory-qa`, or just ask in your own wo
 - Optional webhook to send findings to your tracker.
 
 **Proof, not promises**
-- 145 automated tests, CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
-- A Laravel lab with 18 planted vulnerabilities: the full gate finds 17, and the one it misses is documented.
+- More than 300 automated tests, CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
+- Four labs with planted vulnerabilities (Laravel, Spring Boot, legacy webshells, common pentest findings),
+  each with clean files that must stay quiet. Scores and every miss are in
+  [benchmark/RESULTS.md](benchmark/RESULTS.md).
+- An honest map to OWASP Top 10:2025, CWE Top 25 (2025) and the OWASP API Top 10 2023, marking each item
+  caught, partial, review only or not yet: [docs/STANDARDS-COVERAGE.md](docs/STANDARDS-COVERAGE.md).
 - The repo scans itself with its own gate on every push.
 
 ## How a review works

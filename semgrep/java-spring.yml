@@ -1,0 +1,725 @@
+# NexaForge SecureCode: Java and Spring Boot rules.
+# Written for this project. Pattern rules cannot prove access control or prove that an input is
+# trusted, so the authorization and binding rules start their message with "Verify:" and say what to
+# check. The entry-point review in the security-review skill still applies.
+#
+# Opt-out for objects that are public on purpose (IDOR rule only): put `// securecode: public-object`
+# at the end of the reported line.
+#
+# Request sources used by the taint rules: Spring handler parameters annotated @RequestParam,
+# @PathVariable, @RequestHeader, @CookieValue, @RequestBody or @ModelAttribute, and the servlet
+# accessors getParameter, getHeader, getQueryString, getInputStream, getReader and getCookies.
+rules:
+  # ---------------------------------------------------------------- deserialization
+  - id: java-unsafe-deserialization-objectinputstream
+    languages: [java]
+    severity: ERROR
+    message: >-
+      ObjectInputStream.readObject() turns bytes into arbitrary objects. With input from a request,
+      cookie, socket, upload or queue this is remote code execution through gadget chains
+      (CWE-502). Use JSON with a fixed schema instead, or set an ObjectInputFilter allowlist
+      (setObjectInputFilter / ObjectInputFilter.Config) before reading.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 Software and Data Integrity Failures"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: (ObjectInputStream $OIS).readObject()
+          - pattern: (ObjectInputStream $OIS).readUnshared()
+          - pattern: new ObjectInputStream(...).readObject()
+      - pattern-not-inside: |
+          $RET $M(...) { ... $OIS.setObjectInputFilter(...); ... }
+      - pattern-not-inside: |
+          $RET $M(...) { ... ObjectInputFilter.Config.setSerialFilter(...); ... }
+
+  - id: java-xstream-without-allowlist
+    languages: [java]
+    severity: ERROR
+    message: >-
+      XStream.fromXML() without a type allowlist can build arbitrary classes from XML (many
+      XStream RCE CVEs, CWE-502). Call xstream.addPermission(NoTypePermission.NONE) and then
+      allowTypes(...) / allowTypesByWildcard(...) for your own DTO classes only, and keep XStream
+      on 1.4.21 or later.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 Software and Data Integrity Failures"
+      confidence: MEDIUM
+    patterns:
+      - pattern: (XStream $X).fromXML(...)
+      - pattern-not-inside: |
+          $RET $M(...) { ... $X.allowTypes(...); ... }
+      - pattern-not-inside: |
+          $RET $M(...) { ... $X.allowTypesByWildcard(...); ... }
+      - pattern-not-inside: |
+          $RET $M(...) { ... $X.allowTypesByRegExp(...); ... }
+      - pattern-not-inside: |
+          $RET $M(...) { ... $X.allowTypeHierarchy(...); ... }
+      - pattern-not-inside: |
+          $RET $M(...) { ... $X.addPermission(...); ... }
+
+  - id: java-jackson-default-typing
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Jackson polymorphic default typing lets the JSON choose the Java class to build, which is a
+      known deserialization RCE class (CWE-502). Remove enableDefaultTyping /
+      activateDefaultTyping with LaissezFaireSubTypeValidator; if you need polymorphism, use
+      @JsonTypeInfo(use = Id.NAME) with @JsonSubTypes, or a BasicPolymorphicTypeValidator that
+      allows only your own packages.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 Software and Data Integrity Failures"
+      confidence: HIGH
+    pattern-either:
+      - pattern: $M.enableDefaultTyping(...)
+      - pattern: $M.enableDefaultTypingAsProperty(...)
+      - pattern: $M.activateDefaultTyping(LaissezFaireSubTypeValidator.instance, ...)
+      - pattern: $M.activateDefaultTyping(new LaissezFaireSubTypeValidator(), ...)
+      - pattern: $M.activateDefaultTypingAsProperty(LaissezFaireSubTypeValidator.instance, ...)
+      - pattern: "@JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, ...)"
+      - pattern: "@JsonTypeInfo(use = JsonTypeInfo.Id.MINIMAL_CLASS, ...)"
+      - pattern: "@JsonTypeInfo(use = Id.CLASS, ...)"
+
+  # ---------------------------------------------------------------- XXE
+  - id: java-xxe-documentbuilderfactory
+    languages: [java]
+    severity: ERROR
+    message: >-
+      DocumentBuilderFactory is used without disabling DOCTYPEs, so a request can read local files or
+      reach internal hosts through XML external entities (XXE, CWE-611). Before newDocumentBuilder()
+      call dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true), plus
+      dbf.setXIncludeAware(false) and dbf.setExpandEntityReferences(false).
+    metadata:
+      category: security
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+      owasp: "A05:2021 Security Misconfiguration"
+      confidence: MEDIUM
+    patterns:
+      - pattern: (DocumentBuilderFactory $DBF).newDocumentBuilder()
+      - pattern-not-inside: |
+          $RET $M(...) { ... $DBF.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true); ... }
+
+  - id: java-xxe-saxparserfactory
+    languages: [java]
+    severity: ERROR
+    message: >-
+      SAXParserFactory is used without disabling DOCTYPEs (XXE, CWE-611). Call
+      spf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) before
+      newSAXParser(), or at least turn off external-general-entities and external-parameter-entities.
+    metadata:
+      category: security
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+      owasp: "A05:2021 Security Misconfiguration"
+      confidence: MEDIUM
+    patterns:
+      - pattern: (SAXParserFactory $SPF).newSAXParser()
+      - pattern-not-inside: |
+          $RET $M(...) { ... $SPF.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true); ... }
+      - pattern-not-inside: |
+          $RET $M(...) { ... $SPF.setFeature("http://xml.org/sax/features/external-general-entities", false); ... }
+
+  - id: java-xxe-xmlinputfactory
+    languages: [java]
+    severity: ERROR
+    message: >-
+      XMLInputFactory (StAX) is used with DTD support on, so external entities in the request can be
+      resolved (XXE, CWE-611). Set factory.setProperty(XMLInputFactory.SUPPORT_DTD, false) and
+      factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false) before creating
+      the reader.
+    metadata:
+      category: security
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+      owasp: "A05:2021 Security Misconfiguration"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: (XMLInputFactory $XIF).createXMLStreamReader(...)
+          - pattern: (XMLInputFactory $XIF).createXMLEventReader(...)
+      - pattern-not-inside: |
+          $RET $M(...) { ... $XIF.setProperty(XMLInputFactory.SUPPORT_DTD, false); ... }
+      - pattern-not-inside: |
+          $RET $M(...) { ... $XIF.setProperty("javax.xml.stream.supportDTD", false); ... }
+      - pattern-not-inside: |
+          $RET $M(...) { ... $XIF.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false); ... }
+
+  # ---------------------------------------------------------------- JNDI and SpEL injection
+  - id: java-jndi-injection
+    languages: [java]
+    severity: ERROR
+    message: >-
+      A JNDI lookup name comes from the request. An attacker can point it at their own LDAP or RMI
+      server and load remote code (the Log4Shell class, CWE-74/CWE-917). Never look up a name built
+      from input; map the input to a fixed allowlist of names.
+    metadata:
+      category: security
+      cwe: "CWE-917: Improper Neutralization of Special Elements used in an Expression Language Statement"
+      owasp: "A03:2021 Injection"
+      confidence: HIGH
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              $RET $METHOD(..., @$REQ(...) $TYPE $SOURCE, ...) { ... }
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(RequestParam|PathVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute)$
+          - pattern: $SOURCE
+      - patterns:
+          - pattern-inside: |
+              $RET $METHOD(..., @$REQ $TYPE $SOURCE, ...) { ... }
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(RequestParam|PathVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute)$
+          - pattern: $SOURCE
+      - pattern: (HttpServletRequest $R).$GET(...)
+    pattern-sinks:
+      - pattern: (Context $C).lookup(...)
+      - pattern: (InitialContext $C).lookup(...)
+      - pattern: (DirContext $C).lookup(...)
+      - pattern: (InitialDirContext $C).lookup(...)
+      - pattern: (JndiTemplate $C).lookup(...)
+      - pattern: new InitialContext().lookup(...)
+
+  - id: java-spel-injection
+    languages: [java]
+    severity: ERROR
+    message: >-
+      A Spring Expression Language (SpEL) expression is parsed from request data. SpEL can call any
+      Java method, so this is remote code execution (CWE-917). Do not evaluate user text as an
+      expression; pass user values as variables into a fixed expression, and use
+      SimpleEvaluationContext.forReadOnlyDataBinding() instead of StandardEvaluationContext.
+    metadata:
+      category: security
+      cwe: "CWE-917: Improper Neutralization of Special Elements used in an Expression Language Statement"
+      owasp: "A03:2021 Injection"
+      confidence: HIGH
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              $RET $METHOD(..., @$REQ(...) $TYPE $SOURCE, ...) { ... }
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(RequestParam|PathVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute)$
+          - pattern: $SOURCE
+      - patterns:
+          - pattern-inside: |
+              $RET $METHOD(..., @$REQ $TYPE $SOURCE, ...) { ... }
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^(RequestParam|PathVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute)$
+          - pattern: $SOURCE
+      - pattern: (HttpServletRequest $R).$GET(...)
+    pattern-sinks:
+      - pattern: (ExpressionParser $P).parseExpression(...)
+      - pattern: (SpelExpressionParser $P).parseExpression(...)
+      - pattern: new SpelExpressionParser().parseExpression(...)
+      - pattern: (ExpressionParser $P).parseRaw(...)
+
+  # ---------------------------------------------------------------- SQL / JPQL / HQL
+  - id: java-sqli-string-concat
+    languages: [java]
+    severity: ERROR
+    message: >-
+      A JPQL, HQL, native SQL or JDBC query is built by string concatenation or String.format. Any
+      value from the request in it is SQL injection (CWE-89). Use a parameter: createQuery("... where
+      u.name = :name").setParameter("name", name), PreparedStatement with ?, JdbcTemplate with ?
+      arguments, or Spring Data method names / @Query with :params. Sort columns need an allowlist.
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      owasp: "A03:2021 Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          # Methods that only ever take SQL, JPQL or HQL: any concatenated argument counts.
+          - patterns:
+              - pattern-either:
+                  - pattern: $Q.$EXEC("..." + $X, ...)
+                  - pattern: $Q.$EXEC($A + $X, ...)
+                  - pattern: $Q.$EXEC(String.format(...), ...)
+                  - pattern: $Q.$EXEC($SB.toString(), ...)
+                  - patterns:
+                      - pattern-inside: |
+                          String $S = "..." + $X;
+                          ...
+                      - pattern: $Q.$EXEC($S, ...)
+                  - patterns:
+                      - pattern-inside: |
+                          String $S = String.format(...);
+                          ...
+                      - pattern: $Q.$EXEC($S, ...)
+                  - patterns:
+                      - pattern-inside: |
+                          $S = $S + $X;
+                          ...
+                      - pattern: $Q.$EXEC($S, ...)
+                  - patterns:
+                      - pattern-inside: |
+                          $S += $X;
+                          ...
+                      - pattern: $Q.$EXEC($S, ...)
+              - metavariable-regex:
+                  metavariable: $EXEC
+                  regex: ^(createQuery|createNativeQuery|createSQLQuery|createSelectionQuery|createMutationQuery|executeQuery|executeUpdate|executeLargeUpdate|addBatch|prepareStatement|prepareCall|queryForObject|queryForList|queryForMap|queryForRowSet|queryForStream|batchUpdate)$
+          # Generic names (JdbcTemplate.query/update, Statement.execute, but also RestTemplate.execute):
+          # only when the concatenated string starts like SQL.
+          - patterns:
+              - pattern-either:
+                  - pattern: $Q.$EXEC(<... "=~/(?is)^\s*(select|insert|update|delete|with|merge|from|call|exec)\b.*/" ...> + $X, ...)
+                  - pattern: $Q.$EXEC(String.format("=~/(?is)^\s*(select|insert|update|delete|with|merge|from|call|exec)\b.*/", ...), ...)
+                  - patterns:
+                      - pattern-inside: |
+                          String $S = <... "=~/(?is)^\s*(select|insert|update|delete|with|merge|from|call|exec)\b.*/" ...> + $X;
+                          ...
+                      - pattern: $Q.$EXEC($S, ...)
+              - metavariable-regex:
+                  metavariable: $EXEC
+                  regex: ^(execute|query|update)$
+      # A concatenation of two literals is not user input.
+      - pattern-not: $Q.$EXEC("..." + "...", ...)
+
+  # ---------------------------------------------------------------- Spring Security config
+  - id: spring-permitall-sensitive-path
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Verify: a sensitive path (admin, actuator, internal, management, h2-console, api docs) or every
+      request is opened with permitAll(). Anyone on the network can call it without signing in
+      (CWE-284). Use authenticated() plus hasRole/hasAuthority for admin paths, and keep Actuator and
+      H2 console off the public port.
+    metadata:
+      category: security
+      cwe: "CWE-284: Improper Access Control"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: MEDIUM
+    pattern-either:
+      # A sensitive path pattern. /actuator/health and /actuator/info are meant to be public.
+      - patterns:
+          - pattern: $H.$MATCH(..., $PATH, ...).permitAll()
+          - metavariable-regex:
+              metavariable: $MATCH
+              regex: ^(requestMatchers|antMatchers|mvcMatchers|regexMatchers|securityMatcher|pathMatchers)$
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: (?i)^"(?!/?actuator/(health|info)(/[^"]*)?"$)[^"]*(admin|actuator|internal|manage|h2-console|api-docs|swagger|jolokia|heapdump|/env(?:/|\*|(?="))|/console(?:/|\*|(?=")))[^"]*"$
+          - focus-metavariable: $PATH
+      # anyRequest().permitAll() opens everything not listed above it.
+      - patterns:
+          - pattern: $H.$ANY().$PERMIT()
+          - metavariable-regex:
+              metavariable: $ANY
+              regex: ^anyRequest$
+          - metavariable-regex:
+              metavariable: $PERMIT
+              regex: ^permitAll$
+          - focus-metavariable: $ANY
+
+  - id: spring-csrf-disabled-with-session
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Verify: CSRF protection is disabled, but this configuration does not make the app stateless.
+      With cookie or session login, a third-party page can submit state-changing requests as the
+      signed-in user (CWE-352). Keep CSRF on for browser sessions (CookieCsrfTokenRepository for
+      SPAs); disable it only for a pure token API with
+      sessionCreationPolicy(SessionCreationPolicy.STATELESS).
+    metadata:
+      category: security
+      cwe: "CWE-352: Cross-Site Request Forgery (CSRF)"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: $H.csrf().disable()
+          - pattern: $H.csrf($C -> $C.disable())
+          - pattern: $H.csrf(AbstractHttpConfigurer::disable)
+          - pattern: $H.csrf(CsrfConfigurer::disable)
+      - pattern-not-inside: |
+          $RET $M(...) { ... <... SessionCreationPolicy.STATELESS ...>; ... }
+      - pattern-not-inside: <... SessionCreationPolicy.STATELESS ...>
+
+  # ---------------------------------------------------------------- Actuator exposure
+  - id: spring-actuator-exposed-properties
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Spring Boot Actuator exposes every endpoint (or a sensitive one such as env, heapdump,
+      configprops, threaddump, jolokia, logfile, shutdown) over HTTP. Heap dumps and env leak
+      secrets and session tokens (CWE-200). Expose only health and info on the public port, put the
+      rest on a separate management port behind authentication.
+    metadata:
+      category: security
+      cwe: "CWE-200: Exposure of Sensitive Information to an Unauthorized Actor"
+      owasp: "A05:2021 Security Misconfiguration"
+      confidence: HIGH
+    paths:
+      include:
+        - "*.properties"
+    pattern-regex: (?m)^[ \t]*management\.endpoints\.web\.exposure\.include[ \t]*[=:][ \t]*[^\n#]*(?:\*|\b(?:env|heapdump|threaddump|configprops|beans|mappings|jolokia|logfile|shutdown|loggers|gateway|sessions)\b)
+
+  - id: spring-actuator-exposed-yaml
+    languages: [yaml]
+    severity: ERROR
+    message: >-
+      Spring Boot Actuator exposes every endpoint (or a sensitive one such as env, heapdump,
+      configprops, threaddump, jolokia, logfile, shutdown) over HTTP. Heap dumps and env leak
+      secrets and session tokens (CWE-200). Expose only health and info on the public port, put the
+      rest on a separate management port behind authentication.
+    metadata:
+      category: security
+      cwe: "CWE-200: Exposure of Sensitive Information to an Unauthorized Actor"
+      owasp: "A05:2021 Security Misconfiguration"
+      confidence: HIGH
+    paths:
+      include:
+        - "application*.yml"
+        - "application*.yaml"
+        - "bootstrap*.yml"
+        - "bootstrap*.yaml"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              management:
+                endpoints:
+                  web:
+                    exposure:
+                      include: $V
+          - pattern: |
+              management.endpoints.web.exposure.include: $V
+      - focus-metavariable: $V
+      - metavariable-regex:
+          metavariable: $V
+          regex: (?s).*(\*|\b(env|heapdump|threaddump|configprops|beans|mappings|jolokia|logfile|shutdown|loggers|gateway|sessions)\b).*
+
+  # ---------------------------------------------------------------- IDOR and mass assignment
+  - id: spring-idor-unscoped-lookup
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Verify: this controller loads a record by an id from the URL and nothing in the method checks
+      that the current user may see it (IDOR / BOLA, CWE-639). Load it through the owner, for example
+      repo.findByIdAndOwnerId(id, principal.getId()), or guard the method with
+      @PreAuthorize("@access.canRead(#id, authentication)") / @PostAuthorize("returnObject.owner ==
+      authentication.name"). Check read, update, delete and export separately. If the record is
+      public on purpose, add `// securecode: public-object`.
+    metadata:
+      category: security
+      cwe: "CWE-639: Authorization Bypass Through User-Controlled Key"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              @RestController
+              class $C { ... }
+          - pattern-inside: |
+              @Controller
+              class $C { ... }
+      - pattern-either:
+          - pattern-inside: |
+              $RET $METHOD(..., @PathVariable $T $ID, ...) { ... }
+          - pattern-inside: |
+              $RET $METHOD(..., @PathVariable(...) $T $ID, ...) { ... }
+          - pattern-inside: |
+              $RET $METHOD(..., @RequestParam $T $ID, ...) { ... }
+          - pattern-inside: |
+              $RET $METHOD(..., @RequestParam(...) $T $ID, ...) { ... }
+      - metavariable-regex:
+          metavariable: $ID
+          regex: (?i)^\w*id$
+      - pattern-either:
+          - pattern: $REPO.$FIND($ID, ...)
+          - pattern: $REPO.$FIND(..., $ID)
+      - metavariable-regex:
+          metavariable: $FIND
+          regex: ^(findById|getById|getReferenceById|getOne|findOne|deleteById|load|get|find|getReference)$
+      # A role or expression guard on the method or on the whole controller.
+      - pattern-not-inside: |
+          @PreAuthorize(...)
+          $RET $M2(...) { ... }
+      - pattern-not-inside: |
+          @PreAuthorize(...)
+          class $C2 { ... }
+      - pattern-not-inside: |
+          @PostAuthorize(...)
+          $RET $M2(...) { ... }
+      - pattern-not-inside: |
+          @PostAuthorize(...)
+          class $C2 { ... }
+      - pattern-not-inside: |
+          @Secured(...)
+          $RET $M2(...) { ... }
+      - pattern-not-inside: |
+          @Secured(...)
+          class $C2 { ... }
+      - pattern-not-inside: |
+          @RolesAllowed(...)
+          $RET $M2(...) { ... }
+      - pattern-not-inside: |
+          @RolesAllowed(...)
+          class $C2 { ... }
+      - pattern-not-inside: |
+          @PostFilter(...)
+          $RET $M2(...) { ... }
+      - pattern-not-inside: |
+          @PostFilter(...)
+          class $C2 { ... }
+      # An owner check in the same method: the signed-in principal is read and compared.
+      - pattern-not-inside: |
+          $RET $M3(..., @AuthenticationPrincipal $PT $P, ...) { ... if (<... $P.$PM(...) ...>) { ... } ... }
+      - pattern-not-inside: |
+          $RET $M3(..., Principal $P, ...) { ... if (<... $P.$PM(...) ...>) { ... } ... }
+      - pattern-not-inside: |
+          $RET $M3(..., Authentication $P, ...) { ... if (<... $P.$PM(...) ...>) { ... } ... }
+      # (A null check such as "if (principal == null) throw" is not an owner check: it calls no getter.)
+      - pattern-not-inside: |
+          $RET $M3(...) { ... if (<... SecurityContextHolder.getContext() ...>) { ... } ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.checkOwner(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.checkOwnership(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.checkAccess(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.checkPermission(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.assertOwner(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.assertOwnership(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.assertAccess(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.verifyOwner(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.verifyOwnership(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.verifyAccess(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.ensureOwner(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.ensureOwnership(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.ensureAccess(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.requireOwner(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.requireOwnership(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.requireAccess(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.checkTenant(...); ... }
+      - pattern-not-inside: |
+          $RET $M3(...) { ... $CHK.assertTenant(...); ... }
+      - pattern-not-regex: (?m)^[^\n]*//[ \t]*securecode:[ \t]*public-object\b[^\n]*$
+
+  - id: spring-mass-assignment-entity-binding
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Verify: the request body or form is bound straight into an object that is then saved. If that
+      object is a JPA entity, a caller can set fields such as role, enabled, owner, balance or price
+      (mass assignment, CWE-915). Bind to a DTO that has only the editable fields, copy them onto the
+      loaded entity, and validate it with @Valid. For @ModelAttribute forms, an @InitBinder with
+      setAllowedFields(...) also works.
+    metadata:
+      category: security
+      cwe: "CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              $RET $METHOD(..., @RequestBody $T $E, ...) { ... }
+          - pattern-inside: |
+              $RET $METHOD(..., @ModelAttribute $T $E, ...) { ... }
+          - pattern-inside: |
+              $RET $METHOD(..., @ModelAttribute(...) $T $E, ...) { ... }
+      - metavariable-regex:
+          metavariable: $T
+          regex: ^(?!.*(Dto|DTO|Request|Form|Command|Input|Payload|Params|Criteria|Filter)$)[A-Z]\w*$
+      - pattern-either:
+          - pattern: $REPO.save($E)
+          - pattern: $REPO.saveAndFlush($E)
+          - pattern: $REPO.saveAll(...)
+          - pattern: $EM.merge($E)
+          - pattern: $EM.persist($E)
+      - pattern-not-inside: |
+          class $C { ... @InitBinder $R $IB(...) { ... $B.setAllowedFields(...); ... } ... }
+      - pattern-not-inside: |
+          class $C { ... @InitBinder $R $IB(...) { ... $B.setDisallowedFields(...); ... } ... }
+
+  - id: spring-requestbody-without-valid
+    languages: [java]
+    severity: WARNING
+    message: >-
+      A @RequestBody object is used without @Valid or @Validated, so its Bean Validation constraints
+      (@NotNull, @Size, @Pattern, @Email) never run and the handler trusts the client's shape (missing
+      input validation, CWE-20). Add @Valid before @RequestBody and constraints on the DTO fields.
+    metadata:
+      category: security
+      cwe: "CWE-20: Improper Input Validation"
+      owasp: "A03:2021 Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $RET $METHOD(..., @RequestBody $T $B, ...) { ... }
+          - pattern: |
+              $RET $METHOD(..., @RequestBody(...) $T $B, ...) { ... }
+      - pattern-not: |
+          $RET $METHOD(..., @Valid $T $B, ...) { ... }
+      - pattern-not: |
+          $RET $METHOD(..., @Validated $T $B, ...) { ... }
+      - pattern-not: |
+          $RET $METHOD(..., @Validated(...) $T $B, ...) { ... }
+      - pattern-not: |
+          $RET $METHOD(..., @jakarta.validation.Valid $T $B, ...) { ... }
+      - pattern-not: |
+          $RET $METHOD(..., @javax.validation.Valid $T $B, ...) { ... }
+      - metavariable-regex:
+          metavariable: $T
+          regex: ^(?!(String|byte\[\]|JsonNode|ObjectNode|Resource)$).+$
+      - focus-metavariable: $B
+
+  # ---------------------------------------------------------------- TLS
+  - id: java-trust-all-certificates
+    languages: [java]
+    severity: ERROR
+    message: >-
+      This X509TrustManager accepts every certificate (checkServerTrusted does nothing), so any
+      man-in-the-middle can read and change the traffic (CWE-295). Remove it and use the default
+      trust store; for a private CA, load that CA into a KeyStore and build the TrustManagerFactory
+      from it.
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      owasp: "A02:2021 Cryptographic Failures"
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              class $C implements X509TrustManager { ... }
+          - pattern-inside: |
+              class $C extends X509ExtendedTrustManager { ... }
+          - pattern-inside: |
+              new X509TrustManager() { ... }
+          - pattern-inside: |
+              new X509ExtendedTrustManager() { ... }
+      - pattern: |
+          public void checkServerTrusted(...) {}
+
+  - id: java-trust-all-hostnames
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Hostname verification is switched off: the TLS certificate of any host is accepted for any
+      name, which allows man-in-the-middle (CWE-297). Remove the custom HostnameVerifier and keep the
+      default (DefaultHostnameVerifier for Apache HttpClient).
+    metadata:
+      category: security
+      cwe: "CWE-297: Improper Validation of Certificate with Host Mismatch"
+      owasp: "A02:2021 Cryptographic Failures"
+      confidence: HIGH
+    pattern-either:
+      - pattern: |
+          new HostnameVerifier() { ... public boolean verify(...) { return true; } ... }
+      - pattern: new NoopHostnameVerifier()
+      - pattern: NoopHostnameVerifier.INSTANCE
+      - pattern: SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER
+      - pattern: new AllowAllHostnameVerifier()
+    # The lambda form is the next rule: it only counts when passed as a hostname verifier.
+  - id: java-trust-all-hostnames-lambda
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Hostname verification is switched off with a lambda that always returns true (CWE-297). Remove
+      it and keep the default hostname verifier.
+    metadata:
+      category: security
+      cwe: "CWE-297: Improper Validation of Certificate with Host Mismatch"
+      owasp: "A02:2021 Cryptographic Failures"
+      confidence: HIGH
+    pattern-either:
+      - pattern: $X.setHostnameVerifier(($H, $S) -> true)
+      - pattern: $X.setDefaultHostnameVerifier(($H, $S) -> true)
+      - pattern: $X.hostnameVerifier(($H, $S) -> true)
+      - pattern: $X.setSSLHostnameVerifier(($H, $S) -> true)
+
+  # ---------------------------------------------------------------- crypto and randomness
+  - id: java-weak-password-hash
+    languages: [java]
+    severity: ERROR
+    message: >-
+      A password is hashed with a fast digest (MD5, SHA-1 or plain SHA-2). These are built for speed,
+      so stolen hashes are cracked quickly (CWE-916). Use Spring Security's PasswordEncoder
+      (BCryptPasswordEncoder, Argon2PasswordEncoder, or
+      PasswordEncoderFactories.createDelegatingPasswordEncoder()).
+    metadata:
+      category: security
+      cwe: "CWE-916: Use of Password Hash With Insufficient Computational Effort"
+      owasp: "A02:2021 Cryptographic Failures"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: MessageDigest.getInstance("=~/(?i)^(MD2|MD4|MD5|SHA|SHA-?1|SHA-?224|SHA-?256|SHA-?384|SHA-?512)$/", ...)
+          - patterns:
+              - pattern: DigestUtils.$DU(...)
+              - metavariable-regex:
+                  metavariable: $DU
+                  regex: ^(md5|md5Hex|sha1|sha1Hex|sha|shaHex|sha256|sha256Hex|sha512|sha512Hex|md5DigestAsHex)$
+          - patterns:
+              - pattern: Hashing.$HF()
+              - metavariable-regex:
+                  metavariable: $HF
+                  regex: ^(md5|sha1|sha256|sha512)$
+      - pattern-either:
+          - pattern-inside: |
+              $RET $M(..., $PT $PW, ...) { ... }
+          - pattern-inside: |
+              $RET $M(...) { ... }
+      - metavariable-regex:
+          metavariable: $M
+          # Hashing a random reset or API token with SHA-256 is correct, so token-ish names are excluded.
+          regex: (?i)^(?!.*(token|reset|otp|nonce|checksum|fingerprint|etag|digest|signature)).*(passw|pwd|credential|hashpass|encodepass|checkpass|login|signup|register).*
+    # $PW is only there so the parameter form parses; the method name carries the context.
+
+  - id: java-insecure-random-token
+    languages: [java]
+    severity: ERROR
+    message: >-
+      java.util.Random or Math.random() is predictable, and here it makes a token, code, password,
+      OTP, nonce or key (CWE-330). Use SecureRandom (or UUID.randomUUID() for ids that only need to
+      be unique), with at least 128 bits for tokens.
+    metadata:
+      category: security
+      cwe: "CWE-330: Use of Insufficiently Random Values"
+      owasp: "A02:2021 Cryptographic Failures"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: new Random(...)
+          - pattern: new java.util.Random(...)
+          - pattern: Math.random()
+          - pattern: ThreadLocalRandom.current()
+          - pattern: RandomStringUtils.random(...)
+          - pattern: RandomStringUtils.randomAlphanumeric(...)
+          - pattern: RandomStringUtils.randomNumeric(...)
+          - pattern: RandomStringUtils.randomAlphabetic(...)
+      - pattern-either:
+          - patterns:
+              - pattern-inside: |
+                  $RET $M(...) { ... }
+              - metavariable-regex:
+                  metavariable: $M
+                  # Whole camelCase or snake_case words only: shuffleMappings must not match "pin".
+                  regex: ^(?:(?:token|otp|reset|nonce|secret|password|passwd|apikey|verify|verification|csrf|session|salt|activation|invite|code|pin)|.*(?:[a-z0-9_](?:Token|Otp|OTP|Reset|Nonce|Secret|Password|ApiKey|Verify|Verification|Csrf|CSRF|Session|Salt|Activation|Invite|Code|Pin)|_(?:token|otp|reset|nonce|secret|password|apikey|verify|csrf|session|salt|activation|invite|code|pin)))(?:[A-Z_0-9].*)?$
+          - patterns:
+              - pattern-inside: $TY $V = <... $EXPR ...>;
+              - metavariable-regex:
+                  metavariable: $V
+                  regex: ^(?:(?:token|otp|reset|nonce|secret|password|passwd|apikey|verify|verification|csrf|session|salt|activation|invite|code|pin)|.*(?:[a-z0-9_](?:Token|Otp|OTP|Reset|Nonce|Secret|Password|ApiKey|Verify|Verification|Csrf|CSRF|Session|Salt|Activation|Invite|Code|Pin)|_(?:token|otp|reset|nonce|secret|password|apikey|verify|csrf|session|salt|activation|invite|code|pin)))(?:[A-Z_0-9].*)?$

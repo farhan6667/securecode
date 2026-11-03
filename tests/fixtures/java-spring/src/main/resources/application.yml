@@ -1,0 +1,6 @@
+# Test fixture for semgrep/java-spring.yml: the safe setting, nothing may be reported.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

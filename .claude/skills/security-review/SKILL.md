@@ -38,6 +38,34 @@ until the developer agrees: produce the Advisory QA report (format below), then 
    API handlers, GraphQL resolvers, webhooks, queue consumers, CLI commands, mobile deep links);
    authentication method; roles; tenant/owner model; where files are stored; outbound calls.
    Write the map down briefly: it is the review's coverage list.
+1b. **Legacy Audit (old, inherited or previously hacked projects).** Do this before step 2 whenever the
+   code is older than its team, came from a vendor or freelancer, runs PHP below 8.2, or the owner asks
+   for it ("Run Legacy Audit"). It looks for code that someone planted, not only bugs.
+   - **Inventory.** List the stack, PHP/framework/library versions, every folder that is web-reachable,
+     and every upload, image, media and storage folder. Note files outside the normal source tree
+     (scripts in `uploads/`, `images/`, `wp-content/uploads/`, `storage/app/public/`, stray `.php` in
+     the web root) and recently changed files there (`git log --since`, or file dates when there is no git).
+   - **Malware sweep.** The gate's malware scan runs in every mode and also reads `vendor/`:
+     `WEBSHELL_OBFUSCATED_EVAL` (eval/assert/exec fed by base64, gzinflate, str_rot13, atob, b64decode),
+     `BACKDOOR_REQUEST_EXEC` (a request value reaching eval, system, exec, include, Runtime.exec,
+     Process.Start), `REQUEST_DYNAMIC_CALL` (`$_GET['f'](...)`), `PREG_REPLACE_EVAL` (`/e`),
+     `PHP_IN_UPLOAD_DIR`, `PHP_IN_IMAGE_FILE`, `SUSPICIOUS_OBFUSCATION` (long base64 runs, hex or
+     char-code chains), plus `HIDDEN_UNICODE` in instruction and config files. Decode every encoded blob
+     it reports and say in plain words what it does. Never run a suspicious file to find out.
+   - **Show the owner first.** Put every hit in a table (file, line, rule, what the decoded content does,
+     when the file changed) and stop. Do not delete, move or "clean" anything until the owner has seen
+     the table and said yes: the files are evidence, a hit can be a false positive, and a planted file
+     usually means the server and its credentials need an incident response, not only a code fix.
+     After the yes: remove the files, block script execution in upload folders, rotate every secret the
+     app could read, and look for the hole that let the file in (upload checks, outdated plugins).
+   - **Defaults left in place.** `WEAK_DEFAULT_CREDENTIAL` (admin/admin, root/root, postgres, sa with no
+     password, common-password list), `DEFAULT_SECRET_KEY` (empty APP_KEY, django-insecure keys, JWT or
+     session secrets like "secret" or "keyboard cat"), `EXPOSED_ADMIN_PATH` and `EXPOSED_ADMIN_TOOL`
+     (admin, console, debug routes without auth; adminer.php, phpinfo.php), `SENSITIVE_WEBROOT_PATH`
+     (backup, old, tmp, dump folders under the web root), `DB_NO_AUTH` (Redis or MongoDB published without
+     a password). Rotate any default that ever reached a server; changing the file is not enough.
+   - **Upgrade blockers.** `PHP_DEPRECATED_API` (LOW) lists functions and syntax deprecated or removed up
+     to PHP 8.5; fix them before the PHP upgrade so it does not break or reopen old code paths.
 2. **Run the gate:** `python "<APP>/scripts/secgate.py" . --mode ci --fail-on high --run-tests`.
    `ci` refuses to pass if Semgrep, Trivy or Gitleaks is missing or errors; install the scanner
    instead of falling back. Read every finding; verify it in context; do not dismiss without reason.
