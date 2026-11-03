@@ -814,8 +814,8 @@
       "severity": "low",
       "where": "scripts/agent_guard.py protected names",
       "what": "The agent guard does not protect .security/shield-audit.jsonl and .security/mcp-lock.json the way it protects guard-audit.jsonl, so the agent can rewrite them (re-pin a server or erase the audit). Fix belongs in agent_guard.py on the v7 branch",
-      "check": "add both names next to guard-audit.jsonl in agent_guard PROTECTED_NAMES and its regex, with a deny test",
-      "status": "open"
+      "check": "tests/test_guard_positive_model.py deny cases for .security/shield-audit.jsonl and mcp-lock.json (fixed in 80a49a3)",
+      "status": "fixed"
     },
     {
       "id": "V7S-07",
