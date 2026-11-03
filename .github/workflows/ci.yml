@@ -13,7 +13,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python: ["3.10", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       # Actions are pinned to full commit SHAs (tags can be rewritten).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -24,8 +24,21 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install test dependencies (pinned)
         run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      # The scanner tests (Semgrep rules, gitleaks, signed updates with ssh-keygen) must run, not skip.
+      # Same pinned versions and SHA-256 checks as the selfscan job and the CI templates.
+      - name: Install pinned scanners (Linux)
+        if: runner.os == 'Linux'
+        run: bash scripts/install-ci-scanners.sh
+      - name: Install pinned scanners (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/install-ci-scanners.ps1
       - name: Run tests
-        run: python -m pytest -q tests -p no:cacheprovider
+        run: python -m pytest -q tests -p no:cacheprovider -rs --junitxml=pytest-junit.xml
+      - name: No unexpected skips
+        # Fails when a test was skipped that is not on tests/skip-allowlist.json (each entry has a reason).
+        if: always()
+        run: python -I scripts/ci/check_skips.py pytest-junit.xml tests/skip-allowlist.json
   selfscan:
     # The package's own gate on its own code, with the same pinned scanners the CI templates use.
     runs-on: ubuntu-latest
