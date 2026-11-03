@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build and sign a release zip for the auto-updater (run by the security team only).
 
-    py -I scripts/release/make_release.py --version 6.2.1 --key C:\\secure\\org-appsec-release
+    py -I scripts/release/make_release.py --version <X.Y.Z> --key C:\\secure\\org-appsec-release
 
 Writes dist/<asset> and dist/<asset>.sig. Publishing is a separate, deliberate step:
-    gh release create v6.2.1 dist/<asset> dist/<asset>.sig --repo <org>/<repo> --notes-file RELEASE-NOTES-V6.2.md
+    gh release create v<X.Y.Z> dist/<asset> dist/<asset>.sig --repo <org>/<repo> --notes-file <release notes for X.Y.Z>
 The private key must stay offline or on the release officer's machine (never in the repo, never in CI).
 """
 import argparse, json, re, shutil, subprocess, sys, zipfile

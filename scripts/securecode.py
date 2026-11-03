@@ -109,7 +109,14 @@ def setup(eng, project, all_engines=False, only=None, yes=False):
     say(f"Install folder: {eng.tools_root()} (outside the project)")
     say()
     if not todo and not manual:
-        say("Nothing to install: every engine this project needs is already present.")
+        if only:            # an explicit --engine request is about that engine, not about what the project needs
+            for e in chosen:
+                say(f"Nothing to install: {e.name} is already installed." if e.name != "psalm" else
+                    "Nothing to install: psalm comes from the project's own composer.json (vendor/bin/psalm), not from setup.")
+        elif all_engines:
+            say("Nothing to install: every engine is already installed.")
+        else:
+            say("Nothing to install: every engine this project needs is already present.")
         return 0
     for e, plan in todo:
         say(f"[{e.name}] version {plan['version']}, licence {plan['licence']}")

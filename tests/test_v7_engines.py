@@ -269,6 +269,17 @@ def test_setup_without_yes_installs_nothing(tmp_path, monkeypatch, capsys):
     assert called == ["bandit"]
 
 
+def test_setup_for_an_engine_already_installed_names_that_engine(tmp_path, monkeypatch, capsys):
+    """V7GAP-10: --engine gitleaks with gitleaks present said 'every engine this project needs is already present'."""
+    sc = load("scripts/securecode.py", "sc_v7gap10")
+    eng = E.BY_NAME["gitleaks"]
+    monkeypatch.setattr(eng, "status", lambda find=None: {"installed": True, "path": "gitleaks", "version": "8"})
+    assert sc.setup(E, tmp_path, only=["gitleaks"]) == 0
+    out = capsys.readouterr().out
+    assert "Nothing to install: gitleaks is already installed." in out
+    assert "this project needs" not in out
+
+
 def test_setup_reports_a_refused_checksum(tmp_path, monkeypatch, capsys):
     sc = load("scripts/securecode.py", "sc_v7b")
     write(tmp_path, "requirements.txt", "x==1\n")
