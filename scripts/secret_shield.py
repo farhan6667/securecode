@@ -28,7 +28,7 @@ Every regex has bounded repetition and no nested quantifiers (linear time per st
 """
 from __future__ import annotations
 
-import base64, json, math, os, re, stat, sys, time
+import base64, bisect, json, math, os, re, stat, sys, time
 
 SCAN_MAX = 2_000_000          # characters scanned per hook event; the rest is withheld (fail closed)
 STRING_MAX = 2_000_000        # one string is cut to this before scanning
@@ -43,6 +43,10 @@ WITHHELD = "[secret shield: {} characters withheld because they could not be sca
 # --------------------------------------------------------------------------------------------------- patterns
 # (type, regex, value group). The value group is the part that is replaced; the rest stays readable.
 # Every quantifier is bounded and no group is repeated, so each regex runs in linear time per start position.
+# A secret-named key: one run of name characters that holds a secret word and may go on with more name characters
+# (SECRET_KEY, apiKeyProd). One bounded class on each side, never a repeated group (V7P2-01).
+_KEY = (r"[A-Za-z0-9_.-]{0,80}?(?:secret|passw(?:or)?d|pwd|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|"
+        r"client[_-]?secret|auth[_-]?key|credential)s?[A-Za-z0-9_.-]{0,60}")
 _P = [
     ("aws-access-key-id", r"(?<![A-Za-z0-9])((?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16})(?![A-Za-z0-9])", 1),
     ("aws-secret-access-key", r"(?i)aws_?secret_?(?:access_?)?key(?:\\?[\"'])?\s{0,5}(?:=>|:=|=|:)\s{0,5}(?:\\?[\"'])?"
@@ -60,17 +64,26 @@ _P = [
     ("pypi-token", r"(pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,255})", 1),
     ("azure-storage-key", r"(?i)AccountKey=([A-Za-z0-9+/]{86}==)", 1),
     ("jwt", r"(?<![A-Za-z0-9_-])(eyJ[A-Za-z0-9_-]{8,4096}\.eyJ[A-Za-z0-9_-]{8,8192}\.[A-Za-z0-9_-]{16,4096})", 1),
+    # The user part may be empty: redis://:password@host is the usual Redis form (V7P3-04).
     ("db-url-password", r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|mssql|sqlserver|clickhouse|"
-                        r"cockroachdb|jdbc:[a-z]{2,20})://[^\s:/@\"'<>]{1,128}:([^\s@/\"'<>]{1,256})@", 1),
-    ("url-password", r"(?i)\b(?:https?|ftps?|smtps?|ldaps?)://[^\s:/@\"'<>]{1,128}:([^\s@/\"'<>]{1,256})@", 1),
-    # The key is one run of name characters that starts where such a run starts (the lookbehind), holds a secret
-    # word, and may go on with more name characters (SECRET_KEY, apiKeyProd). One bounded class on each side, never
-    # a repeated group: the V7P-02 form (?:[_.-]?[A-Za-z0-9]{1,20}){0,3} could be split thousands of ways per start
-    # and a 120 KB output took the shield past the hook timeout, which lets the output through unredacted (V7P2-01).
-    ("secret-assignment", r"(?i)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{0,80}?(?:secret|passw(?:or)?d|pwd|token|api[_-]?key|apikey|"
-                          r"access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?key|credential)s?[A-Za-z0-9_.-]{0,60})"
+                        r"cockroachdb|jdbc:[a-z]{2,20})://[^\s:/@\"'<>]{0,128}:([^\s@/\"'<>]{1,256})@", 1),
+    ("url-password", r"(?i)\b(?:https?|ftps?|smtps?|ldaps?)://[^\s:/@\"'<>]{0,128}:([^\s@/\"'<>]{1,256})@", 1),
+    # HTTP auth headers in verbose curl output, logs and request dumps: the token after the scheme (V7P3-04).
+    ("auth-header", r"(?i)(?<![A-Za-z0-9_-])(?:proxy-)?authorization(?:\\?[\"'])?\s{0,5}[:=]\s{0,5}(?:\\?[\"'])?"
+                    r"(?:bearer|basic|token|bot|apikey|sso-key)\s{1,5}([A-Za-z0-9._~+/-]{12,4096}={0,3})", 1),
+    # XML: <password>value</password> (Maven settings.xml, many app configs) and key/name="..." value="..." pairs
+    # (.NET appSettings, NuGet.config, Spring and Tomcat XML) (V7P3-04).
+    ("xml-secret", r"(?i)<((?:[A-Za-z0-9_.-]{1,40}:)?" + _KEY + r")>\s{0,5}([^\s<>\"']{12,256})\s{0,5}</", 2),
+    ("xml-secret", r"(?i)\b(?:key|name)\s{0,3}=\s{0,3}[\"'](" + _KEY + r")[\"']\s{1,20}value\s{0,3}=\s{0,3}[\"']"
+                   r"([^\"'\s<>]{12,256})[\"']", 2),
+    # The key (_KEY) starts where a run of name characters starts (the lookbehind). The V7P-02 form
+    # (?:[_.-]?[A-Za-z0-9]{1,20}){0,3} could be split thousands of ways per start and a 120 KB output took the shield
+    # past the hook timeout, which lets the output through unredacted (V7P2-01).
+    ("secret-assignment", r"(?i)(?<![A-Za-z0-9_.-])(" + _KEY + r")"
                           r"(?:\\?[\"'])?\s{0,5}(?:=>|:=|=|:)\s{0,5}(?:\\?[\"'])?([^\s\"'`\\,;<>(){}\[\]]{12,256})", 2),
 ]
+GENERIC = {"secret-assignment", "auth-header", "xml-secret"}   # value must also look random (_generic_is_secret)
+KEYED = {"secret-assignment", "xml-secret"}                    # group 1 is the key name
 PATTERNS = [(t, re.compile(rx), g) for t, rx, g in _P]
 PRIVATE_KEY_BEGIN = re.compile(r"-----BEGIN[ A-Z0-9]{0,40}PRIVATE KEY(?: BLOCK)?-----")
 PRIVATE_KEY_END = re.compile(r"-----END[ A-Z0-9]{0,40}PRIVATE KEY(?: BLOCK)?-----")
@@ -92,7 +105,7 @@ SEVERITY = {"private-key": "critical", "aws-access-key-id": "critical", "aws-sec
             "slack-token": "high", "slack-webhook": "high", "stripe-key": "critical", "google-api-key": "high",
             "anthropic-key": "critical", "openai-key": "critical", "npm-token": "critical", "pypi-token": "critical",
             "azure-storage-key": "critical", "jwt": "high", "db-url-password": "critical", "url-password": "high",
-            "secret-assignment": "high"}
+            "secret-assignment": "high", "auth-header": "high", "xml-secret": "high"}
 # Types whose leading characters are a public, documented prefix: the masked preview may show them.
 PUBLIC_PREFIX = {"aws-access-key-id": 4, "github-token": 4, "github-fine-grained-token": 11, "gitlab-token": 6,
                  "slack-token": 5, "stripe-key": 8, "google-api-key": 4, "anthropic-key": 7, "openai-key": 3,
@@ -127,6 +140,10 @@ REVOKE = {
                    "(authorized_keys, deploy keys, servers, certificates), and revoke any certificate issued for it.",
     "secret-assignment": "Generic secret: find which service issued it from the variable name, rotate it there, and "
                          "update every place that uses it.",
+    "auth-header": "HTTP Authorization header: revoke the token or change the password at the service the request went "
+                   "to, then check its access log.",
+    "xml-secret": "Secret in an XML config: find which service issued it from the element or key name, rotate it there, "
+                  "and move it out of the file (user secrets, a vault or an environment variable).",
 }
 
 
@@ -158,7 +175,7 @@ def is_example(kind: str, value: str, key: str = "") -> bool:
         return True
     if kind == "jwt" and _jwt_is_example(value):
         return True
-    if kind in ("secret-assignment", "db-url-password", "url-password"):
+    if kind in GENERIC or kind in ("db-url-password", "url-password"):
         if REFERENCE.match(value) or value.lower() in ("password", "passwd", "secret", "token", "null", "none", "true",
                                                        "false", "undefined"):
             return True
@@ -191,8 +208,52 @@ class Budget(Exception):
     """The scan ran past its own deadline."""
 
 
+# Terminal colour and cursor codes (CSI) and NUL bytes sit between characters without being part of the text a reader
+# sees: "\x1b[31mghp_..." or UTF-16 text printed byte by byte. Every pattern scans a copy without them (V7P3-03).
+# OSC sequences (hyperlinks) are kept: their payload is text that may hold a secret itself.
+INVISIBLE = re.compile(r"\x1b\[[0-9;:?<=>]{0,64}[ -/]{0,8}[@-~]|\x9b[0-9;:?<=>]{0,64}[ -/]{0,8}[@-~]|\x00+")
+
+
+def _strip_invisible(text: str):
+    """(stripped text, map) where map turns a stripped index into the original one; None when nothing was removed."""
+    if "\x1b" not in text and "\x00" not in text and "\x9b" not in text:
+        return text, None
+    starts, origs, parts = [], [], []
+    last = kept = 0
+    for m in INVISIBLE.finditer(text):
+        if m.start() > last:
+            starts.append(kept)
+            origs.append(last)
+            parts.append(text[last:m.start()])
+            kept += m.start() - last
+        last = m.end()
+    if last < len(text):
+        starts.append(kept)
+        origs.append(last)
+        parts.append(text[last:])
+        kept += len(text) - last
+    if not starts:
+        return "", None
+
+    def to_orig(k: int) -> int:
+        i = bisect.bisect_right(starts, k) - 1
+        return origs[i] + (k - starts[i])
+    return "".join(parts), to_orig
+
+
 def find_secrets(text: str, deadline: float | None = None) -> list[Match]:
     """Every secret-looking span in text, examples included (marked). Overlaps keep the earliest, longest span."""
+    if not text:
+        return []
+    scan, to_orig = _strip_invisible(text)
+    found = _find(scan, deadline)
+    if to_orig is not None:
+        for m in found:
+            m.start, m.end = to_orig(m.start), to_orig(m.end - 1) + 1
+    return found
+
+
+def _find(text: str, deadline: float | None = None) -> list[Match]:
     out: list[Match] = []
     if not text:
         return out
@@ -215,8 +276,8 @@ def find_secrets(text: str, deadline: float | None = None) -> list[Match]:
             v = m.group(g)
             if not v:
                 continue
-            key = m.group(1) if kind == "secret-assignment" else ""
-            if kind == "secret-assignment" and not _generic_is_secret(v) and not is_example(kind, v, key):
+            key = m.group(1) if kind in KEYED else ""
+            if kind in GENERIC and not _generic_is_secret(v) and not is_example(kind, v, key):
                 continue
             out.append(Match(kind, m.start(g), m.end(g), v, key, is_example(kind, v, key)))
     out.sort(key=lambda x: (x.start, -(x.end - x.start)))

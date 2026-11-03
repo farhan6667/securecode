@@ -44,7 +44,12 @@ characters, and private key headers with no key body. The sweep can list them as
 | AI and package registries | Anthropic and OpenAI keys, npm and PyPI tokens |
 | Private keys | `-----BEGIN ... PRIVATE KEY-----` blocks (RSA, EC, OpenSSH, PGP and others) |
 | Tokens and URLs | JWTs, database URLs with a password (Postgres, MySQL, MongoDB, Redis, AMQP, SQL Server, JDBC), other URLs with a password |
+| HTTP headers | `Authorization: Bearer ...`, `Basic ...` and `token ...` values (curl -v output, request logs) |
+| XML config | `<password>...</password>` and `key="DbPassword" value="..."` pairs (web.config, NuGet.config, Maven settings.xml) |
 | Generic | A secret-named key (`password`, `client_secret`, `api_key`, `token`, ...) assigned a long, random-looking value |
+
+Terminal colour codes and NUL bytes between characters (UTF-16 text printed by a UTF-8 tool) are ignored while
+scanning, so a coloured `rg --color always` hit is still found.
 
 ### Fail-safe behaviour
 
