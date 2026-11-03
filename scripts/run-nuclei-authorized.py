@@ -7,6 +7,7 @@ is capped, and production, cloud metadata, link-local, private and loopback addr
 dast_target.py; private hosts only when a person names them in SECURITY_DAST_PRIVATE_HOSTS). Only test
 systems you are allowed to test.
 """
+from __future__ import annotations  # "str | None" annotations still import on Python 3.8 and 3.9
 import os, re, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # run with python -I

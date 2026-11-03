@@ -154,6 +154,14 @@ def setup(eng, project, all_engines=False, only=None, yes=False):
     return 1 if bad else 0
 
 
+def is_securecode_package(folder: Path) -> bool:
+    """True for the extracted SecureCode package or its installed runtime folder, which people scan by mistake
+    when they run doctor or setup without a project path from inside it."""
+    folder = Path(folder)
+    return (folder / "scripts" / "securecode.py").is_file() and (
+        (folder / "install-global.py").is_file() or (folder / "scripts" / "secgate.py").is_file() and folder.name == "OrgAISecureAppSec")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="securecode.py", description="NexaForge SecureCode scanner toolchain")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -170,6 +178,13 @@ def main(argv=None):
     if not project.is_dir():
         say(f"Not a folder: {project}")
         return 2
+    plain = not getattr(a, "json", False)   # --json output stays pure JSON
+    if plain and sys.version_info[:2] < (3, 10):
+        say(f"Warning: Python {sys.version.split()[0]} is older than 3.10, which SecureCode needs. Install a current Python 3.")
+    if plain and is_securecode_package(project):
+        say(f"Note: {project} is the SecureCode package itself, not your project. Name your project folder, for example:")
+        say(f'  py -I scripts/securecode.py {a.cmd} "<your project folder>"   (python3 instead of py on macOS and Linux)')
+        say()
     eng = load_engines()
     if a.cmd == "doctor":
         return doctor(eng, project, a.json)

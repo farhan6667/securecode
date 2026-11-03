@@ -96,13 +96,79 @@ def merge_preserving_list(base, patch):
         return out
     return patch
 
+MIN_PYTHON=(3,10)
+
+def check_python_version(version_info=None, exe: str|None=None):
+    """Refuse an interpreter older than MIN_PYTHON with a message that says what was found and what to do."""
+    vi=tuple((version_info or sys.version_info)[:3])
+    if vi[:2]<MIN_PYTHON:
+        want=f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]}"
+        raise RuntimeError(
+            f"Python {want} or newer is needed, but this is Python {'.'.join(str(x) for x in vi)} ({exe or sys.executable}). "
+            f"Install a current Python 3 from https://www.python.org/downloads/ (Windows: winget install Python.Python.3.12, "
+            f"or the python.org installer), then run the installer with it, for example: py -3.12 -I install-global.py "
+            f"on Windows or python3.12 -I install-global.py on macOS and Linux.")
+
+# ---------- <PY>: the Python that installed SecureCode, written into the skill, commands and rules ----------
+# On Windows a bare "python" is often missing or the Microsoft Store alias, so the installed text names the
+# exact interpreter, the same one the hooks use.
+PY_TOKEN="<PY>"
+_UNSAFE_CMD_CHARS=set('"$`%!')
+
+def console_python(exe: str|None=None) -> str:
+    # The update task runs pythonw.exe, which has no console; an agent running the gate needs its output.
+    p=Path(exe or sys.executable)
+    if p.name.lower()=="pythonw.exe" and p.with_name("python.exe").is_file():
+        return str(p.with_name("python.exe"))
+    return str(p)
+
+def cmd_path(p, system: str|None=None) -> str:
+    """A path for a double-quoted command line that works in bash, PowerShell and cmd: forward slashes on Windows,
+    and refused (ValueError) when it holds a quote, $, backtick, %, ! or a control character."""
+    s=str(p)
+    if (system or SYSTEM)=="windows":
+        s=s.replace("\\","/")
+    elif "\\" in s:
+        raise ValueError(f"path holds a backslash: {s!r}")
+    if not s or any(c in _UNSAFE_CMD_CHARS or ord(c)<32 or ord(c)==127 for c in s):
+        raise ValueError(f"path holds a quote, $, backtick, %, ! or a control character: {s!r}")
+    return s
+
+def py_command(exe: str|None=None) -> str:
+    """What replaces <PY>: the quoted interpreter plus -I. Falls back to the launcher name when the path cannot be
+    quoted safely (the text then still works on a normal machine)."""
+    try:
+        return f'"{cmd_path(console_python(exe))}" -I'
+    except ValueError:
+        return "py -3 -I" if SYSTEM=="windows" else "python3 -I"
+
+def fill_tokens(text: str, exe: str|None=None) -> str:
+    return text.replace(PY_TOKEN,py_command(exe))
+
+def fill_tokens_in_file(f: Path, exe: str|None=None) -> bool:
+    if f.is_symlink() or not f.is_file():
+        return False
+    b=f.read_bytes()   # bytes, so the file keeps its own line endings
+    tok=PY_TOKEN.encode("ascii")
+    if tok not in b:
+        return False
+    f.write_bytes(b.replace(tok,py_command(exe).encode("utf-8")))
+    return True
+
+def fill_tokens_in_tree(root: Path, exe: str|None=None) -> int:
+    """Replace <PY> in every Markdown file under root (an installed skill or command folder)."""
+    return sum(fill_tokens_in_file(f,exe) for f in Path(root).rglob("*.md"))
+
 def install_file(src: Path, dst: Path, overwrite=True):
     dst.parent.mkdir(parents=True,exist_ok=True)
-    if dst.exists() and overwrite:
+    existed=dst.exists()   # recorded before the copy, or a fresh install would always report "updated"
+    if existed and overwrite:
         backup_path(dst)
-    if overwrite or not dst.exists():
+    if overwrite or not existed:
         shutil.copy2(src,dst)
-        return "updated" if dst.exists() else "created"
+        if dst.suffix==".md":
+            fill_tokens_in_file(dst)
+        return "updated" if existed else "created"
     return "exists"
 
 def copy_tree(src: Path, dst: Path, ad: Path|None=None, keep_existing=()):
@@ -135,12 +201,15 @@ def install_runtime(pkg: Path, ad: Path):
         ad.mkdir(parents=True,exist_ok=True)
         if (ad/"AGENTS.md").exists(): backup_path(ad/"AGENTS.md",ad)
         shutil.copy2(pkg/"AGENTS.md",ad/"AGENTS.md")
+        fill_tokens_in_file(ad/"AGENTS.md")
 
 def install_skill():
     src=PKG/".claude/skills/security-review"
     dst=claude_dir()/"skills"/"org-appsec-security"
     if not src.exists(): raise RuntimeError("Security skill is missing from package")
-    return copy_tree(src,dst)
+    n=copy_tree(src,dst)
+    fill_tokens_in_tree(dst)   # every run, so an update (which re-runs this installer) fills the new text too
+    return n
 
 def install_commands():
     src=PKG/".claude/commands"
@@ -158,7 +227,7 @@ def install_user_claude_md():
     dst=claude_dir()/"CLAUDE.md"
     marker="<!-- ORG-AI-APPSEC-GATE-START -->"
     end="<!-- ORG-AI-APPSEC-GATE-END -->"
-    newblock=src.read_text(encoding="utf-8").strip()
+    newblock=fill_tokens(src.read_text(encoding="utf-8").strip())
     if dst.exists():
         existing=dst.read_text(encoding="utf-8")
         if marker in existing and end in existing:
@@ -177,6 +246,7 @@ def install_user_claude_md():
 def check_interpreter():
     # The hooks run with this exact interpreter. If it later disappears (a deleted venv or temp
     # folder), Claude Code treats the failing hook as non-blocking, so refuse unstable interpreters.
+    check_python_version()
     exe=Path(sys.executable).resolve()
     tmp=[Path(os.environ.get(v,"")).resolve() for v in ("TEMP","TMP") if os.environ.get(v)]
     if sys.prefix!=sys.base_prefix:
@@ -486,8 +556,33 @@ def register_unix_schedule(ad: Path, upd: str, run, install: bool) -> str:
             return f"systemd user timer written but systemctl {' '.join(args)} failed: {(p.stderr or '').strip()[:200]}; {cron}"
     return f"scheduled daily (systemd user timer {sp['unit']}.timer, Persistent=true)"
 
+UPDATE_OFF="no-update-task.json"   # in the app folder: written by --no-update-task, removed by --update-task
+
+def update_task_off(ad: Path) -> bool:
+    f=Path(ad)/UPDATE_OFF
+    return f.is_file() and not f.is_symlink()
+
+def set_update_task_off(ad: Path, off: bool):
+    f=Path(ad)/UPDATE_OFF
+    if f.is_symlink() or (f.exists() and not off):
+        f.unlink()
+    if off:
+        f.write_text(json.dumps({"update_task":"off","how_to_turn_on":"run install-global.py --update-task"})+"\n",encoding="utf-8")
+
+# Result prefixes of register_updates() that mean the schedule was wanted but not set up. ("... written ... but
+# launchctl/systemctl ..." is only ever returned when that tool was missing or failed.) Prefixes, not substrings,
+# so a product name in a success line can never turn it into a failure.
+AUTO_UPDATE_BAD=("schedule failed","schedule skipped","launchd agent written","systemd user timer written")
+
+def auto_update_ok(result: str|None) -> bool:
+    """False when the daily update schedule was wanted but could not be set up. Not configured or turned off
+    on purpose (--no-update-task) is fine."""
+    return not (isinstance(result,str) and result.startswith(AUTO_UPDATE_BAD))
+
 def register_updates(ad: Path, run=None, timer: bool=False):
     # Daily signed auto-update, only when the security team configured a repo and a signing key.
+    if update_task_off(ad):
+        return "skipped: update task turned off (--no-update-task); run the updater by hand or re-run with --update-task"
     try:
         cfg=json.loads((ad/"config"/"update.json").read_text(encoding="utf-8-sig"))
         signers=(ad/"config"/"allowed_signers").read_text(encoding="utf-8")
@@ -504,7 +599,7 @@ def register_updates(ad: Path, run=None, timer: bool=False):
     try:
         xml=windows_task_xml(py,upd,windows_user(),read_product_name(ad))
     except ValueError as e:
-        return f"skipped: {e}"
+        return f"schedule skipped: {e}"
     if run is None:
         import subprocess
         run=subprocess.run
@@ -526,10 +621,199 @@ def register_updates(ad: Path, run=None, timer: bool=False):
         pass
     return f"scheduled daily (Task Scheduler: {name})"+(f"; {old}" if old else "")
 
+# ---------- guard hooks for other AI agents: install-global.py --agent cursor|codex|gemini|antigravity ----------
+AGENT_NAMES=("cursor","codex","gemini","antigravity")
+AGENT_TEMPLATES={"cursor":"cursor/hooks.json","codex":"codex/hooks.json",
+                 "gemini":"gemini/settings.hooks.json","antigravity":"antigravity/hooks.json"}
+AGENT_NEXT={"cursor":"restart Cursor; keep \"failClosed\": true",
+            "codex":"open Codex and trust the hooks in /hooks (Codex skips untrusted hooks)",
+            "gemini":"restart Gemini CLI and check with /hooks",
+            "antigravity":"restart Antigravity and check with /hooks"}
+AGENT_RECORD="agent-adapters.json"   # in the app folder: adapters this installer wrote, refreshed by later runs
+AGENT_MAX_BYTES=5_000_000
+
+def agent_config_path(agent: str, home: Path|None=None) -> Path:
+    """Where each tool reads its user-level hook config (docs/AI-AGENT-SECURITY.md)."""
+    h=Path(home) if home is not None else HOME
+    if agent=="cursor": return h/".cursor"/"hooks.json"
+    if agent=="codex":
+        ch=os.environ.get("CODEX_HOME")
+        return (Path(ch).expanduser() if ch and os.path.isabs(os.path.expanduser(ch)) else h/".codex")/"hooks.json"
+    if agent=="gemini": return h/".gemini"/"settings.json"
+    if agent=="antigravity": return h/".gemini"/"config"/"hooks.json"
+    raise ValueError(f"unknown agent {agent!r}; choose one of {', '.join(AGENT_NAMES)}")
+
+def _is_ours(cmd) -> bool:
+    # Our hook commands always run a script from the OrgAISecureAppSec runtime folder.
+    return isinstance(cmd,str) and "/OrgAISecureAppSec/scripts/" in cmd.replace("\\","/")
+
+def _fill(obj, py: str, app: str):
+    if isinstance(obj,dict): return {k:_fill(v,py,app) for k,v in obj.items()}
+    if isinstance(obj,list): return [_fill(v,py,app) for v in obj]
+    if isinstance(obj,str): return obj.replace("<PYTHON>",py).replace("<APP>",app)
+    return obj
+
+def agent_template_file(agent: str, pkg: Path|None=None, system: str|None=None) -> Path:
+    """The template for this OS. On Windows a "<name>.windows.json" next to the template wins when it exists:
+    some tools run hook commands in PowerShell there, where a line starting with a quoted path needs "&" (V7L-01).
+    Fields such as "commandWindows" inside a template are filled like every other string."""
+    base=(pkg or PKG)/"templates"/AGENT_TEMPLATES[agent]
+    win=base.with_name(base.stem+".windows.json")
+    return win if (system or SYSTEM)=="windows" and win.is_file() else base
+
+def agent_template(agent: str, ad: Path, exe: str|None=None, pkg: Path|None=None) -> dict:
+    """The tool's template with <PYTHON> and <APP> filled in. Paths use forward slashes and are refused when they
+    hold characters a shell would expand inside double quotes."""
+    tpl=json.loads(agent_template_file(agent,pkg).read_text(encoding="utf-8-sig"))
+    tpl.pop("description",None)   # a how-to-fill-in note for people, not a setting
+    try:
+        py=cmd_path(console_python(exe)); app=cmd_path(Path(ad))
+    except ValueError as e:
+        raise RuntimeError(f"cannot write the {agent} hook: {e}. Install Python and SecureCode under a plain path, "
+                           "or fill in the template by hand (docs/AI-AGENT-SECURITY.md).")
+    return _fill(tpl,py,app)
+
+def _strip_ours(items: list) -> list:
+    out=[]
+    for it in items:
+        if isinstance(it,dict) and isinstance(it.get("hooks"),list):        # Claude-style group: {matcher, hooks:[...]}
+            kept=[h for h in it["hooks"] if not (isinstance(h,dict) and _is_ours(h.get("command")))]
+            if kept or not it["hooks"]:
+                g=dict(it); g["hooks"]=kept; out.append(g)
+        elif isinstance(it,dict) and _is_ours(it.get("command")):           # Cursor-style flat entry
+            continue
+        else:
+            out.append(it)
+    return out
+
+def merge_agent_config(existing: dict, filled: dict, where: str="the file") -> dict:
+    """Our entries replace our earlier ones; every other key, event and hook in the file stays as it was."""
+    out=dict(existing)
+    for k,v in filled.items():
+        if k=="hooks":
+            cur=out.get("hooks",{})
+            if not isinstance(cur,dict):
+                raise RuntimeError(f"\"hooks\" in {where} is not a JSON object; nothing was changed. Fix it and run again.")
+            cur=dict(cur)
+            for ev,items in v.items():
+                old=cur.get(ev,[])
+                if not isinstance(old,list):
+                    raise RuntimeError(f"\"hooks.{ev}\" in {where} is not a JSON list; nothing was changed. Fix it and run again.")
+                cur[ev]=_strip_ours(old)+items
+            out["hooks"]=cur
+        elif k.startswith("org-ai-"):
+            out[k]=v                     # a block that is ours by name (Antigravity)
+        else:
+            out.setdefault(k,v)          # e.g. Cursor's "version": never overrides the user's value
+    return out
+
+def read_json_object(path: Path) -> dict:
+    if path.is_symlink():
+        raise RuntimeError(f"{path} is a link; refusing to write through it. Nothing was changed.")
+    if not path.exists():
+        return {}
+    if not path.is_file():
+        raise RuntimeError(f"{path} is not a file. Nothing was changed.")
+    if path.stat().st_size>AGENT_MAX_BYTES:
+        raise RuntimeError(f"{path} is larger than {AGENT_MAX_BYTES} bytes. Nothing was changed.")
+    raw=path.read_text(encoding="utf-8-sig")
+    if not raw.strip():
+        return {}
+    try:
+        data=json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"{path} is not valid JSON ({e.msg}, line {e.lineno} column {e.colno}). Nothing was changed. "
+                           "Fix the file (comments are not allowed) or move it away, then run again.")
+    if not isinstance(data,dict):
+        raise RuntimeError(f"{path} does not hold a JSON object. Nothing was changed.")
+    return data
+
+def _agent_backup(path: Path, ad: Path, agent: str) -> str:
+    # Own name per agent: Cursor, Codex and Antigravity all use "hooks.json", and backup_path() keys on the name only.
+    d=Path(ad)/"backups"/time.strftime("%Y%m%d-%H%M%S"); d.mkdir(parents=True,exist_ok=True)
+    dest=d/f"{agent}-{path.name}"; n=1
+    while dest.exists():
+        n+=1; dest=d/f"{agent}-{n}-{path.name}"
+    shutil.copy2(path,dest)
+    return str(dest)
+
+def read_agent_record(ad: Path) -> list:
+    try:
+        f=Path(ad)/AGENT_RECORD
+        if f.is_symlink() or f.stat().st_size>4096: return []
+        got=json.loads(f.read_text(encoding="utf-8")).get("agents",[])
+    except Exception:
+        return []
+    return [a for a in AGENT_NAMES if isinstance(got,list) and a in got]
+
+def _record_agent(ad: Path, agent: str):
+    have=read_agent_record(ad)
+    if agent not in have:
+        f=Path(ad)/AGENT_RECORD
+        if f.is_symlink(): f.unlink()
+        f.write_text(json.dumps({"agents":[a for a in AGENT_NAMES if a in have+[agent]]})+"\n",encoding="utf-8")
+
+def has_our_hook(data) -> bool:
+    if isinstance(data,dict): return any(has_our_hook(v) for v in data.values())
+    if isinstance(data,list): return any(has_our_hook(v) for v in data)
+    return _is_ours(data)
+
+def install_agent(agent: str, ad: Path, home: Path|None=None, exe: str|None=None, pkg: Path|None=None,
+                  refresh_only: bool=False) -> str:
+    """Write or refresh one tool's guard hook config. Backs up an existing file, merges into it (other settings and
+    hooks are kept), refuses a file that is not valid JSON, and writes nothing when the result is unchanged."""
+    if agent not in AGENT_NAMES:
+        raise RuntimeError(f"unknown agent {agent!r}; choose one of {', '.join(AGENT_NAMES)}")
+    target=agent_config_path(agent,home)
+    existing=read_json_object(target)
+    if refresh_only and not has_our_hook(existing):
+        return f"{agent}: {target} no longer has our hook; left as it is"
+    filled=agent_template(agent,ad,exe,pkg)
+    merged=merge_agent_config(existing,filled,str(target))
+    _record_agent(ad,agent)
+    if target.exists() and merged==existing:
+        return f"{agent}: {target} already up to date"
+    bak=_agent_backup(target,ad,agent) if target.exists() else None
+    target.parent.mkdir(parents=True,exist_ok=True)
+    tmp=target.with_name(target.name+".nfsc-tmp")
+    if tmp.exists() or tmp.is_symlink(): tmp.unlink()
+    tmp.write_text(json.dumps(merged,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
+    os.replace(tmp,target)
+    return (f"{agent}: wrote {target}" + (f" (backup: {bak})" if bak else " (new file)") + f"; next: {AGENT_NEXT[agent]}")
+
+def install_agents(ad: Path, wanted, home: Path|None=None) -> list:
+    """Agents named with --agent, plus a refresh of the ones an earlier run wrote (so an update brings new template
+    changes). A refresh never re-adds a hook the user removed and never fails the install."""
+    out=[]
+    wanted=[a for a in AGENT_NAMES if a in (wanted or [])]
+    for a in wanted:
+        try:
+            out.append(install_agent(a,ad,home))
+        except (RuntimeError,OSError) as e:
+            out.append(f"FAILED {a}: {e}")
+    for a in read_agent_record(ad):
+        if a in wanted: continue
+        try:
+            out.append(install_agent(a,ad,home,refresh_only=True))
+        except (RuntimeError,OSError) as e:
+            out.append(f"{a}: refresh skipped: {e}")
+    return out
+
+def adapter_status(home: Path|None=None) -> dict:
+    """For each other AI tool: the config file path when it holds our guard hook, else None."""
+    res={}
+    for a in AGENT_NAMES:
+        p=agent_config_path(a,home)
+        try:
+            res[a]=str(p) if has_our_hook(read_json_object(p)) else None
+        except RuntimeError:
+            res[a]=None
+    return res
+
 def tool_status():
     return {x:bool(shutil.which(x)) for x in ["claude","python","git","semgrep","trivy","gitleaks","docker"]}
 
-def verify(ad:Path):
+def verify(ad:Path, auto_update: str|None=None):
     cd=claude_dir()
     checks={
         "claude_dir":cd.exists(),
@@ -544,9 +828,12 @@ def verify(ad:Path):
         "agent_rules":(ad/"AGENTS.md").exists(),
         "guard_policy":read_guard_mode(ad) is not None,
     }
+    if auto_update is not None:
+        # A schedule that was wanted but failed (schtasks, systemctl, launchctl) is a failed check, not a footnote.
+        checks["auto_update"]=auto_update_ok(auto_update)
     return checks
 
-def main():
+def main(argv=None):
     ap=argparse.ArgumentParser()
     ap.add_argument("--verify-only",action="store_true")
     ap.add_argument("--guard-mode",choices=GUARD_MODES,
@@ -556,7 +843,19 @@ def main():
                     help="macOS and Linux: install a launchd agent or a systemd user timer for the daily signed update "
                          "check (catches up missed runs) instead of only printing a crontab line. Windows always uses "
                          "Task Scheduler.")
-    args=ap.parse_args()
+    task=ap.add_mutually_exclusive_group()
+    task.add_argument("--no-update-task",action="store_true",
+                      help="do not create the daily update task, timer or agent (remembered for later runs; an existing "
+                           "task is not removed, see ENTERPRISE_DEPLOYMENT.md). Update by hand with scripts/updater.py.")
+    task.add_argument("--update-task",action="store_true",help="turn the daily update task back on after --no-update-task")
+    ap.add_argument("--agent",action="append",choices=AGENT_NAMES,
+                    help="also write the guard hook config for this AI tool (repeatable): Cursor ~/.cursor/hooks.json, "
+                         "Codex ~/.codex/hooks.json, Gemini CLI ~/.gemini/settings.json, Antigravity "
+                         "~/.gemini/config/hooks.json. Existing files are backed up and merged, never replaced.")
+    args=ap.parse_args(argv)
+    check_python_version()
+    if args.verify_only and (args.agent or args.no_update_task or args.update_task):
+        ap.error("--verify-only changes nothing; leave out --agent, --no-update-task and --update-task")
     cd=claude_dir(); ad=app_dir(); ad.mkdir(parents=True,exist_ok=True)
     if not args.verify_only:
         check_interpreter()
@@ -577,10 +876,24 @@ def main():
         mode=install_guard_policy(ad,args.guard_mode)
         report["changes"].append({"guard_mode":mode})
         report["changes"].append({"settings":install_settings(ad,mode)})
-        report["changes"].append({"auto_update":register_updates(ad,timer=args.update_timer)})
+        if args.no_update_task or args.update_task:
+            set_update_task_off(ad,args.no_update_task)
+        auto=register_updates(ad,timer=args.update_timer)
+        report["changes"].append({"auto_update":auto})
+        agents=install_agents(ad,args.agent)
+        if agents:
+            report["changes"].append({"agents":agents})
+            for line in agents:
+                try: print(line)
+                except UnicodeEncodeError: print(line.encode("ascii","replace").decode())
+    else:
+        auto,agents=None,[]
 
-    report["checks"]=verify(ad)
-    report["success"]=all(report["checks"].values())
+    report["checks"]=verify(ad,auto)
+    if auto is not None and not report["checks"]["auto_update"]:
+        print(f"WARNING: the daily update task was not set up ({auto}). Updates will not arrive by themselves; "
+              "fix the cause and run the installer again, or update by hand with scripts/updater.py.", file=sys.stderr)
+    report["success"]=all(report["checks"].values()) and not any(x.startswith("FAILED") for x in agents)
     rpt=ad/"install-report.json"
     rpt.write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(report,indent=2))

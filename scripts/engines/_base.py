@@ -55,13 +55,19 @@ def tools_root():
 
 def setup_command(system=None):
     """The exact command a person types to install missing engines, pointing at the installed runtime (so it
-    works from any project folder). Same text in the README, the gate's NOTE and doctor."""
+    works from any project folder). Used by the gate's NOTE and doctor. The folder is resolved here instead of
+    written as %LOCALAPPDATA% or $HOME: PowerShell does not expand %VAR%, and cmd does not expand $env:VAR."""
+    from pathlib import PurePosixPath, PureWindowsPath
     s = (system or platform.system()).lower()
+    home = str(Path.home())
     if s == "windows":
-        return 'py -I "%LOCALAPPDATA%\\OrgAISecureAppSec\\scripts\\securecode.py" setup'
+        base = PureWindowsPath(os.environ.get("LOCALAPPDATA") or PureWindowsPath(home, "AppData", "Local"))
+        return f'py -I "{base / "OrgAISecureAppSec" / "scripts" / "securecode.py"}" setup'
     if s == "darwin":
-        return 'python3 -I "$HOME/Library/Application Support/OrgAISecureAppSec/scripts/securecode.py" setup'
-    return 'python3 -I "${XDG_DATA_HOME:-$HOME/.local/share}/OrgAISecureAppSec/scripts/securecode.py" setup'
+        base = PurePosixPath(Path(home).as_posix(), "Library", "Application Support")
+    else:
+        base = PurePosixPath(os.environ.get("XDG_DATA_HOME") or PurePosixPath(Path(home).as_posix(), ".local", "share"))
+    return f'python3 -I "{base / "OrgAISecureAppSec" / "scripts" / "securecode.py"}" setup'
 
 
 def inside(child, parent):

@@ -37,6 +37,10 @@ def main() -> int:
     ap.add_argument("--lock", action="store_true", help="allowManagedHooksOnly: only org hooks may run")
     ap.add_argument("--root", help="install root instead of %%ProgramFiles%% (testing only; skips admin, ACL and Python checks)")
     a = ap.parse_args()
+    try:
+        G.check_python_version()
+    except RuntimeError as e:
+        sys.exit(str(e))
     testing = bool(a.root)
     root = Path(a.root or os.environ.get("ProgramFiles", r"C:\Program Files"))
     if not testing:
@@ -62,7 +66,10 @@ def main() -> int:
     # Managed policy: destructive and exposure actions are denied, never "ask". Always rewritten, and the
     # runtime is read-only for users below, so neither a user nor the agent can switch it to owner mode.
     G.install_guard_policy(app, "managed")
-    shutil.copy2(PKG / "AGENTS.md", app / "AGENTS.md")
+    # The installed rules name this Python (<PY>) and this runtime folder, not the per-user one.
+    agents_md = (PKG / "AGENTS.md").read_text(encoding="utf-8")
+    agents_md = G.fill_tokens(agents_md).replace("%LOCALAPPDATA%\\OrgAISecureAppSec", str(app))
+    (app / "AGENTS.md").write_bytes(agents_md.encode("utf-8"))
     managed.mkdir(parents=True, exist_ok=True)
 
     sf = managed / "managed-settings.json"

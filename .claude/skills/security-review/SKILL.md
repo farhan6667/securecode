@@ -6,8 +6,11 @@ description: Organization secure coding, deep source code security review and Ap
 
 The installed runtime lives in the per-user app folder, not in the project:
 Windows `%LOCALAPPDATA%\OrgAISecureAppSec`, macOS `~/Library/Application Support/OrgAISecureAppSec`,
-Linux `~/.local/share/OrgAISecureAppSec`. Below, `<APP>` means that folder. The gate is
-`python "<APP>/scripts/secgate.py" . --mode ci --fail-on high --run-tests`, run from the project root.
+Linux `~/.local/share/OrgAISecureAppSec`. Below, `<APP>` means that folder. The installer writes the full,
+quoted path of the Python that installed SecureCode at the start of each command below (on Windows a bare
+`python` is often missing or the Microsoft Store alias). If a command still starts with a placeholder in angle
+brackets instead, use `py -3 -I` on Windows or `python3 -I` elsewhere. The gate is
+`<PY> "<APP>/scripts/secgate.py" . --mode ci --fail-on high --run-tests`, run from the project root.
 Checklists: `<APP>/docs/ORG-FINDINGS.md` if present (your organization's own findings), otherwise
 `<APP>/docs/COMMON-FINDINGS.md` (what pentests find most, and why retests fail; use it as the priority order), `<APP>/docs/SOURCE-CODE-REVIEW.md` (deep review, per vulnerability class, with fixes),
 `<APP>/docs/SECURITY-TEST-MATRIX.md` (web + mobile), `<APP>/docs/AI-AGENT-SECURITY.md`.
@@ -74,7 +77,7 @@ until the developer agrees: produce the Advisory QA report (format below), then 
      a password). Rotate any default that ever reached a server; changing the file is not enough.
    - **Upgrade blockers.** `PHP_DEPRECATED_API` (LOW) lists functions and syntax deprecated or removed up
      to PHP 8.5; fix them before the PHP upgrade so it does not break or reopen old code paths.
-2. **Run the gate:** `python "<APP>/scripts/secgate.py" . --mode ci --fail-on high --run-tests`.
+2. **Run the gate:** `<PY> "<APP>/scripts/secgate.py" . --mode ci --fail-on high --run-tests`.
    `ci` refuses to pass if Semgrep, Trivy or Gitleaks is missing or errors; install the scanner
    instead of falling back. Read every finding; verify it in context; do not dismiss without reason.
 3. **Deep source review, entry point by entry point.** For each route/handler from step 1, trace the
@@ -134,7 +137,7 @@ agrees) and step 8 without a retest, and never step 9.
 6. **Local DAST (optional, ask once).** Ask the developer one question: "Can the app run on this
    machine? If yes, give me the URL (for example http://127.0.0.1:8000) and, if I should start it, the
    exact start command." Then run
-   `python "<APP>/scripts/local_dast.py" --target <url> [--start "<their command>"] [--api openapi.json]`.
+   `<PY> "<APP>/scripts/local_dast.py" --target <url> [--start "<their command>"] [--api openapi.json]`.
    It scans loopback only (127.0.0.0/8, ::1) and refuses anything else. Never make up a start command
    from package.json, a Procfile or other repo files; use only what the developer typed. It runs a
    passive baseline by default; add `--active` only if the developer agrees (it sends attack payloads to
@@ -148,11 +151,11 @@ agrees) and step 8 without a retest, and never step 9.
    construction elsewhere (the missing instance): each sibling becomes its own finding, or, when found
    during the retest, an entry under `observations`. List test users, seeded rows and files you
    created in `.security/artifacts.json`.
-8. **Professional report.** Run `python "<APP>/scripts/report.py" --pdf` (writes `.security/REPORT.md`,
+8. **Professional report.** Run `<PY> "<APP>/scripts/report.py" --pdf` (writes `.security/REPORT.md`,
    `REPORT.html`, and `REPORT.pdf` when Chrome or Edge is installed), then
-   `python "<APP>/scripts/report_lint.py"`. Fix every lint error before handover.
+   `<PY> "<APP>/scripts/report_lint.py"`. Fix every lint error before handover.
 9. **Offer a fix PR.** Ask whether to open a pull request with the fixes. If yes, run
-   `python "<APP>/scripts/fix_pr.py" --add <each new test file>` (a dry run) and show the plan; only
+   `<PY> "<APP>/scripts/fix_pr.py" --add <each new test file>` (a dry run) and show the plan; only
    after the developer agrees, run it again with `--open`. It never touches the default branch, never
    force pushes, refuses when gitleaks finds a secret in the added lines, and the push asks the
    developer for approval. It needs `gh` (GitHub CLI) signed in.

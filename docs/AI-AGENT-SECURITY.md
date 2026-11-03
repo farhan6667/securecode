@@ -36,6 +36,28 @@ Sources: see `docs/SOURCES.md`.
 
 ## Setup per tool
 
+Guard hooks for Cursor, Codex, Gemini CLI and Antigravity are written by the installer. Run it from the
+extracted `aisec` folder and name each tool (repeat `--agent` for several):
+
+```powershell
+py -I install-global.py --agent cursor --agent codex --agent gemini --agent antigravity
+```
+
+| `--agent` | File it writes | What it adds |
+|---|---|---|
+| `cursor` | `~/.cursor/hooks.json` | `cursor_hook.py` on `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`, with `"failClosed": true` |
+| `codex` | `~/.codex/hooks.json` (`$CODEX_HOME/hooks.json` when set) | `codex_hook.py` on `PreToolUse` and the stop gate on `Stop` |
+| `gemini` | `~/.gemini/settings.json` | `gemini_hook.py` as a `BeforeTool` hook on every tool |
+| `antigravity` | `~/.gemini/config/hooks.json` | the `org-ai-agent-guard` block running `antigravity_hook.py` on `PreToolUse` |
+
+It fills in the Python that runs the installer and the runtime folder (forward slashes), backs up an existing
+file to the runtime's `backups` folder, and merges: your other settings and hooks stay, and our earlier entries
+are replaced, so running it again changes nothing. A file that is not valid JSON (comments included) or a
+linked file is refused with a message and left untouched. Later runs of the installer, including auto-updates,
+refresh the hooks it wrote, unless you removed them. `verify-global.py` lists the tools that have the hook
+under `adapters`. Then do the per-tool step below (trust the hooks in Codex, `/hooks` to check). The manual way
+is in the block at the end of this section.
+
 - **Claude Code**: `install-windows.ps1` does everything. Admins who want rules users cannot switch
   off deploy `enterprise-managed-settings.example.json` to `C:\Program Files\ClaudeCode\managed-settings.json`
   (it sets `disableBypassPermissionsMode`, `enableAllProjectMcpServers: false`, `allowManagedHooksOnly`).
@@ -43,14 +65,12 @@ Sources: see `docs/SOURCES.md`.
 - **Cursor**: paste `AGENTS.md` into Settings > Rules > User Rules; add `.env*`, `*.pem`, `*.key` to
   `.cursorignore` in each project; turn on Workspace Trust (`security.workspace.trust.enabled`);
   approve MCP servers one at a time. `.cursorignore` does not cover terminal or MCP tools.
-  Guard hooks: copy `templates/cursor/hooks.json` to `~/.cursor/hooks.json` (or the enterprise path
-  `C:\ProgramData\Cursor\hooks.json`), replace `<PYTHON>` with the full path of the Python that installed
-  SecureCode and `<APP>` with the runtime folder. Keep `"failClosed": true`: without it Cursor lets the action
+  Guard hooks: `install-global.py --agent cursor` (the enterprise path `C:\ProgramData\Cursor\hooks.json` is
+  manual, see below). Keep `"failClosed": true`: without it Cursor lets the action
   through when the hook crashes or times out. Cursor's `beforeReadFile` cannot ask, so an "ask" there is a deny.
 - **Codex**: copy `AGENTS.md` to `~/.codex/AGENTS.md`, merge `templates/codex/config.toml` into
   `~/.codex/config.toml`, copy `templates/codex/rules/org.rules` to `~/.codex/rules/`. Guard and stop hooks:
-  copy `templates/codex/hooks.json` to `~/.codex/hooks.json`, fill in `<PYTHON>` and `<APP>`, then trust the
-  hooks in `/hooks` (Codex skips untrusted hooks; managed `requirements.toml` hooks are trusted by policy).
+  `install-global.py --agent codex`, then trust the hooks in `/hooks` (Codex skips untrusted hooks; managed `requirements.toml` hooks are trusted by policy).
   Codex parses a hook "ask" but does not support it yet and would run the tool, so the adapter turns every
   ask into a deny with the reason; the developer runs such a command themselves.
 - **Gemini CLI**: copy `AGENTS.md` to `~/.gemini/AGENTS.md` and merge `templates/gemini/settings.json`
@@ -59,17 +79,32 @@ Sources: see `docs/SOURCES.md`.
   Docs: https://geminicli.com/docs/cli/gemini-md/ and https://geminicli.com/docs/reference/memport/
 - **Antigravity**: copy `AGENTS.md` to `~/.gemini/AGENTS.md`; Antigravity reads it (and project
   `AGENTS.md`, `GEMINI.md`, `.agents/rules/*.md`) without a setting. Docs: https://antigravity.google/docs/rules/
-- Guard hooks for Gemini CLI: merge `templates/gemini/settings.hooks.json` into `~/.gemini/settings.json` and
-  fill in `<PYTHON>` and `<APP>`. It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every
+- Guard hooks for Gemini CLI: `install-global.py --agent gemini` (merges into `~/.gemini/settings.json`). It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every
   tool (https://geminicli.com/docs/hooks/reference/). Gemini CLI lets a tool run when a hook exits with any code
   other than 0 or 2 or prints text that is not JSON, so the adapter only exits 0 (allow) or 2 (deny) and denies
   on every error. There is no "ask" decision, so an ask becomes a deny with the reason.
-- Guard hooks for Antigravity: copy `templates/antigravity/hooks.json` to `~/.gemini/config/hooks.json` (or
-  `.agents/hooks.json` in one workspace), fill in `<PYTHON>` and `<APP>`, and check it with `/hooks`. It runs
+- Guard hooks for Antigravity: `install-global.py --agent antigravity` (writes `~/.gemini/config/hooks.json`;
+  for one workspace only, `.agents/hooks.json` is manual), and check it with `/hooks`. It runs
   `scripts/adapters/antigravity_hook.py` as a `PreToolUse` hook (https://antigravity.google/docs/hooks/). Asks
   are sent as `force_ask`, so a cached "Always Allow" cannot skip them. The docs describe only the JSON decision,
   not exit codes or timeouts, so the adapter always prints an explicit decision; whether Antigravity blocks a
   call when the hook itself crashes or times out is untested. Details: `templates/gemini/README.md`.
+
+<details>
+<summary>Install the guard hooks by hand instead</summary>
+
+Back up the target file first. Copy the template, or merge it into an existing file (keep your other keys and
+hooks), and replace `<PYTHON>` with the full path of the Python that installed SecureCode and `<APP>` with the
+runtime folder (Windows `%LOCALAPPDATA%\OrgAISecureAppSec`), both with forward slashes.
+
+| Tool | Template | Target |
+|---|---|---|
+| Cursor | `templates/cursor/hooks.json` | `~/.cursor/hooks.json`, or the enterprise path `C:\ProgramData\Cursor\hooks.json` |
+| Codex | `templates/codex/hooks.json` | `~/.codex/hooks.json` |
+| Gemini CLI | `templates/gemini/settings.hooks.json` | merge into `~/.gemini/settings.json` |
+| Antigravity | `templates/antigravity/hooks.json` | `~/.gemini/config/hooks.json`, or `.agents/hooks.json` in one workspace |
+
+</details>
 
 ## Owner mode and managed mode
 

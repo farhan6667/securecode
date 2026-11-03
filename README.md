@@ -80,7 +80,7 @@ SecureCode fixes both:
 Open Claude Code, Cursor, Codex, Gemini CLI or Antigravity and paste this one line:
 
 ```
-Install NexaForge SecureCode for me: download the latest release zip and its .sig from https://github.com/farhan6667/nexaforge-securecode/releases, check that the key in config/allowed_signers has the fingerprint published in https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md, verify the signature with ssh-keygen, extract it to a folder I choose, then follow ONE_PROMPT_INSTALL.md inside it: run the installer, securecode.py doctor, securecode.py setup --yes after asking me once, verify-global.py, and tell me to restart.
+Install NexaForge SecureCode for me: download the latest release zip and its .sig from https://github.com/farhan6667/nexaforge-securecode/releases, check that the key in aisec/config/allowed_signers inside the zip has the fingerprint published in https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md, verify the signature with ssh-keygen (in PowerShell through cmd /c, because PowerShell rejects "<"), extract it to a folder I choose, then follow ONE_PROMPT_INSTALL.md inside its aisec folder: run the installer, securecode.py doctor and securecode.py setup --yes on my project folder after asking me once, verify-global.py, and tell me to restart.
 ```
 
 The agent downloads it, checks the key fingerprint and the signature, installs it and the scanners, and tells
@@ -93,17 +93,20 @@ why the fingerprint in SECURITY.md is the trust anchor.
 
 Download `NexaForge_SecureCode.zip` and `NexaForge_SecureCode.zip.sig` from the
 [latest release](https://github.com/farhan6667/nexaforge-securecode/releases), check the key fingerprint and the
-signature as [SECURITY.md](SECURITY.md#verifying-a-release) shows, extract it, then:
+signature as [SECURITY.md](SECURITY.md#verifying-a-release) shows, extract it, then change into the `aisec`
+folder inside (every file in the zip sits under it) and run:
 
 ```powershell
+cd aisec
 powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
-py -I scripts/securecode.py doctor
-py -I scripts/securecode.py setup --yes
+py -I scripts/securecode.py doctor "C:\path\to\your\project"
+py -I scripts/securecode.py setup --yes "C:\path\to\your\project"
 py verify-global.py
 ```
 
-macOS or Linux: `./install-macos.sh --update-timer` or `./install-linux.sh --update-timer`, then the same
-commands with `python3`. Restart the AI tool afterwards.
+`doctor` and `setup` look at the folder you name; without one they look at the SecureCode package itself.
+`setup --yes --all` installs every engine instead. macOS or Linux: `./install-macos.sh --update-timer` or
+`./install-linux.sh --update-timer`, then the same commands with `python3`. Restart the AI tool afterwards.
 </details>
 
 ## Install once, it updates itself
@@ -117,7 +120,7 @@ so every new rule, fix and scanner check reaches you without doing anything.
 - **No login needed** for the public repo. Every run is logged in `update.log`.
 - **Catches up.** A laptop that was off at check time checks as soon as it can (Task Scheduler on Windows; a
   systemd timer or launchd agent with `install-global.py --update-timer` on Linux and macOS).
-- **Update now by hand:** `py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\updater.py"` prints one line,
+- **Update now by hand:** `py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\updater.py"` (PowerShell) prints one line,
   such as `updated to 7.0.0` or `already up to date`.
 - **Turn it off** any time: [see how](ENTERPRISE_DEPLOYMENT.md#auto-update).
 
@@ -171,8 +174,15 @@ change its own settings or push your code somewhere public.
 | Gemini CLI | yes | every tool (`gemini_hook.py`, BeforeTool) | an "ask" becomes a deny |
 | Antigravity | yes | every tool (`antigravity_hook.py`, PreToolUse), asks work | blocking when the hook itself fails is untested |
 
-The adapters for the four other tools are installed by hand; [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md)
-has the steps.
+The installer writes the guard hook for the other four tools when you name them. It backs up the tool's config
+file first and merges into it, so your other settings and hooks stay:
+
+```powershell
+py -I install-global.py --agent cursor --agent codex      # also: --agent gemini, --agent antigravity
+```
+
+`verify-global.py` lists which tools have the hook. The rules file (`AGENTS.md`) and the manual way are in
+[docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
 
 Everything runs on your machine. Your code is not sent to any NexaForge service (your AI tool still talks to its own model provider, as usual). The limits are listed
 plainly under [Honest limits](#honest-limits).
@@ -250,8 +260,8 @@ designed, not how much a real pentest will find. The one it misses is listed the
 
 ## Check a project without the AI
 
-```bash
-py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests
+```powershell
+py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests
 ```
 
 `RESULT: PASS` means no High or Critical finding. Reports go to `.security/findings.json` and `.security/findings.sarif`.
@@ -260,26 +270,29 @@ py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on h
 
 The gate looks at which languages your project uses and runs the matching scanners in `full` and `ci` mode.
 It never copies a scanner into this package: each one runs as its own program, and a missing one shows up as
-`NOTE: not run: <name> (install with: py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" setup)`
-(the macOS and Linux note names the installed path there), never as a pass and never as a failure.
+`NOTE: not run: <name> (install with: py -I "C:\Users\<you>\AppData\Local\OrgAISecureAppSec\scripts\securecode.py" setup)`
+(the note always names the real installed path, on macOS and Linux too, so it can be pasted into any shell), never as a pass and never as a failure.
 
-```bash
-py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" doctor        # what this project needs, what is installed, which version
-py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" setup         # the install plan: source, pinned version, checksum, licence
-py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" setup --yes   # your one yes: installs the plan, checking every checksum
+```powershell
+py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\securecode.py" doctor        # what this project needs, what is installed, which version
+py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\securecode.py" setup         # the install plan: source, pinned version, checksum, licence
+py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\securecode.py" setup --yes   # your one yes: installs the plan, checking every checksum
 ```
 
+Run these from your project folder, or name it after the command (`doctor "C:\path\to\project"`,
+`setup --yes "C:\path\to\project"`); `setup --all` plans every engine. `%LOCALAPPDATA%` works only in cmd, so
+use the `$env:LOCALAPPDATA` form above in PowerShell.
 macOS: `python3 -I "$HOME/Library/Application Support/OrgAISecureAppSec/scripts/securecode.py" setup`. Linux:
 `python3 -I "${XDG_DATA_HOME:-$HOME/.local/share}/OrgAISecureAppSec/scripts/securecode.py" setup`.
 
-Nothing is installed without `--yes`. Tools go to `%LOCALAPPDATA%\NexaForgeTools` (Windows) or
+Nothing is installed without `--yes`. Tools go to `$env:LOCALAPPDATA\NexaForgeTools` (Windows) or
 `~/.local/share/nexaforge-tools`, outside your projects. Every download comes from the publisher's own release
 page at a pinned version and is checked against a SHA-256 written in
 [scripts/engines/engines.lock.json](scripts/engines/engines.lock.json); a mismatch is deleted and refused. That
 pins each engine's own package; for pip and npm engines, their dependencies are resolved, not hash-pinned.
 
 OWASP ZAP for the local DAST step is installed the same way, only when you ask for it:
-`py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\securecode.py" setup --engine zap` downloads the official
+`py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\securecode.py" setup --engine zap` (PowerShell) downloads the official
 ZAP 2.17.0 cross-platform zip (SHA-256 and size pinned) into the tools folder. ZAP needs Java 17 or newer;
 `doctor` and `setup` say clearly when Java is missing or too old, and SecureCode never installs Java for you.
 
@@ -326,11 +339,11 @@ After `Run Security Test` has fixed what it can, the agent finishes the job the 
 | Report | `.security/REPORT.html` (print-ready A4) and `REPORT.md`: executive summary, what ran and what did not, findings with CIA impact, attack chains, artifacts, limits. `report_lint.py` checks it before handover | Chrome or Edge for the optional PDF |
 | Fix PR | a dry run first; on your yes, a `securecode/fix-<date>` branch and a draft PR with the report summary. Never the default branch, never a force push, refused if gitleaks finds a secret in the change | `gh` (GitHub CLI) signed in, and gitleaks |
 
-```bash
-py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\local_dast.py" --target http://127.0.0.1:8000 --start "php artisan serve --port 8000"
-py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\report.py" --pdf
-py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\report_lint.py"
-py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\fix_pr.py" --add tests/Security/OrderPolicyTest.php
+```powershell
+py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\local_dast.py" --target http://127.0.0.1:8000 --start "php artisan serve --port 8000"
+py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\report.py" --pdf
+py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\report_lint.py"
+py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\fix_pr.py" --add tests/Security/OrderPolicyTest.php
 ```
 
 `--start` is only ever the command you type; nothing is started from files in the repo. The scan is passive

@@ -12,5 +12,9 @@ if (-not $py) {
     exit 1
 }
 
-& $py.Source "$Root\install-global.py"
+# Every argument is passed on to install-global.py, for example:
+#   powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 --no-update-task --agent cursor
+$pyArgs = @()
+if ($py.Name -ieq "py.exe") { $pyArgs += "-3" }   # the launcher: newest Python 3, never Python 2
+& $py.Source @pyArgs "$Root\install-global.py" @args
 exit $LASTEXITCODE

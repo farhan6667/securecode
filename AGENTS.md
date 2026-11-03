@@ -77,8 +77,10 @@ Never "fix" by commenting code out, hiding a button, or adding headers to one pa
 When the developer writes **Run Security Test** (or the Roman Urdu "Security Test Karo") (or asks for a security check before handover):
 1. Threat-model the project: assets, users, entry points, trust boundaries.
 2. Run the org gate from the project root:
-   `python "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests`
+   `<PY> "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests`
    (macOS: `~/Library/Application Support/OrgAISecureAppSec`, Linux: `~/.local/share/OrgAISecureAppSec`).
+   The installed copy of this file starts that command with the full path of the Python that installed
+   SecureCode. If it still shows a placeholder in angle brackets, use `py -3 -I` on Windows or `python3 -I`.
 3. Review the code against `docs/SECURITY-TEST-MATRIX.md` and `docs/AI-AGENT-SECURITY.md` in that folder.
 4. Fix what is safe to fix (copy `.security/findings.json` to `.security/findings-before.json` first),
    show vulnerable vs fixed code for the rest, run the gate and the project tests again.

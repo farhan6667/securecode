@@ -169,12 +169,42 @@ def update_status(app):
         out["scheduler"]=out["scheduler"] or f"unknown ({type(e).__name__})"
     return out
 
+def update_expected(app):
+    """True when auto-update is configured (repo and signing key) and not turned off with --no-update-task."""
+    try:
+        g=_installer()
+        if g.update_task_off(app): return False
+        cfg=json.loads((Path(app)/"config"/"update.json").read_text(encoding="utf-8-sig"))
+        signers=(Path(app)/"config"/"allowed_signers").read_text(encoding="utf-8")
+        return bool(cfg.get("repo")) and "ssh-ed25519" in signers
+    except Exception:
+        return False
+
+def adapters():
+    """Which other AI tools (Cursor, Codex, Gemini CLI, Antigravity) have our guard hook in their config."""
+    try:
+        return _installer().adapter_status(Path.home())
+    except Exception as e:
+        return {"error":type(e).__name__}
+
+if sys.version_info[:2]<(3,10):
+    warnings.append(f"Python {sys.version.split()[0]} is older than 3.10; install a current Python 3 and run the installer with it.")
 engines=engine_health()
 updates=update_status(ad)
+_sched=str(updates.get("scheduler") or "")
+# Windows always gets a task; a missing one there means updates silently stopped. (A Linux or macOS crontab line
+# cannot be seen from here, so "none installed by us" is not a warning.)
+if update_expected(ad) and ("not found" in _sched or _sched.startswith("unknown")):
+    warnings.append("WARNING: auto-update is configured but no daily update task was found ("
+                    f"{updates.get('scheduler')}). Run the installer again, or turn it off on purpose with --no-update-task.")
 product=product_name(ad)
 gm=guard_mode(ad)
 print(json.dumps({"product_name":product,"update_task":f"{product} Update","os":platform.platform(),"guard_mode":gm,"checks":checks,
-                  "tools":tools,"engines":engines,"updates":updates,"warnings":warnings,"app_dir":str(ad)},indent=2))
+                  "tools":tools,"engines":engines,"updates":updates,"adapters":adapters(),"warnings":warnings,"app_dir":str(ad)},indent=2))
+for w in warnings:
+    if w.startswith("WARNING"):
+        try: print(w, file=sys.stderr)
+        except UnicodeEncodeError: print(w.encode("ascii","replace").decode(), file=sys.stderr)
 summary=f"{product}: {'all checks passed' if all(checks.values()) else 'some checks FAILED'} (guard mode: {gm['mode']})"
 try:
     print(summary)

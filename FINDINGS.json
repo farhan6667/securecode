@@ -824,6 +824,86 @@
       "what": "Not covered: output of the Monitor tool (notifications, not a tool result), secrets in the tool input, and secrets with no recognisable shape (short passwords in oddly named fields)",
       "check": "documented in docs/SECRET-SHIELD-AND-MCP.md (What it does not do)",
       "status": "open"
+    },
+    {
+      "id": "V7GAP-1",
+      "severity": "medium",
+      "where": ".claude/skills/security-review/SKILL.md, AGENTS.md, install-global.py install_skill/install_runtime, install-managed.py",
+      "what": "Run Security Test told the agent to run a bare python, which on Windows is often missing or the Microsoft Store alias; the skill and rules now carry <PY>, filled with the quoted installing interpreter plus -I on every install and update",
+      "check": "tests/test_v7_gapfix_install.py::test_install_fills_py_in_skill_commands_rules_and_global_claude_md; tests/test_v7_gapfix_install.py::test_a_second_install_like_an_update_fills_the_token_again; tests/test_v7_gapfix_install.py::test_source_skill_and_rules_use_the_py_token_not_bare_python; tests/test_v7_gapfix_install.py::test_py_command_quotes_paths_with_spaces_and_prefers_the_console_python; tests/test_v7_gapfix_install.py::test_managed_install_fills_py_and_its_own_runtime_path",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-2",
+      "severity": "medium",
+      "where": "ONE_PROMPT_INSTALL.md step 4, SECURITY.md, README one-line prompt",
+      "what": "The signature check used shell input redirection, which PowerShell rejects (ParserError in 5.1 and 7), so Windows users could not verify a release; the docs now also give the cmd /c form",
+      "check": "tests/test_v7_docs.py::test_docs_give_the_powershell_form_of_the_signature_check",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-3",
+      "severity": "low",
+      "where": "install-global.py check_interpreter/main, install-managed.py, verify-global.py, scripts/securecode.py, scripts/run-nuclei-authorized.py",
+      "what": "No minimum Python check: an old interpreter failed later with unclear errors, and run-nuclei-authorized.py used str | None without postponed annotations; now Python older than 3.10 is refused with the found version and how to get a current one",
+      "check": "tests/test_v7_gapfix_install.py::test_python_older_than_3_10_is_refused_with_the_found_version; tests/test_v7_gapfix_install.py::test_main_refuses_old_python_before_touching_anything; tests/test_v7_gapfix_install.py::test_scripts_with_union_none_annotations_import_on_old_pythons",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-4",
+      "severity": "medium",
+      "where": "install-global.py --agent, verify-global.py adapters, docs/AI-AGENT-SECURITY.md, README Works with",
+      "what": "Guard hooks for Cursor, Codex, Gemini CLI and Antigravity needed hand edits of <PYTHON> and <APP>; install-global.py --agent now fills the template, backs up and merges into the existing config (refuses invalid JSON and links), is idempotent, refreshes on later runs, and verify-global.py reports which adapters are installed",
+      "check": "tests/test_v7_gapfix_install.py::test_agent_writes_a_filled_config_to_the_documented_place; tests/test_v7_gapfix_install.py::test_agent_is_idempotent; tests/test_v7_gapfix_install.py::test_agent_merges_into_existing_settings_and_backs_them_up; tests/test_v7_gapfix_install.py::test_agent_refuses_a_file_it_cannot_merge_and_leaves_it_untouched; tests/test_v7_gapfix_install.py::test_agent_refuses_to_write_through_a_link; tests/test_v7_gapfix_install.py::test_agent_replaces_its_old_entry_instead_of_adding_a_second; tests/test_v7_gapfix_install.py::test_later_runs_refresh_recorded_agents_but_respect_a_removed_hook; tests/test_v7_gapfix_install.py::test_verify_global_lists_installed_adapters",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-A",
+      "severity": "medium",
+      "where": "ONE_PROMPT_INSTALL.md, SECURITY.md, README install sections",
+      "what": "The release zip puts every file under aisec/ (scripts/release/make_release.py) but the docs read config/allowed_signers and ran the installer from the extract folder",
+      "check": "tests/test_v7_docs.py::test_docs_name_the_signers_file_and_install_folder_inside_the_zip",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-C",
+      "severity": "low",
+      "where": "ONE_PROMPT_INSTALL.md step 7, README install by hand, scripts/securecode.py",
+      "what": "doctor and setup without a path inspected the SecureCode package itself; the docs now name the project folder and securecode.py notes when it is pointed at its own package",
+      "check": "tests/test_v7_gapfix_install.py::test_docs_run_doctor_and_setup_on_a_project_folder; tests/test_v7_gapfix_install.py::test_securecode_notes_when_pointed_at_its_own_package",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-D",
+      "severity": "low",
+      "where": "README PowerShell blocks, scripts/engines/_base.py setup_command",
+      "what": "%LOCALAPPDATA% does not expand in PowerShell; the README blocks now use $env:LOCALAPPDATA and the printed setup hint uses the resolved absolute path",
+      "check": "tests/test_v7_gapfix_install.py::test_readme_powershell_and_bash_blocks_do_not_use_cmd_variables; tests/test_v7_engines.py::test_setup_command_is_the_full_installed_path_per_platform",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-E",
+      "severity": "low",
+      "where": "install-global.py install_file",
+      "what": "install_file checked existence after copying, so a fresh install always reported updated",
+      "check": "tests/test_v7_gapfix_install.py::test_install_file_reports_created_then_updated_then_exists",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-F",
+      "severity": "medium",
+      "where": "install-global.py verify/main, verify-global.py",
+      "what": "A failed schtasks (or systemctl, launchctl) left only a result string; the install still reported success and verify-global treated a missing task as info. Now auto_update is a failed check with a WARNING line, and verify-global warns when a configured Windows task is missing",
+      "check": "tests/test_v7_gapfix_install.py::test_a_failed_task_is_a_failed_check",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-G",
+      "severity": "low",
+      "where": "install-global.py --no-update-task/--update-task, install-windows.ps1, ENTERPRISE_DEPLOYMENT.md",
+      "what": "No way to install without the scheduled update task; --no-update-task skips it (remembered for later runs, undone by --update-task) and install-windows.ps1 passes its arguments on",
+      "check": "tests/test_v7_gapfix_install.py::test_no_update_task_never_calls_schtasks_and_is_remembered; tests/test_v7_gapfix_install.py::test_no_update_task_and_update_task_are_exclusive_flags; tests/test_v7_gapfix_install.py::test_windows_installer_passes_its_arguments_on",
+      "status": "fixed"
     }
   ]
 }

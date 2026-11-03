@@ -74,6 +74,15 @@ missed runs). An update re-runs the installer without flags and refreshes a time
 Two runs never overlap (a lock file), and when GitHub's rate limit answers 403 or 429 the updater writes down
 when to try again, logs it and exits cleanly. `verify-global.py` shows the last check, its result and the next run.
 
+To install without the schedule, run `py -I install-global.py --no-update-task` (or
+`powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 --no-update-task`, which passes its arguments on).
+No task, timer or agent is created, and the choice is remembered (`no-update-task.json` in the runtime folder),
+so later runs of the installer keep it off until you run it with `--update-task`. Updates then come only when
+you run `scripts/updater.py` yourself or deploy new versions centrally. `--no-update-task` does not delete a task
+that already exists; remove that as shown below. If the schedule is wanted but cannot be created (for example
+`schtasks` fails), the installer prints a WARNING, `install-report.json` shows `"auto_update": false` under
+`checks`, and `verify-global.py` warns when the Windows task is missing.
+
 To stop it: Windows `schtasks /Delete /TN "NexaForge SecureCode Update" /F` (or your brand name followed by
 ` Update`); Linux `systemctl --user disable --now nexaforge-securecode-update.timer` and delete the two unit
 files in `~/.config/systemd/user/`; macOS `launchctl bootout gui/$(id -u)/eu.nexaforge.nexaforge-securecode.update`

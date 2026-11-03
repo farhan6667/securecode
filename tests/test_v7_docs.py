@@ -40,6 +40,38 @@ def test_one_prompt_install_has_no_old_install_route():
         assert step.lower() in t.lower(), step
 
 
+VERIFY = ("ssh-keygen -Y verify -f allowed_signers -I nexaforge-securecode-release -n org-appsec-update "
+          "-s NexaForge_SecureCode.zip.sig < NexaForge_SecureCode.zip")
+
+
+def zip_prefix():
+    m = re.search(r'z\.write\(f, Path\("([^"]+)"\) / rel\)', text("scripts/release/make_release.py"))
+    assert m, "make_release.py no longer writes files under a fixed folder; update this test and the docs"
+    return m.group(1)
+
+
+def test_docs_give_the_powershell_form_of_the_signature_check():
+    # V7GAP-2: PowerShell rejects "<" (ParserError in 5.1 and 7), so the docs also give the cmd /c form.
+    for rel in ("ONE_PROMPT_INSTALL.md", "SECURITY.md"):
+        t = text(rel)
+        assert VERIFY in t, rel
+        assert f'cmd /c "{VERIFY}"' in t, rel
+    assert "cmd /c" in readme_prompt()
+
+
+def test_docs_name_the_signers_file_and_install_folder_inside_the_zip():
+    # V7GAP-A: the release zip puts every file under one folder; the docs must use the same path.
+    pre = zip_prefix()
+    for rel in ("ONE_PROMPT_INSTALL.md", "SECURITY.md"):
+        assert f"{pre}/config/allowed_signers" in text(rel), rel
+    one = one_prompt_block()
+    assert not re.search(r"(?<![/\w])config/allowed_signers", one), "a step still reads config/ at the zip root"
+    assert f"change into the {pre}" in one.lower()
+    assert f"{pre}/config/allowed_signers" in readme_prompt()
+    hand = text("README.md").split("<summary>Install by hand instead</summary>", 1)[1].split("</details>", 1)[0]
+    assert f"cd {pre}" in hand
+
+
 def test_published_fingerprint_matches_the_release_key():
     line = text("config/allowed_signers").split()
     assert line[1] == "ssh-ed25519"

@@ -30,10 +30,19 @@ credited in the release notes unless they ask not to be.
 ## Verifying a release
 
 Every release zip is signed with the project's offline ed25519 key. The public key is in
-`config/allowed_signers`. To check a download yourself:
+`config/allowed_signers` in this repo, and at `aisec/config/allowed_signers` inside the zip (every file in the
+zip sits under the `aisec` folder). Save that file next to the zip as `allowed_signers`, then check the download:
 
 ```bash
-ssh-keygen -Y verify -f config/allowed_signers -I nexaforge-securecode-release -n org-appsec-update -s NexaForge_SecureCode.zip.sig < NexaForge_SecureCode.zip
+ssh-keygen -Y verify -f allowed_signers -I nexaforge-securecode-release -n org-appsec-update -s NexaForge_SecureCode.zip.sig < NexaForge_SecureCode.zip
 ```
+
+PowerShell does not accept `<`, so on Windows in PowerShell run the same line through cmd:
+
+```powershell
+cmd /c "ssh-keygen -Y verify -f allowed_signers -I nexaforge-securecode-release -n org-appsec-update -s NexaForge_SecureCode.zip.sig < NexaForge_SecureCode.zip"
+```
+
+It must print `Good signature`. After extracting, change into the `aisec` folder to install.
 
 Key fingerprint: `SHA256:GD3ICyrDAvPG6KoSyV+r8q65KRJCelVusuXxuQeWaF4`

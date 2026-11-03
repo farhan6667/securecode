@@ -11,26 +11,33 @@ Follow these steps in order and stop and tell me if any check fails.
    NexaForge_SecureCode.zip and NexaForge_SecureCode.zip.sig into a new, empty folder. Run nothing from the zip yet.
 2. Trust anchor: open https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md and note the
    "Key fingerprint" (SHA256:...).
-3. Check the key: read only config/allowed_signers from the zip. Save the part of its line that starts with
+3. Check the key: every file in the zip sits under a top folder named aisec. Read only
+   aisec/config/allowed_signers from the zip. Save the part of its line that starts with
    ssh-ed25519 as key.pub and run: ssh-keygen -l -f key.pub
    The SHA256 value must equal the fingerprint from step 2. If it does not, stop.
-4. Verify the signature: save config/allowed_signers next to the zip as allowed_signers and run:
+4. Verify the signature: save aisec/config/allowed_signers next to the zip as allowed_signers and run
+   (bash, zsh or cmd):
    ssh-keygen -Y verify -f allowed_signers -I nexaforge-securecode-release -n org-appsec-update -s NexaForge_SecureCode.zip.sig < NexaForge_SecureCode.zip
+   PowerShell does not accept "<", so in PowerShell run the same line through cmd:
+   cmd /c "ssh-keygen -Y verify -f allowed_signers -I nexaforge-securecode-release -n org-appsec-update -s NexaForge_SecureCode.zip.sig < NexaForge_SecureCode.zip"
    It must print "Good signature". If not, stop.
 5. Ask me which folder to extract to (suggest C:\Tools\nexaforge-securecode on Windows or
-   ~/tools/nexaforge-securecode on macOS and Linux) and extract the zip there.
-6. Install from that folder. Windows: powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+   ~/tools/nexaforge-securecode on macOS and Linux) and extract the zip there. Then change into the aisec
+   folder inside it (for example C:\Tools\nexaforge-securecode\aisec). Run every later step from there.
+6. Install from the aisec folder. Windows: powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
    macOS: ./install-macos.sh --update-timer   Linux: ./install-linux.sh --update-timer
-7. Scanners: run py -I scripts/securecode.py doctor (python3 instead of py on macOS and Linux) and show me
-   what this machine is missing. Then run py -I scripts/securecode.py setup, show me the plan (source, pinned
-   version, checksum, licence, folder), ask me once, and only after my yes run
-   py -I scripts/securecode.py setup --yes. Never install scanners another way.
+7. Scanners: ask me for my project folder. Run py -I scripts/securecode.py doctor "<my project folder>"
+   (python3 instead of py on macOS and Linux) and show me what this machine is missing for it. Then run
+   py -I scripts/securecode.py setup "<my project folder>" (or setup --all for every engine), show me the plan
+   (source, pinned version, checksum, licence, folder), ask me once, and only after my yes run
+   py -I scripts/securecode.py setup --yes "<my project folder>" (or setup --yes --all).
+   Without a folder these commands look at the SecureCode package itself. Never install scanners another way.
 8. Verify: py verify-global.py (python3 on macOS and Linux). Every check must be true.
-9. If you are not Claude Code, load AGENTS.md from that folder as your own global rules and install your
-   guard hook by hand, following docs/AI-AGENT-SECURITY.md (Codex: ~/.codex/AGENTS.md plus templates/codex;
-   Cursor: User Rules, .cursorignore for .env files, templates/cursor/hooks.json; Gemini CLI: ~/.gemini/AGENTS.md,
-   templates/gemini/settings.json and settings.hooks.json; Antigravity: ~/.gemini/AGENTS.md and
-   templates/antigravity/hooks.json). Back up every file first.
+9. If you are not Claude Code, load AGENTS.md from that folder as your own global rules (Codex:
+   ~/.codex/AGENTS.md; Gemini CLI and Antigravity: ~/.gemini/AGENTS.md; Cursor: User Rules, plus .env files in
+   .cursorignore) and install your guard hook with the installer, which backs up and merges your existing
+   config: py -I install-global.py --agent cursor (or codex, gemini, antigravity; repeat --agent for several).
+   docs/AI-AGENT-SECURITY.md has the details.
 10. Tell me to restart this AI tool, because rules and hooks load at start.
 11. Explain auto-update: a daily task checks GitHub for newer signed releases and installs them by itself; an
     unsigned, tampered or older release is refused. Show me how to turn it off (ENTERPRISE_DEPLOYMENT.md). The
@@ -48,7 +55,7 @@ checks passed, and anything I still need to do.
 
 ## Why the fingerprint is the trust anchor
 
-The signature proves the zip was signed by the key in `config/allowed_signers`. But that key file arrives
+The signature proves the zip was signed by the key in `aisec/config/allowed_signers`. But that key file arrives
 inside the same download, so anyone able to swap the release could swap the zip, the `.sig` and the key
 together, and the signature would still check out. The fingerprint published in `SECURITY.md` on the `main`
 branch comes from a second place. When the key in the zip has that fingerprint, it is the project's real
