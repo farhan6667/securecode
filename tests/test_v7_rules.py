@@ -660,20 +660,23 @@ def test_local_infile_has_its_own_rule(tmp_path):
 
 
 def test_linked_app_folder_is_not_walked(tmp_path):
-    import _winapi  # Windows junctions need no privilege; elsewhere a symlink would need one
+    """A linked app/ folder (a junction on Windows, a symlink elsewhere) must not be walked, so a limiter outside
+    the project cannot hide a missing throttle."""
+    import os
     outside = tmp_path / "outside"
     (outside / "Http").mkdir(parents=True)
     (outside / "Http" / "Limiter.php").write_text("<?php RateLimiter::for('x', fn () => 1);\n", encoding="utf-8")
     proj = tmp_path / "proj"
     (proj / "routes").mkdir(parents=True)
     (proj / "routes" / "web.php").write_text("<?php\nRoute::post('/verify-otp', [OtpController::class, 'verify']);\n", encoding="utf-8")
-    _winapi.CreateJunction(str(outside), str(proj / "app"))
+    if os.name == "nt":
+        import _winapi                       # a junction needs no privilege on Windows, a symlink would
+        _winapi.CreateJunction(str(outside), str(proj / "app"))
+    else:
+        os.symlink(outside, proj / "app", target_is_directory=True)
+    assert (proj / "app" / "Http" / "Limiter.php").is_file()      # the link really reaches the limiter
     sev = [f["severity"] for f in G.code_scan(str(proj)) if f["rule"] == "AUTH_ROUTE_NO_THROTTLE"]
     assert sev == ["HIGH"], sev
-
-
-if not hasattr(__import__("os"), "add_dll_directory"):           # not Windows
-    test_linked_app_folder_is_not_walked = pytest.mark.skip(reason="junctions are Windows only")(test_linked_app_folder_is_not_walked)
 
 
 def test_hostile_files_stay_fast_and_capped(tmp_path):
