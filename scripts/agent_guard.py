@@ -1069,6 +1069,10 @@ GIT_VALUE_OPTS = {"-m", "--message", "-b", "-B", "--author", "--date", "-n", "--
                   "--trailer", "--signoff-no", "-C", "-c", "-F", "--file", "-t", "--template", "--pathspec-from-file", "--diff-filter"}
 GIT_PATH_VALUE = {"-o": "write", "--output": "write", "-F": "read", "--file": "read", "-t": "read", "--template": "read",
                   "--reference": "read", "--pathspec-from-file": "read", "-C": "read"}
+# git's empty tree (SHA-1 and SHA-256 repositories), 7 or more leading characters: git diff <empty tree> HEAD dumps the tree
+EMPTY_TREE = re.compile(r"^(?:" + "|".join(f"{h[:n]}" for h in ("4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+                                                                "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321")
+                                            for n in range(7, len(h) + 1)) + r")(?![0-9a-f])", re.I)
 GIT_EXEC_KEY = re.compile(r"^(?:core\.(?:fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|alternaterefscommand|worktree|attributesfile|excludesfile)"
                           r"|.*\.(?:textconv|command|driver|cmd|program|helper|clean|smudge|process|receivepack|uploadpack|proxy)"
                           r"|diff\.external|sequence\.editor|pager\..*|alias\..*|uploadpack\..*|receive\..*|includeif\..*|include\..*"
@@ -1945,7 +1949,7 @@ class Shell:
         if name in DOWNLOADER_CMDS or name in ("http", "https", "xh"):
             return self.downloader(name, args, st)
         if name == "git":
-            return self.git(args, st)
+            return self.git(args, st, idx, pipe)
         if name == "gh":
             return self.gh(args, st)
         if name in ("npm", "pnpm", "yarn", "bun"):
@@ -2451,7 +2455,7 @@ class Shell:
         self.unk(f"'{name}' is not modelled")
 
     # ---- git
-    def git(self, args: list, st: Stage):
+    def git(self, args: list, st: Stage, idx: int = 0, pipe: list | None = None):
         texts = [(a.t or "") for a in args]
         gcwd = self.cwd
         i = 0
@@ -2522,7 +2526,11 @@ class Shell:
         if sub in ("diff", "log", "show") and any((a.t or "") == "--ext-diff" for a in rest):
             st.modelled = False
             return self.unk("git --ext-diff runs a program")
+        self.git_object_dump(sub, rest, st, idx, pipe)
         role = "read" if sub in GIT_READ_SUBS else "write"
+        # archive, format-patch and stash show print tracked content, so a secret pathspec there is a read (V7P2-02)
+        if sub in ("archive", "format-patch") or (sub == "stash" and any((a.t or "") == "show" for a in rest[:1])):
+            role = "read"
         k = 0
         while k < len(rest):
             a = rest[k]
@@ -2559,17 +2567,44 @@ class Shell:
                 # the path after the colon is read from the object store, so a secret there must be judged too.
                 # clean_name()/path_shaped() drop or miss a bare `HEAD:.env`, so extract the suffix explicitly.
                 if role == "read" and ":" in c and not re.match(r"^[A-Za-z]:[\\/]", c):
-                    suffix = c.split(":")[-1]
+                    # pathspec magic (:(glob,icase)x, :/x, :!x, :^x, ::x) wraps the path too (V7P2-02)
+                    suffix = re.sub(r"^:(?:\([^)]{0,80}\)|[/!^:]{1,4})", "", c) if c.startswith(":") else c
+                    if ":" in suffix:
+                        suffix = suffix.split(":")[-1]
                     if suffix and (is_secret_path(suffix) or path_shaped(suffix)):
                         self.path(suffix, "read", gcwd, git=True)
                 if path_shaped(c) or c in (".", "..") or is_secret_path(c):
                     if sub == "rm" and is_secret_path(c):
                         continue
-                    self.path(c, "use" if (sub in ("add", "commit", "stash", "checkout", "restore") and is_secret_path(c)) else role,
-                              gcwd, git=True)
+                    self.path(c, "use" if (sub in ("add", "commit", "stash", "checkout", "restore") and role != "read"
+                                           and is_secret_path(c)) else role, gcwd, git=True)
             k += 1
         if gcwd is None or not self.env.inside_roots(gcwd):
             self.unk("git runs on a repository outside the project folder")
+
+    def git_object_dump(self, sub: str, rest: list, st: Stage, idx: int, pipe: list | None):
+        """Routes that print committed content the pathspec check cannot see (V7P2-02, V7P2-03): object names fed on
+        standard input or from a file, and whole-tree dumps to standard output. They become the unknown class (ask in
+        owner mode, refused in managed mode). Everyday forms stay allowed: git log -p, git show HEAD, git diff,
+        git archive -o release.zip HEAD, git format-patch -1 HEAD, git cat-file -p HEAD:README.md."""
+        t = [(a.t or "") for a in rest]
+        if sub == "cat-file" and any(x.startswith("--batch") and not x.startswith("--batch-check") for x in t):
+            st.modelled = False
+            self.unk("git cat-file --batch prints objects named on standard input (or every object), which the guard cannot see")
+        if any(x.startswith("--pathspec-from-file") for x in t):      # also add/commit/stash push of an unseen secret
+            st.modelled = False
+            self.unk("git --pathspec-from-file takes the paths from a file or standard input the guard cannot see")
+        if sub == "archive" and not any(x.startswith(("-o", "--output")) for x in t):
+            alone = pipe is None or (len(pipe) == 1 and idx == 0)
+            if not (alone and any(op in (">", ">>") for op, _ in st.redirs)):
+                st.modelled = False
+                self.unk("git archive to standard output prints every tracked file; write it to a file with -o")
+        if sub == "format-patch" and "--stdout" in t and any(x in ("--root", "--all") for x in t):
+            st.modelled = False
+            self.unk("git format-patch --stdout from the root prints the whole history")
+        if sub in ("diff", "diff-tree", "diff-index", "show", "log", "range-diff") and any(EMPTY_TREE.match(x) for x in t):
+            st.modelled = False
+            self.unk("a diff against the empty tree prints every tracked file")
 
     def git_config(self, rest: list, st: Stage):
         t = [(a.t or "") for a in rest]
