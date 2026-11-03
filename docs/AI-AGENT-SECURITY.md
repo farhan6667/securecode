@@ -59,8 +59,10 @@ Sources: see `docs/SOURCES.md`.
   Docs: https://geminicli.com/docs/cli/gemini-md/ and https://geminicli.com/docs/reference/memport/
 - **Antigravity**: copy `AGENTS.md` to `~/.gemini/AGENTS.md`; Antigravity reads it (and project
   `AGENTS.md`, `GEMINI.md`, `.agents/rules/*.md`) without a setting. Docs: https://antigravity.google/docs/rules/
-- Guard hooks for Gemini CLI: merge `templates/gemini/settings.hooks.json` into `~/.gemini/settings.json` and
-  fill in `<PYTHON>` and `<APP>`. It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every
+- Guard hooks for Gemini CLI: merge `templates/gemini/settings.hooks.json` (macOS, Linux) or
+  `templates/gemini/settings.hooks.windows.json` (Windows, where Gemini CLI runs hooks in PowerShell and the line
+  needs a leading `&`, finding V7L-01) into `~/.gemini/settings.json` and fill in `<PYTHON>` and `<APP>`. A hook
+  line that fails before Python starts lets the tool run, so test one blocked action after installing. It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every
   tool (https://geminicli.com/docs/hooks/reference/). Gemini CLI lets a tool run when a hook exits with any code
   other than 0 or 2 or prints text that is not JSON, so the adapter only exits 0 (allow) or 2 (deny) and denies
   on every error. There is no "ask" decision, so an ask becomes a deny with the reason.

@@ -840,6 +840,22 @@
       "what": "README still said the Laravel lab found 17 of 18 with one miss on purpose, while benchmark/RESULTS.md shows 18 of 18 since OPEN-01 was closed",
       "check": "tests/test_v7_docs.py::test_readme_laravel_lab_sentence_matches_results",
       "status": "fixed"
+    },
+    {
+      "id": "V7L-01",
+      "severity": "high",
+      "where": "templates/gemini/settings.hooks.json (Windows use), templates/gemini/README.md, docs/AI-AGENT-SECURITY.md",
+      "what": "Live test in Gemini CLI 0.50.0 on Windows: the CLI runs hook commands through PowerShell (pwsh -Command), and the template line '\"<PYTHON>\" -I \"...\"' is a PowerShell parse error. The hook exits 1, Gemini CLI treats that as a failed hook and runs the tool (fail open), so on Windows the guard never ran and nothing was blocked. Fix: settings.hooks.windows.json with the PowerShell call operator (& \"<PYTHON>\" ...), docs tell Windows users to use it and to test one blocked action. Rerun live: read of fake-secret/.env, shell read of it, git push --force and a write to .security/guard-audit.jsonl were all blocked (hook exit 2, tool failed, file not created); git status and a normal write ran",
+      "check": "tests/test_v7_guard.py::test_gemini_template_command_really_runs_in_the_cli_shell (runs the filled-in template line through the same shell wrapper Gemini CLI uses)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7L-02",
+      "severity": "medium",
+      "where": "templates/codex/hooks.json, templates/antigravity/hooks.json",
+      "what": "Same '\"<PYTHON>\" -I ...' line shape as V7L-01. Not verified live: the Codex live run was stopped before a hook fired, and Antigravity is a GUI. If either runs hook commands through PowerShell on Windows, the guard fails open there too. Codex documents a commandWindows override that could carry a Windows form",
+      "check": "live test still to do: one blocked action per tool on Windows, with hook log evidence",
+      "status": "open"
     }
   ]
 }
