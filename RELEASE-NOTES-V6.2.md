@@ -1,3 +1,20 @@
+# NexaForge SecureCode 6.2.2 (security fixes)
+
+We attacked our own tool the way an outside tester would. This release fixes what the first round found,
+each with a regression test (274 tests now, CI green on Windows and Linux):
+
+- Agent guard: writes to the agent's settings or this tool's runtime through wildcards, macOS and other home
+  path spellings, tree copies into the home folder, and "read-only" commands that can write.
+- Agent guard: secret reads through wildcards and a few missed file names.
+- CI gate: a scanned repository can no longer silence Semgrep, Gitleaks or Trivy with its own ignore files
+  in `ci` mode.
+- Agent guard: force or mirror pushes set through git config, more download-and-run variants, public gists,
+  shell startup-file writes, and file URLs passed to browser tools.
+
+A second round with fuzzing found more ways around the pattern-based guard. Version 7.0 changes the guard's
+design from "block what looks dangerous" to "allow what is clearly safe, ask about the rest". Until then,
+treat the guard as a strong tripwire, not a sandbox (see SECURITY-CONTEXT.md).
+
 # NexaForge SecureCode 6.2.1
 
 - English trigger phrases: "Run Security Test" and "Run Advisory QA". The Roman Urdu phrases still work, and so
