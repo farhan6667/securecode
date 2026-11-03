@@ -686,7 +686,7 @@
       "severity": "medium",
       "where": "scripts/agent_guard.py file_cmd (grep, egrep, fgrep, rg, ag, ack), scan(), awk()",
       "what": "From the outside product review and a live false positive: option names were folded to lower case, so grep -E/-F/-A/-C were read as -e/-f (pattern or pattern file) and the next word was taken as their value. A quoted pattern was then judged as a path (false positive), and a real path after the pattern was skipped (grep -E 'a|b' ~/.claude/settings.json was allowed in managed mode, a bypass of the outside-the-project check). awk regex literals like /a|b/ were read as a pipe to a command. Options are now case sensitive per tool, short clusters (-nE, -A3, -nf FILE) follow getopt, rg --hostname-bin is unmodelled like --pre, and awk regex and string contents are blanked before the pipe and redirect check",
-      "check": "tests/test_guard_positive_model.py::test_s2_quoted_patterns_are_patterns_not_paths, ::test_a_real_path_after_a_quoted_pattern_is_still_judged, ::test_awk_alternation_is_a_pattern_but_real_pipes_and_redirects_are_not, ::test_grep_on_a_secret_after_a_pattern_is_denied, ::test_everyday_corpus_prompt_rate_is_under_five_percent; tests/test_fuzz_guard.py",
+      "check": "tests/test_guard_positive_model.py::test_s2_quoted_patterns_are_patterns_not_paths, ::test_a_real_path_after_a_quoted_pattern_is_still_judged, ::test_awk_alternation_is_a_pattern_but_real_pipes_and_redirects_are_not, ::test_grep_on_a_secret_after_a_pattern_is_denied, ::test_everyday_corpus_prompt_rate_is_under_one_percent; tests/test_fuzz_guard.py",
       "status": "fixed"
     },
     {
@@ -765,7 +765,7 @@
       "id": "OPEN-09",
       "severity": "low",
       "where": "scripts/agent_guard.py (.security folder)",
-      "what": "git clean -fdx and find . -delete style commands that remove the whole tree can still remove .security with its audit files; only direct rm, rmdir, mv and Remove-Item of the folder are refused. local_dast and setup sort ZAP_* folders and jars as text, so two ZAP versions side by side could pick the older one (setup keeps one). The size cap during the ZAP download is the global 400 MB, not the pinned size (the SHA-256 check still refuses anything else)",
+      "what": "git clean -fdx and find . -delete style commands that remove the whole tree can still remove .security with its audit files; only direct rm, rmdir, mv and Remove-Item of the folder are refused. The size cap during the ZAP download is the global 400 MB, not the pinned size (the SHA-256 check still refuses anything else)",
       "check": "code reading in the 7.0.1 review",
       "status": "open"
     },
@@ -823,6 +823,70 @@
       "where": "scripts/secret_shield.py coverage",
       "what": "Not covered: output of the Monitor tool (notifications, not a tool result), secrets in the tool input, and secrets with no recognisable shape (short passwords in oddly named fields)",
       "check": "documented in docs/SECRET-SHIELD-AND-MCP.md (What it does not do)",
+      "status": "open"
+    },
+    {
+      "id": "V7GAP-7",
+      "severity": "low",
+      "where": "docs/STANDARDS-COVERAGE.md",
+      "what": "The owner asked for OWASP ASVS coverage and the coverage page mapped only Top 10, CWE Top 25 and API Top 10. Added one row per ASVS 5.0 chapter (V1 to V17) as guidance, not a compliance claim, plus a test that every rule id cited on the page exists",
+      "check": "tests/test_v7_docs.py::test_every_rule_id_in_standards_coverage_exists and test_standards_coverage_maps_asvs5_chapters_without_claiming_compliance",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-8",
+      "severity": "low",
+      "where": "README.md, How a review works",
+      "what": "README still said the Laravel lab found 17 of 18 with one miss on purpose, while benchmark/RESULTS.md shows 18 of 18 since OPEN-01 was closed",
+      "check": "tests/test_v7_docs.py::test_readme_laravel_lab_sentence_matches_results",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-5",
+      "severity": "medium",
+      "where": "scripts/local_dast.py find_zap, _zap_dirs",
+      "what": "find_zap returned docker whenever docker was on PATH, before looking for the ZAP that securecode setup --engine zap installed. With Docker Desktop installed but not started, docker run failed and the scan reported 'ZAP exited N without a report' (exit 5). A local ZAP jar now wins; docker is used only when there is no local ZAP and `docker info` (argument list, 10 s timeout, output captured) succeeds; otherwise the result is status failed with the plain note 'Docker is installed but not running; start Docker Desktop or run: py -I scripts/securecode.py setup --engine zap', no traceback. ZAP_* folders and zap-*.jar files now sort by parsed version numbers (2.17 beats 2.9), the sort part of OPEN-09 (setup itself never sorted, it installs one pinned folder)",
+      "check": "tests/test_v7_pentest.py::test_local_zap_jar_beats_docker_and_docker_is_not_even_asked, ::test_docker_installed_but_not_running_is_a_plain_failed_note, ::test_docker_info_that_hangs_or_cannot_start_counts_as_not_running, ::test_running_docker_is_used_only_when_there_is_no_local_zap, ::test_zap_versions_sort_as_numbers_not_text",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-6",
+      "severity": "low",
+      "where": "tests/test_guard_positive_model.py, README.md (1 of 256 everyday commands asked; under 1 in 100)",
+      "what": "The README claims under 1 in 100 everyday commands prompt, but the corpus test only asserted an ask rate under 5 percent, so the claim could regress fivefold with CI still green. The assertion is now under 1 percent and the test is renamed to match",
+      "check": "tests/test_guard_positive_model.py::test_everyday_corpus_prompt_rate_is_under_one_percent",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-9",
+      "severity": "medium",
+      "where": "scripts/secgate.py main, scanner_error_lines, scanner_fix_hint",
+      "what": "In ci mode a crashing required scanner (a semgrep traceback) made the gate print only that traceback, newlines turned into '?', and 'BLOCKED (ci) ... Fix the error above', hiding every built-in finding and the other scanners' results. The gate now still prints counts and all findings, shows each scanner error as a few readable lines (first two and last two, home folder as ~, secret-looking values redacted, control characters still neutralised per line), names the fix ('<name> is installed but failed to run; reinstall it or run: <installed securecode.py> setup --engine <name>') and keeps ci failing closed with exit 3. findings.json stores the same compact error text",
+      "check": "tests/test_agent_guard.py::test_ci_crashing_semgrep_still_shows_built_in_findings_and_a_readable_error, ::test_ci_blocks_when_a_scanner_errors",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-10",
+      "severity": "low",
+      "where": "scripts/securecode.py setup, scripts/release/make_release.py docstring, README.md (Check a project without the AI)",
+      "what": "setup --engine gitleaks with gitleaks present said 'every engine this project needs is already present'; an explicit --engine request now says '<name> is already installed'. The make_release.py docstring named 6.2.1 and RELEASE-NOTES-V6.2.md; it is now version neutral. The README now explains RESULT: BLOCKED and the exit codes (0 pass, 2 a finding at or above --fail-on, 3 ci with a required scanner missing or failed), checked against secgate.main",
+      "check": "tests/test_v7_engines.py::test_setup_for_an_engine_already_installed_names_that_engine; README and docstring by reading",
+      "status": "fixed"
+    },
+    {
+      "id": "V7L-01",
+      "severity": "high",
+      "where": "templates/gemini/settings.hooks.json (Windows use), templates/gemini/README.md, docs/AI-AGENT-SECURITY.md",
+      "what": "Live test in Gemini CLI 0.50.0 on Windows: the CLI runs hook commands through PowerShell (pwsh -Command), and the template line '\"<PYTHON>\" -I \"...\"' is a PowerShell parse error. The hook exits 1, Gemini CLI treats that as a failed hook and runs the tool (fail open), so on Windows the guard never ran and nothing was blocked. Fix: settings.hooks.windows.json with the PowerShell call operator (& \"<PYTHON>\" ...), docs tell Windows users to use it and to test one blocked action. Rerun live: read of fake-secret/.env, shell read of it, git push --force and a write to .security/guard-audit.jsonl were all blocked (hook exit 2, tool failed, file not created); git status and a normal write ran",
+      "check": "tests/test_v7_guard.py::test_gemini_template_command_really_runs_in_the_cli_shell (runs the filled-in template line through the same shell wrapper Gemini CLI uses)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7L-02",
+      "severity": "medium",
+      "where": "templates/codex/hooks.json, templates/antigravity/hooks.json",
+      "what": "Same '\"<PYTHON>\" -I ...' line shape as V7L-01. Not verified live: the Codex live run was stopped before a hook fired, and Antigravity is a GUI. If either runs hook commands through PowerShell on Windows, the guard fails open there too. Codex documents a commandWindows override that could carry a Windows form",
+      "check": "live test still to do: one blocked action per tool on Windows, with hook log evidence",
       "status": "open"
     },
     {

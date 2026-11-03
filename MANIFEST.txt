@@ -110,7 +110,7 @@ Added after the 6.2 review
 
 7.0 outside review fixes
 - scripts/adapters/gemini_hook.py (Gemini CLI BeforeTool) and scripts/adapters/antigravity_hook.py (Antigravity
-  PreToolUse); templates/gemini/settings.hooks.json and templates/antigravity/hooks.json
+  PreToolUse); templates/gemini/settings.hooks.json, settings.hooks.windows.json and templates/antigravity/hooks.json
 - scripts/engines/zap.py: OWASP ZAP 2.17.0 for local DAST through securecode setup --engine zap (Java 17+ checked,
   never installed)
 - scripts/agent_guard.py: case-sensitive grep and rg options, awk regex literals are patterns (V7F-S2)

@@ -1,6 +1,6 @@
 # Standards coverage
 
-This page maps three public lists to what NexaForge SecureCode checks today. It is meant to be read
+This page maps four public lists to what NexaForge SecureCode checks today. It is meant to be read
 by people deciding how much to trust the gate, so it errs on the side of saying less.
 
 Lists used (all checked on 2026-11-03):
@@ -9,6 +9,8 @@ Lists used (all checked on 2026-11-03):
 - CWE Top 25 Most Dangerous Software Weaknesses, 2025 edition (the latest MITRE lists),
   https://cwe.mitre.org/top25/archive/2025/2025_cwe_top25.html
 - OWASP API Security Top 10 2023, https://api-security.owasp.org/editions/2023/en/0x11-t10
+- OWASP Application Security Verification Standard (ASVS) 5.0, chapters V1 to V17,
+  https://github.com/OWASP/ASVS/tree/master/5.0/en
 
 ## What the words mean
 
@@ -82,6 +84,33 @@ depends on how the app is deployed or what the business rules are still needs th
 | API8:2023 Security Misconfiguration | Partial | As A02:2025 above. |
 | API9:2023 Improper Inventory Management | Not yet | The route map in step 1 of the review protocol is the closest thing. |
 | API10:2023 Unsafe Consumption of APIs | Review only | |
+
+## OWASP ASVS 5.0
+
+This table is guidance for reviewers, not a certification. ASVS is a verification standard: most of its
+requirements are about design, configuration and behaviour that a static rule cannot see, so running the
+gate does not make an application ASVS compliant at any level, and we do not claim that it does. One row
+per chapter; a chapter is "Partial" when some of its requirements have a rule, never because all do.
+
+| Chapter | Status | What covers part of it | Not covered |
+|---|---|---|---|
+| V1 Encoding and Sanitization | Partial | Injection: `SQL_CONCAT`, `java-sqli-string-concat`, `COMMAND_INJECTION`, `java-spel-injection`, `java-jndi-injection`. Raw template output: `XSS_RAW_TEMPLATE`, `VUE_RAW_HTML`. DOM sinks: `XSS_SINK`, `REACT_RAW_HTML` (no dedicated test). XML parsers: `java-xxe-documentbuilderfactory`, `java-xxe-saxparserfactory`, `java-xxe-xmlinputfactory`. Java deserialization: `java-unsafe-deserialization-objectinputstream`, `java-jackson-default-typing`. Review: A03 and A08 in `SOURCE-CODE-REVIEW.md`. | Whether encoding fits each output context, HTML sanitizers for rich text, NoSQL, LDAP, XPath, template injection, CSV and formula injection, and deserialization outside Java (registry rules only, not measured). |
+| V2 Validation and Business Logic | Partial | `MISSING_INPUT_VALIDATION` (Laravel, Express), `spring-requestbody-without-valid`, `DENYLIST_FIX`, `AUTH_ROUTE_NO_THROTTLE` for anti-automation on auth routes. Review: A04 in `SOURCE-CODE-REVIEW.md`. | Whether the validation rules are right, business flow order, limits per user, race conditions and replay. Review only. |
+| V3 Web Frontend Security | Partial | `MISSING_SECURITY_HEADERS`, `INSECURE_COOKIE_FLAG`, `CDN_WITHOUT_SRI`, `STATE_CHANGE_OVER_GET`, `spring-csrf-disabled-with-session`, `CORS_WILDCARD` and `OPEN_REDIRECT` (no dedicated test), `SOURCEMAP_IN_PROD`. | The quality of a Content Security Policy, cross-origin isolation headers, `postMessage` handling, browser storage of sensitive data, and headers set by a proxy outside the repo. |
+| V4 API and Web Service | Partial | `laravel-api-route-without-auth`, `laravel-mass-assignment`, `spring-mass-assignment-entity-binding`, `CORS_WILDCARD`. Review: the API section of `SOURCE-CODE-REVIEW.md`. | HTTP message parsing and request smuggling, GraphQL depth and cost limits, WebSocket origin and auth checks. |
+| V5 File Handling | Partial | `PATH_TRAVERSAL_SINK` (no dedicated test). `PHP_IN_UPLOAD_DIR` and `PHP_IN_IMAGE_FILE` find the result of a bad upload, not the handler. Review: "File upload and download" in `SOURCE-CODE-REVIEW.md`. | Upload size, type and content checks, archive bombs, storage outside the web root, safe download names. Review only. |
+| V6 Authentication | Partial | `AUTH_ROUTE_NO_THROTTLE`, `WEAK_DEFAULT_CREDENTIAL`, `java-weak-password-hash`, `SHORT_NUMERIC_CODE`. Review: A07 in `SOURCE-CODE-REVIEW.md`. | Password policy, MFA, account recovery, user enumeration, credential stuffing defences beyond throttling. Review only. |
+| V7 Session Management | Partial | Token generation: `TOKEN_FROM_USER_DATA`, `TOKEN_TOO_SHORT`, `INSECURE_RANDOM` (no dedicated test). Cookie flags are counted under V3. Review: A07 in `SOURCE-CODE-REVIEW.md` (fixation, logout). | Session timeouts, termination on logout and password change, re-authentication before sensitive actions. Review only. |
+| V8 Authorization | Partial | `laravel-idor-unscoped-lookup`, `laravel-idor-route-model-binding`, `spring-idor-unscoped-lookup`, `laravel-web-group-without-auth`, `spring-permitall-sensitive-path`, `EXPOSED_ADMIN_PATH`. Field level: the mass assignment rules. Review: the authorization matrix and cross-user tests. | Role and attribute checks in business logic, multi-tenant scoping, checks decided at run time. See A01 above. |
+| V9 Self-contained Tokens | Partial | `JWT_DECODE_NO_VERIFY` (no dedicated test), `DEFAULT_SECRET_KEY` for known example signing secrets. Review: the JWT step in A07 of `SOURCE-CODE-REVIEW.md`. | Algorithm allowlists, `alg: none`, audience and issuer checks, expiry, key sources and rotation. Review only. |
+| V10 OAuth and OIDC | Not yet | No rule and no specific review step. | Redirect URI matching, `state` and PKCE, token storage, client authentication, ID token validation. |
+| V11 Cryptography | Partial | `INSECURE_CRYPTO`, `java-weak-password-hash`, `java-insecure-random-token`, `TOKEN_TOO_SHORT`, `INSECURE_RANDOM` (no dedicated test), `DEFAULT_SECRET_KEY`. Review: A02 in `SOURCE-CODE-REVIEW.md`. | Key management, cryptographic inventory, cipher modes such as ECB, IV and nonce reuse, post-quantum planning. |
+| V12 Secure Communication | Partial | `OLD_TLS_PROTOCOL`, `DB_NO_TLS`, `java-trust-all-certificates`, `java-trust-all-hostnames`, `org-python-requests-verify-false`, `DISABLE_TLS_VERIFY` (no dedicated test). | TLS settings of the real server and load balancer, HSTS preload, mutual TLS between services. Runtime pentest. |
+| V13 Configuration | Partial | `DEBUG_FLAG_FROM_REQUEST`, `DEBUG_EXPOSURE` (no dedicated test), `spring-actuator-exposed-properties`, `spring-actuator-exposed-yaml`, `DIRECTORY_LISTING`, `WEBROOT_EXPOSURE`, `SENSITIVE_WEBROOT_PATH`, `EXPOSED_ADMIN_TOOL`, `HARDCODED_SECRET`, `LIVE_API_KEY`, `PUBLIC_ENV_SECRET`, `DB_BIND_ALL`, `DB_NO_AUTH`, Gitleaks. Review: A05 in `SOURCE-CODE-REVIEW.md`. | Use of a secrets vault, least privilege for service accounts, configuration that lives outside the repo. |
+| V14 Data Protection | Partial | `PUBLIC_ENV_SECRET`, `SOURCEMAP_IN_PROD`, `SENSITIVE_LOG` (no dedicated test). | Data classification, cache headers on sensitive responses, retention and deletion, sensitive data in URLs. Review only. |
+| V15 Secure Coding and Architecture | Partial | `VULNERABLE_LIBRARY`, `UNSUPPORTED_PLATFORM`, `PHP_DEPRECATED_API`, Trivy for lockfiles, the mass assignment rules. Review: A06 in `SOURCE-CODE-REVIEW.md`. | Architecture documentation, SBOM, prototype pollution, type juggling, concurrency and thread safety. |
+| V16 Security Logging and Error Handling | Partial | `DEBUG_FLAG_FROM_REQUEST` for stack traces switched on by the caller, `SENSITIVE_LOG` (no dedicated test). Review: A09 in `SOURCE-CODE-REVIEW.md`. | Whether security events are logged and alerted, log integrity and forging, fail-open error paths. Mostly review only. |
+| V17 WebRTC | Not yet | No rule and no review step. | All of it (TURN servers, media encryption, signaling). Out of scope for the stacks this tool targets. |
 
 ## Other CWEs the gate targets
 

@@ -1942,6 +1942,43 @@ def safe_text(s):
     # A file name with a newline could print a fake "RESULT: PASS" line or a CI workflow command.
     return CONTROL.sub("?",str(s))
 
+_REDACT=[]
+def _redactor():
+    """report.redact (the shared secret patterns), loaded by path; a small built-in fallback if it is missing."""
+    if not _REDACT:
+        try:
+            import importlib.util
+            spec=importlib.util.spec_from_file_location("nfsc_report_redact",Path(__file__).resolve().parent/"report.py")
+            mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); _REDACT.append(mod.redact)
+        except Exception:
+            rx=re.compile(r"(?i)((?:password|passwd|secret|token|api[_\-]?key|access[_\-]?key|authorization)[\w\-]{0,20}\s*[:=]\s*)\S+")
+            _REDACT.append(lambda s: rx.sub(r"\1[REDACTED]",str(s)))
+    return _REDACT[0]
+
+def scanner_error_lines(msg,keep=4):
+    """A scanner's stderr (often a Python traceback) as a few readable lines: split on real line breaks before
+    control characters are neutralised (so no '?' run-together text), the home folder shown as ~, secret-looking
+    values redacted, the first two and last lines kept (the last line of a traceback names the error)."""
+    text=str(msg or "")
+    home=str(Path.home())
+    if len(home)>3:
+        for h in {home,home.replace("\\","/")}: text=text.replace(h,"~")
+    try: text=_redactor()(text)
+    except Exception: text="(error text withheld: it could not be redacted)"
+    lines=[safe_text(l.rstrip())[:200] for l in text.splitlines() if l.strip()]
+    if len(lines)>keep: lines=lines[:2]+["..."]+lines[-(keep-2):]
+    return lines or ["(no error text)"]
+
+def scanner_fix_hint(name,msg):
+    """The next step for a required scanner that is on PATH but failed (not for a missing ci config file)."""
+    if str(msg).startswith(("ci ","scanner output unreadable")): return ""
+    cmd="py -I scripts/securecode.py setup"
+    try:
+        eng=_engines()
+        if eng is not None: cmd=eng.setup_command()      # the installed path, so it works from any project (V7F-D)
+    except Exception: pass
+    return f"{name} is installed but failed to run; reinstall it or run: {cmd} --engine {name}"
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("target",nargs="?",default=".")
@@ -1953,7 +1990,7 @@ def main():
     args=ap.parse_args()
     root=Path(".").resolve(); target=args.changed_file or args.target
     findings=local_scan(target)+agent_scan(target)+library_scan(target)+config_scan(target)+malware_scan(target)+code_scan(target)+db_config_scan(target)+default_cred_scan(target)
-    status={}; errors={}; notes=[]; engine_status={}; ran_tests=[]
+    status={}; errors={}; notes=[]; engine_status={}; ran_tests=[]; fixes=[]
     required=["semgrep","trivy","gitleaks"]
     if args.mode in ("full","ci"):
         for t in required: status[t]=bool(find_tool(t))
@@ -1971,7 +2008,9 @@ def main():
             except Exception as e:      # a required scanner that cannot be read is a failed scanner, never a pass
                 ok,msg=False,_unreadable(name,type(e).__name__)
             if not ok:
-                errors[name]=msg; status[name]=False
+                errors[name]=" | ".join(scanner_error_lines(msg)); status[name]=False
+                hint=scanner_fix_hint(name,msg)
+                if hint: fixes.append(hint)
                 if "output unreadable" in msg: notes.append(f"{name}: {msg}")
         # Optional extra scanners: used when installed, never required. A failure is a note, not a block.
         # Psalm loads the project's own autoloader and plugins, so it runs project code: only with --run-tests,
@@ -2021,19 +2060,26 @@ def main():
     print(f"=== ORG AI SECURE APPSEC GATE {GATE_VERSION} ===")
     print(safe_text(f"Mode: {args.mode} Target: {target}"))
     for name,msg in errors.items():
-        print(safe_text(f"ERROR: {name} did not complete: {msg}"))
+        print(safe_text(f"ERROR: {name} did not complete:"))
+        for line in msg.split(" | "):
+            print("    "+safe_text(line))
     for n in notes:
         print(safe_text(f"NOTE: {n}"))
-    if args.mode=="ci" and errors:
-        print("RESULT: BLOCKED (ci) a required scanner failed, so the scan is incomplete. Fix the error above and re-run.")
-        return 3
-    if missing:
+    # A failed scanner no longer hides the rest: the built-in checks and the other scanners' findings still print.
+    ci_failed=args.mode=="ci" and bool(errors)
+    if missing and not ci_failed:
         print("WARNING: PARTIAL SCAN, scanners not available:",", ".join(missing),"(use --mode ci before handover)")
     print("Counts:",counts)
     for f in findings[:100]:
         print(safe_text(f"[{f['severity']}] {f['rule']} {f.get('file','')}:{f.get('line',0)} — {f['message']}"))
     threshold={"critical":"CRITICAL","high":"HIGH","medium":"MEDIUM","low":"LOW","never":None}[args.fail_on]
     blocked=bool(threshold and any(SEV.get(f["severity"],9)<=SEV[threshold] for f in findings))
+    if ci_failed:       # fail closed: a required scanner errored, so the scan is incomplete whatever the counts say
+        for h in fixes:
+            print(safe_text(f"FIX: {h}"))
+        print("RESULT: BLOCKED (ci) a required scanner failed (" + ", ".join(errors) + "), so the scan is incomplete. "
+              "The findings above are from the checks that did run.")
+        return 3
     print("RESULT: BLOCKED" if blocked else ("RESULT: PASS (PARTIAL)" if missing else "RESULT: PASS"))
     return 2 if blocked else 0
 if __name__=="__main__": raise SystemExit(main())

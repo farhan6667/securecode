@@ -736,10 +736,48 @@ def test_gemini_answer_that_cannot_be_written_is_a_deny(monkeypatch):
     assert GEMINI.main() == 2
 
 
+def _gemini_cli_shell():
+    """The shell Gemini CLI (0.50) runs a hook command in: getShellConfiguration() picks pwsh (else powershell.exe) on
+    Windows, bash elsewhere, and on PowerShell it appends '; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'."""
+    if os.name == "nt":
+        exe = shutil.which("pwsh") or shutil.which("powershell")
+        return exe and (lambda c: [exe, "-NoProfile", "-NonInteractive", "-Command",
+                                   c + "; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"])
+    exe = shutil.which("bash")
+    return exe and (lambda c: [exe, "-c", c])
+
+
+def test_gemini_template_command_really_runs_in_the_cli_shell(tmp_path):
+    """V7L-01 (live test, Gemini CLI 0.50.0 on Windows): the template's '"<PYTHON>" -I ...' is a PowerShell parse error,
+    the hook exits 1, and Gemini CLI then RUNS the tool (fail open). Run the filled-in template line exactly the way
+    the CLI does and check a deny really comes back as exit 2."""
+    shell = _gemini_cli_shell()
+    if not shell:
+        pytest.skip("no shell like the one Gemini CLI uses")
+    name = "settings.hooks.windows.json" if os.name == "nt" else "settings.hooks.json"
+    project = tmp_path / "proj"
+    project.mkdir()
+    app = make_runtime(tmp_path, None)
+    env, _ = hook_env(tmp_path, project)
+    tpl = json.loads((ROOT / "templates" / "gemini" / name).read_text(encoding="utf-8"))
+    cmd = tpl["hooks"]["BeforeTool"][0]["hooks"][0]["command"]
+    cmd = cmd.replace("<PYTHON>", Path(sys.executable).as_posix()).replace("<APP>", app.as_posix())
+    g = lambda c: json.dumps({"tool_name": "run_shell_command", "tool_input": {"command": c}, "cwd": str(project)})  # noqa: E731
+    run = lambda raw: subprocess.run(shell(cmd), input=raw, text=True, capture_output=True, env=env, cwd=project,  # noqa: E731
+                                     timeout=60, encoding="utf-8")
+    p = run(g("cat .env"))
+    assert p.returncode == 2, (p.returncode, p.stderr[-500:])
+    assert json.loads(p.stdout)["decision"] == "deny"
+    p = run(g("ls"))
+    assert p.returncode == 0 and json.loads(p.stdout) == {"decision": "allow"}, (p.returncode, p.stderr[-500:])
+
+
 def test_gemini_and_antigravity_templates_point_at_the_adapters():
-    gs = json.loads((ROOT / "templates" / "gemini" / "settings.hooks.json").read_text(encoding="utf-8"))
-    h = gs["hooks"]["BeforeTool"][0]
-    assert h["matcher"] == "*" and "gemini_hook.py" in h["hooks"][0]["command"] and " -I " in h["hooks"][0]["command"]
+    for name in ("settings.hooks.json", "settings.hooks.windows.json"):
+        gs = json.loads((ROOT / "templates" / "gemini" / name).read_text(encoding="utf-8"))
+        h = gs["hooks"]["BeforeTool"][0]
+        assert h["matcher"] == "*" and "gemini_hook.py" in h["hooks"][0]["command"] and " -I " in h["hooks"][0]["command"]
+    assert gs["hooks"]["BeforeTool"][0]["hooks"][0]["command"].startswith("& ")     # V7L-01: PowerShell call operator
     ag = json.loads((ROOT / "templates" / "antigravity" / "hooks.json").read_text(encoding="utf-8"))
     e = next(iter(ag.values()))["PreToolUse"][0]
     assert e["matcher"] == "*" and "antigravity_hook.py" in e["hooks"][0]["command"]

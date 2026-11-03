@@ -99,9 +99,61 @@ def test_no_stale_v6_labels_outside_history():
                 or any(rel.startswith(h) or h in rel for h in history) or "__pycache__" in rel:
             continue
         for n, line in enumerate(p.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-            if re.search(r"\bV6(?:\.2)?\b(?![-.]\w)", line) and "ARCHITECTURE-V6" not in line:
+            # "V6 Authentication" is the ASVS 5.0 chapter name in STANDARDS-COVERAGE.md, not a product label.
+            if re.search(r"\bV6(?:\.2)?\b(?![-.]\w)", line) and "ARCHITECTURE-V6" not in line \
+                    and not (rel == "docs/STANDARDS-COVERAGE.md" and line.startswith("| V6 Authentication |")):
                 bad.append(f"{rel}:{n}: {line.strip()[:100]}")
     assert not bad, bad
+
+
+_GATE_ID = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")
+_SEMGREP_ID = re.compile(r"(?:laravel|spring|java|org)-[a-z0-9-]+\*?")
+
+
+def _known_rule_ids():
+    ids = set(re.findall(r'"([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"', text("scripts/secgate.py")))
+    for p in sorted((ROOT / "semgrep").glob("*.yml")):
+        ids |= set(re.findall(r"(?m)^\s*-\s*id:\s*([\w.-]+)\s*$", p.read_text(encoding="utf-8")))
+    return ids
+
+
+def test_every_rule_id_in_standards_coverage_exists():
+    """V7GAP-7: a rule id cited in STANDARDS-COVERAGE.md (any table, ASVS included) must be a real gate or
+    Semgrep rule, so the coverage page cannot claim a rule that was renamed or never written."""
+    known = _known_rule_ids()
+    cited = [c for c in re.findall(r"`([^`\n]+)`", text("docs/STANDARDS-COVERAGE.md"))
+             if _GATE_ID.fullmatch(c) or _SEMGREP_ID.fullmatch(c)]
+    assert len(cited) > 50, cited
+    missing = []
+    for c in cited:
+        if c.endswith("*"):
+            if not any(k.startswith(c[:-1]) for k in known):
+                missing.append(c)
+        elif c not in known:
+            missing.append(c)
+    assert not missing, missing
+
+
+def test_rule_id_check_rejects_a_made_up_id():
+    known = _known_rule_ids()
+    assert "SQL_CONCAT" in known and "laravel-idor-route-model-binding" in known
+    assert "SQL_CONCAT_X" not in known and "laravel-idor-made-up" not in known
+
+
+def test_standards_coverage_maps_asvs5_chapters_without_claiming_compliance():
+    t = text("docs/STANDARDS-COVERAGE.md")
+    sec = t.split("## OWASP ASVS 5.0", 1)[1].split("\n## ", 1)[0]
+    rows = re.findall(r"(?m)^\| (V\d+) ", sec)
+    assert rows == [f"V{i}" for i in range(1, 18)], rows
+    assert "not a certification" in sec
+    assert not re.search(r"(?i)\|\s*Caught\s*\|", sec)
+    assert "ASVS 5.0" in text("README.md") and "ASVS 5.0" in text("docs/SOURCE-CODE-REVIEW.md")
+
+
+def test_readme_laravel_lab_sentence_matches_results():
+    readme = text("README.md")
+    assert "found 17" not in readme and "The one it misses" not in readme
+    assert "18 of 18" in readme and "18 of 18" in text("benchmark/RESULTS.md")
 
 
 def test_install_docs_have_no_em_or_en_dashes():

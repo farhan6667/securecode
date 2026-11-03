@@ -47,7 +47,7 @@ py -I install-global.py --agent cursor --agent codex --agent gemini --agent anti
 |---|---|---|
 | `cursor` | `~/.cursor/hooks.json` | `cursor_hook.py` on `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile`, with `"failClosed": true` |
 | `codex` | `~/.codex/hooks.json` (`$CODEX_HOME/hooks.json` when set) | `codex_hook.py` on `PreToolUse` and the stop gate on `Stop` |
-| `gemini` | `~/.gemini/settings.json` | `gemini_hook.py` as a `BeforeTool` hook on every tool |
+| `gemini` | `~/.gemini/settings.json` | `gemini_hook.py` as a `BeforeTool` hook on every tool (on Windows the PowerShell form with a leading `&`) |
 | `antigravity` | `~/.gemini/config/hooks.json` | the `org-ai-agent-guard` block running `antigravity_hook.py` on `PreToolUse` |
 
 It fills in the Python that runs the installer and the runtime folder (forward slashes), backs up an existing
@@ -79,7 +79,10 @@ is in the block at the end of this section.
   Docs: https://geminicli.com/docs/cli/gemini-md/ and https://geminicli.com/docs/reference/memport/
 - **Antigravity**: copy `AGENTS.md` to `~/.gemini/AGENTS.md`; Antigravity reads it (and project
   `AGENTS.md`, `GEMINI.md`, `.agents/rules/*.md`) without a setting. Docs: https://antigravity.google/docs/rules/
-- Guard hooks for Gemini CLI: `install-global.py --agent gemini` (merges into `~/.gemini/settings.json`). It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every
+- Guard hooks for Gemini CLI: `install-global.py --agent gemini` (merges into `~/.gemini/settings.json`). On
+  Windows it writes `templates/gemini/settings.hooks.windows.json`, because Gemini CLI runs hooks in PowerShell
+  there and the line needs a leading `&` (finding V7L-01). A hook line that fails before Python starts lets the
+  tool run, so test one blocked action after installing. It runs `scripts/adapters/gemini_hook.py` as a `BeforeTool` hook on every
   tool (https://geminicli.com/docs/hooks/reference/). Gemini CLI lets a tool run when a hook exits with any code
   other than 0 or 2 or prints text that is not JSON, so the adapter only exits 0 (allow) or 2 (deny) and denies
   on every error. There is no "ask" decision, so an ask becomes a deny with the reason.

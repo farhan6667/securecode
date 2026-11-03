@@ -13,7 +13,7 @@ Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity (rules, gate a
 full hooks in Claude Code, guard adapters for the other four). Free and open source (MIT), for anyone who builds web apps,
 APIs or Android apps with AI.
 
-<p align="center"><img src="docs/img/securecode-overview.webp" width="100%" alt="NexaForge SecureCode overview: a robot coding on a laptop between two panels. Left, what it does: AI coding agent integration (Claude Code, Cursor, Codex, Gemini), multiple languages and frameworks, secure coding rules, continuous updates. Right, security coverage: OWASP Top 10, CWE Top 25, OWASP API Top 10, IDOR and access control, injection, XSS, secrets and supply chain, legacy backdoors and webshells. Below, the workflow from AI coding to security check, auto fix and validation, and the supported languages: PHP, Laravel, Java, Spring, JavaScript, TypeScript, Node.js, Python, C#, .NET and Go"></p>
+<p align="center"><img src="docs/img/securecode-overview.webp" width="100%" alt="NexaForge SecureCode overview: a robot coding on a laptop between two panels. Left, what it does: AI coding agent integration (the image names Claude Code, Cursor, Codex and Gemini; Gemini CLI and Antigravity are supported too), multiple languages and frameworks, secure coding rules, continuous updates. Right, security coverage: OWASP Top 10, CWE Top 25, OWASP API Top 10, IDOR and access control, injection, XSS, secrets and supply chain, legacy backdoors and webshells. Below, the workflow from AI coding to security check, auto fix and validation, and the supported languages: PHP, Laravel, Java, Spring, JavaScript, TypeScript, Node.js, Python, C#, .NET and Go"></p>
 
 <p align="center">
   <a href="#whats-new-in-70">What's new</a> ·
@@ -244,6 +244,7 @@ You can also use `/security-gate` and `/advisory-qa`, or just ask in your own wo
   [benchmark/RESULTS.md](benchmark/RESULTS.md).
 - An honest map to OWASP Top 10:2025, CWE Top 25 (2025) and the OWASP API Top 10 2023, marking each item
   caught, partial, review only or not yet: [docs/STANDARDS-COVERAGE.md](docs/STANDARDS-COVERAGE.md).
+  The OWASP ASVS 5.0 chapters (V1 to V17) are mapped there too, as guidance for reviewers, not a compliance claim.
 - The repo scans itself with its own gate on every push.
 
 ## How a review works
@@ -254,9 +255,10 @@ You can also use `/security-gate` and `/advisory-qa`, or just ask in your own wo
 3. It runs the gate, fixes what it safely can, and runs the gate again.
 4. It reports a verdict, a findings table, the fixes and a short script you can run to check them yourself.
 
-Proof on a small lab: on our own Laravel lab with 18 planted issues the full gate found 17
-([benchmark/RESULTS.md](benchmark/RESULTS.md)). We wrote that lab ourselves, so it shows the checks work as
-designed, not how much a real pentest will find. The one it misses is listed there on purpose.
+Proof on a small lab: on our own Laravel lab with 18 planted issues the full gate found 18 of 18 and
+reported none of the 4 clean files ([benchmark/RESULTS.md](benchmark/RESULTS.md)). We wrote that lab
+ourselves, so it shows the checks work as designed, not how much a real pentest will find. The other three
+labs and every miss are listed there too.
 
 ## Check a project without the AI
 
@@ -265,6 +267,8 @@ py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fai
 ```
 
 `RESULT: PASS` means no High or Critical finding. Reports go to `.security/findings.json` and `.security/findings.sarif`.
+`RESULT: BLOCKED` exits with 2 when a finding is at or above `--fail-on`, and with 3 in `ci` mode when a required
+scanner (Semgrep, Trivy, Gitleaks) is missing or failed to run; a pass exits with 0.
 
 ## Scanners it sets up for you
 
