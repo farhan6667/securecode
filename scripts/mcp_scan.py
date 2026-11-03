@@ -159,23 +159,43 @@ def read_configs(project: Path, home: Path | None = None, include_user: bool = T
                         same = False
                     if same:
                         groups.append(_servers_from(pdata, "mcpServers"))
-        for g in groups:
-            for name, raw in g.items():
-                s = _norm(name, raw, client, fp)
-                if s:
-                    s["line"] = _line_of(fp, name)
-                    servers.append(s)
+        pairs = [(name, raw) for g in groups for name, raw in g.items()]
+        line_idx = _line_index(fp, [p[0] for p in pairs]) if pairs else {}
+        for name, raw in pairs:
+            s = _norm(name, raw, client, fp)
+            if s:
+                s["line"] = line_idx.get(name, 0)
+                servers.append(s)
     return servers, findings
 
 
-def _line_of(fp: Path, name: str) -> int:
+_LINE_TOKEN = re.compile(r"\"([^\"\n]{1,250})\"|'([^'\n]{1,250})'|mcp_servers\.([A-Za-z0-9_.-]{1,250})")
+
+
+def _line_index(fp: Path, names) -> dict:
+    """First line each server name appears on, in a single O(file) pass. Re-reading the file once per server
+    was O(servers * file size): a hostile project config with many servers made the gate's MCP scan quadratic."""
+    want = set(names)
+    idx: dict = {}
+    if not want:
+        return idx
     try:
-        for n, line in enumerate(fp.read_text(encoding="utf-8-sig", errors="replace").splitlines(), 1):
-            if f'"{name}"' in line or f"mcp_servers.{name}" in line or f"'{name}'" in line:
-                return n
+        text = fp.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
-        pass
-    return 0
+        return idx
+    for n, line in enumerate(text.splitlines(), 1):
+        if not want:
+            break
+        for m in _LINE_TOKEN.finditer(line):
+            tok = m.group(1) or m.group(2) or m.group(3)
+            if tok in want:
+                idx[tok] = n
+                want.discard(tok)
+    return idx
+
+
+def _line_of(fp: Path, name: str) -> int:
+    return _line_index(fp, [name]).get(name, 0)
 
 
 # ------------------------------------------------------------------------------------------------ launch checks

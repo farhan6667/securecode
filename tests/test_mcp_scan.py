@@ -387,3 +387,25 @@ def test_lock_through_a_link_is_refused(tmp_path):
         M.load_lock(link)
     with pytest.raises(RuntimeError):
         M.save_lock(link, {"version": 1, "servers": {}})
+
+
+# --- V7P pentest round (Fable) ---
+
+def test_v7p_line_index_is_single_pass_not_quadratic(tmp_path):
+    """V7P-03: _line_of re-read and re-split the whole config for every server, so a hostile project
+    config with many servers made the gate's MCP scan O(servers x file size). secgate full/ci runs this
+    on the scanned (untrusted) repo's configs. One shared single-pass index keeps it linear."""
+    n = 20000
+    write(tmp_path / ".mcp.json", json.dumps({"mcpServers": {f"srv{i}": {"command": "node"} for i in range(n)}}))
+    t0 = time.monotonic()
+    servers, _ = M.read_configs(tmp_path, home=None, include_user=False)
+    assert len(servers) == n
+    assert time.monotonic() - t0 < 3.0, "MCP config scan is quadratic in the server count"
+
+
+def test_v7p_line_numbers_still_resolve(tmp_path):
+    cfg = '{\n  "mcpServers": {\n    "alpha": {"command": "node"},\n    "beta": {"command": "npx"}\n  }\n}\n'
+    write(tmp_path / ".mcp.json", cfg)
+    servers, _ = M.read_configs(tmp_path, home=None, include_user=False)
+    byname = {s["name"]: s["line"] for s in servers}
+    assert byname["alpha"] == 3 and byname["beta"] == 4, byname

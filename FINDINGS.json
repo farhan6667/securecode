@@ -840,6 +840,14 @@
       "what": "The PostToolUse secret shield missed common framework secret variables whose key holds a secret word followed by more name characters (the canonical high-entropy app secret). The secret-assignment regex required the secret word to sit immediately before the separator, so a trailing name segment broke the match and the value leaked through the redactor unmasked. Fixed by allowing bounded trailing name segments after the secret word; a 2 MB flood stays ~0.5 s (no ReDoS).",
       "check": "pytest tests/test_secret_shield.py -k v7p (test_v7p_secret_word_before_more_key_chars_is_redacted, test_v7p_secret_word_key_redos_budget)",
       "status": "fixed"
+    },
+    {
+      "id": "V7P-03",
+      "severity": "medium",
+      "where": "scripts/mcp_scan.py read_configs / _line_of",
+      "what": "Algorithmic DoS: the MCP config scan called _line_of per server, and _line_of re-read and re-split the whole config file each time, so N servers in an N-line file was O(N^2). secgate full and ci run this scan on the scanned (untrusted) repo's project configs, so a hostile .mcp.json near the 5 MB cap could make the gate spend minutes (20000 servers measured at 12.6 s before the fix, 46 ms after). Replaced with one shared single-pass line index built per file.",
+      "check": "pytest tests/test_mcp_scan.py -k v7p (test_v7p_line_index_is_single_pass_not_quadratic asserts <3 s for 20000 servers; test_v7p_line_numbers_still_resolve checks line numbers are still correct)",
+      "status": "fixed"
     }
   ]
 }
