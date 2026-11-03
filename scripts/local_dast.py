@@ -221,18 +221,39 @@ def docker_cmd(docker: str, workdir: Path, target_ip, scan_url: str) -> tuple[li
             "zap.sh", "-cmd", "-autorun", "/zap/wrk/plan.yaml"], url
 
 
-def find_zap() -> tuple[str, str] | None:
+def _zap_dirs() -> list[Path]:
+    """Folders that may hold a ZAP install: next to a zap.sh/zap.bat on PATH, the tools folder that
+    `securecode setup` (or the owner) unpacked the cross-platform zip into, and the standard install places."""
+    dirs: list[Path] = []
+    for name in ("zap.bat", "zap.sh"):
+        p = find_tool(name)
+        if p:
+            dirs.append(Path(p).parent)
+    tools = os.environ.get("NEXAFORGE_TOOLS_DIR") or (
+        str(Path(os.environ["LOCALAPPDATA"]) / "NexaForgeTools") if os.environ.get("LOCALAPPDATA")
+        else str(Path.home() / ".local/share/nexaforge-tools"))
+    zroot = Path(tools) / "zap"
+    if zroot.is_dir():
+        dirs += sorted((d for d in zroot.glob("ZAP_*") if d.is_dir() and not d.is_symlink()), reverse=True)
+    dirs += [Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "ZAP/Zed Attack Proxy",
+             Path("/Applications/ZAP.app/Contents/Java"), Path("/opt/zaproxy"), Path("/usr/share/zaproxy")]
+    return dirs
+
+
+def find_zap() -> tuple[str, object] | None:
+    """Returns ("docker", path) or ("local", argv prefix). A local ZAP is run as `java -jar zap-X.jar`
+    with an absolute java from PATH: no .bat (cmd.exe parsing) and no zap.sh on Windows, where a shell
+    script cannot be started (that crashed the first real run)."""
     docker = find_tool("docker")
     if docker:
         return "docker", docker
-    for name in ("zap.sh", "zap.bat", "zap"):
-        p = find_tool(name)
-        if p:
-            return "local", p
-    for c in (Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "ZAP/Zed Attack Proxy/zap.bat",
-              Path("/Applications/ZAP.app/Contents/Java/zap.sh"), Path("/opt/zaproxy/zap.sh"), Path("/usr/share/zaproxy/zap.sh")):
-        if c.is_file():
-            return "local", str(c)
+    java = find_tool("java")
+    for d in _zap_dirs():
+        jars = sorted(p for p in d.glob("zap-*.jar") if p.is_file()) if d.is_dir() else []
+        if jars and java:
+            return "local", [java, "-Xmx1g", "-jar", str(jars[-1])]
+        if os.name != "nt" and (d / "zap.sh").is_file():
+            return "local", [str(d / "zap.sh")]
     return None
 
 
@@ -360,8 +381,9 @@ def main(argv=None, resolver=default_resolver, runner=subprocess.run, popen=subp
     else:
         scan_url = auth["url"]; report_dir = str(work)
         api_ref = str(api) if isinstance(api, Path) else api
-        cmd = [exe, "-cmd", "-autorun", str(work / "plan.yaml")]
-        tool = f"local ZAP ({Path(exe).name})"
+        prefix = list(exe) if isinstance(exe, (list, tuple)) else [exe]
+        cmd = [*prefix, "-cmd", "-autorun", str(work / "plan.yaml")]
+        tool = f"local ZAP ({Path(prefix[-1]).name})"
     plan = zap_plan(scan_url, report_dir, api_ref, a.api_format, a.active, minutes)
     (work / "plan.yaml").write_text(json.dumps(plan, indent=2), encoding="utf-8")
     base["tool"] = tool
@@ -398,6 +420,10 @@ def main(argv=None, resolver=default_resolver, runner=subprocess.run, popen=subp
             rc = 124
             if kind == "docker":     # killing the docker client does not stop the container
                 runner([exe, "rm", "-f", cmd[cmd.index("--name") + 1]], capture_output=True, timeout=60, check=False)
+        except OSError as e:          # ZAP could not be started at all: a clear note, never a traceback
+            print(f"ZAP could not be started: {clean(str(e), 300)}")
+            write_result(out, {**base, "status": "failed", "note": "ZAP could not be started: " + clean(str(e), 300)})
+            return 5
         findings = read_zap_report(report_json)
         status = "ran" if report_json.is_file() else "failed"
         note = "" if status == "ran" else f"ZAP exited {rc} without a report; see the output above"

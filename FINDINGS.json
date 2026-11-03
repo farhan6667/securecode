@@ -1,89 +1,685 @@
 {
   "about": "Findings in NexaForge SecureCode itself. A finding is closed only while its check passes on the shipped code; if the check fails again it is regressed.",
   "findings": [
-    {"id": "R3-01", "severity": "high", "where": "scripts/secgate.py run, find_tool", "what": "A scanner binary planted in the scanned repo ran on Windows and could fake a clean scan", "check": "tests/test_review3_regressions.py::test_a_scanner_planted_in_the_repo_never_runs", "status": "fixed"},
-    {"id": "R3-02", "severity": "high", "where": "scripts/agent_guard.py git handling", "what": "git could write into the agent's own settings (redirect, --work-tree)", "check": "tests/test_review3_regressions.py::test_review3_bypasses_are_denied", "status": "fixed"},
-    {"id": "R3-03", "severity": "medium", "where": "scripts/agent_guard.py", "what": "Force-push, public repo, path normalisation, UNC, escaped secret names, Monitor tool and MCP path keys bypasses", "check": "tests/test_review3_regressions.py::test_review3_bypasses_are_denied", "status": "fixed"},
-    {"id": "R3-04", "severity": "low", "where": "scripts/agent_guard.py check", "what": "Non-object tool input failed open", "check": "tests/test_review3_regressions.py::test_non_object_tool_input_fails_closed", "status": "fixed"},
-    {"id": "R3-05", "severity": "low", "where": "scripts/secgate.py output and walks", "what": "Console output injection, null scanner JSON crash, symlinked files followed", "check": "tests/test_review3_regressions.py", "status": "fixed"},
-    {"id": "R3-06", "severity": "medium", "where": "scripts/global_hook.py", "what": "Per-edit hook scanned the whole working folder when the file was outside it and timed out", "check": "tests/test_review3_regressions.py::test_edit_hook_scans_only_the_changed_file", "status": "fixed"},
-    {"id": "R3-07", "severity": "low", "where": "scripts/updater.py download", "what": "Storage redirect hop followed further redirects, including to http", "check": "tests/test_review3_regressions.py::test_updater_storage_hop_never_follows_a_second_redirect", "status": "fixed"},
-    {"id": "R3-08", "severity": "high", "where": "scripts/release/make_release.py", "what": "Release zip took every file in the folder, including local drafts", "check": "tests/test_review3_regressions.py::test_release_zip_takes_only_committed_files", "status": "fixed"},
-    {"id": "R4-01", "severity": "high", "where": "scripts/agent_guard.py", "what": "Writes into the agent's config folder through programs outside the write-verb list (curl -o, tar, mkdir, npm --prefix, .NET file APIs) and redirect forms", "check": "tests/test_review4_regressions.py::test_review4_bypasses_are_denied", "status": "fixed"},
-    {"id": "R4-02", "severity": "high", "where": "scripts/agent_guard.py git_rule", "what": "git clone/init/diff --output/archive, GIT_DIR env, -C home into the config folder; option abbreviations and aliases for force push and hard reset", "check": "tests/test_review4_regressions.py::test_review4_bypasses_are_denied", "status": "fixed"},
-    {"id": "R4-03", "severity": "medium", "where": "scripts/agent_guard.py paths", "what": "Trailing dot, AppData/../.., spaces in user name, \\\\?\\UNC, cd tracking, links and subst", "check": "tests/test_review4_regressions.py", "status": "fixed"},
-    {"id": "R4-04", "severity": "medium", "where": "scripts/secgate.py walks", "what": "Directory junctions were followed", "check": "tests/test_review4_regressions.py::test_secgate_does_not_walk_into_linked_folders", "status": "fixed"},
-    {"id": "R4-05", "severity": "low", "where": "scripts/agent_guard.py collapse", "what": "Quadratic path collapsing on long input", "check": "tests/test_review4_regressions.py::test_long_paths_stay_fast", "status": "fixed"},
-    {"id": "P1-01", "severity": "high", "where": "scripts/secgate.py collect_semgrep", "what": "Semgrep injection rules rated WARNING never blocked at --fail-on high", "check": "tests/test_phase1.py::test_semgrep_warning_injection_rules_block_at_high", "status": "fixed"},
-    {"id": "P1-02", "severity": "medium", "where": "scripts/secgate.py config_scan", "what": "Headers check passed if any file mentioned a header name", "check": "tests/test_phase1.py (headers tests)", "status": "fixed"},
-    {"id": "P1-03", "severity": "medium", "where": "scripts/updater.py verify_signature", "what": "A signer file saved with a byte order mark made every update fail", "check": "tests/test_review4_regressions.py::test_signer_file_saved_with_a_bom_still_verifies", "status": "fixed"},
-    {"id": "P1-04", "severity": "low", "where": "scripts/stop_gate.py", "what": "No changed files were found in a repo with no commits; git resolved from the project folder", "check": "tests/test_phase1.py::test_stop_gate_checks_a_repo_with_no_commits", "status": "fixed"},
-    {"id": "R5-01", "severity": "medium", "where": "ENTERPRISE_DEPLOYMENT.md, tests/test_brand_overlay.py", "what": "An organization's internal product name left in public files", "check": "tests/test_review5_regressions.py::test_no_organization_names_in_tracked_text", "status": "fixed"},
-    {"id": "R5-02", "severity": "medium", "where": "scripts/secgate.py collect_psalm", "what": "Psalm (which loads project code) ran without --run-tests", "check": "tests/test_review5_regressions.py::test_psalm_runs_only_with_run_tests", "status": "fixed"},
-    {"id": "R5-03", "severity": "medium", "where": "scripts/package_age.py", "what": "Backtracking regex on packagist names (ReDoS)", "check": "tests/test_phase2.py::test_package_age_name_check_is_fast", "status": "fixed"},
-    {"id": "R5-04", "severity": "medium", "where": "scripts/secgate.py is_test_path, cookie check", "what": "Test-path downgrade and cookie skip depended on folders above the project", "check": "tests/test_review5_regressions.py::test_test_paths_are_judged_inside_the_project", "status": "fixed"},
-    {"id": "R5-05", "severity": "low", "where": "scripts/secgate.py optional scanners", "what": "A malformed Retire.js or Psalm report crashed the gate", "check": "tests/test_review5_regressions.py::test_malformed_optional_reports_are_notes_not_crashes", "status": "fixed"},
-    {"id": "R5-06", "severity": "low", "where": "scripts/run-nuclei-authorized.py", "what": "Metadata host with a trailing dot, 169.254.x.x.nip.io, instance-data and api-prod hosts accepted", "check": "tests/test_phase2.py::test_nuclei_wrapper_refuses_without_permission_and_bad_targets", "status": "fixed"},
-    {"id": "R5-07", "severity": "low", "where": "scripts/release/make_release.py", "what": "Uncommitted edits could ship and an empty index signed an empty zip", "check": "tests/test_review3_regressions.py::test_release_zip_takes_only_committed_files", "status": "fixed"},
-    {"id": "R5-08", "severity": "low", "where": "install-global.py retire_old_task", "what": "Recorded task name passed to schtasks unvalidated; task XML decoded as UTF-8 only", "check": "tests/test_review5_regressions.py (task tests)", "status": "fixed"},
-    {"id": "R5-09", "severity": "low", "where": "update.json readers", "what": "A Notepad BOM in update.json broke install and update", "check": "utf-8-sig in install-global.py, updater.py, make_release.py", "status": "fixed"},
-    {"id": "N6-01", "severity": "high", "where": "scripts/agent_guard.py USER_HOME, READ_ONLY, deglob, home_or_parent", "what": "Writes into the agent's config folder or the runtime through macOS /Users, root-relative \\Users, ~user, $env:SystemDrive, Documents and Settings, %USERPROFILE:~0%, wildcards (.cl*, OrgAIS*), tree copies or extraction into the home folder, and readers that run code or write (ForEach-Object, Where-Object, sort -o, uniq, method calls)", "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied", "status": "fixed"},
-    {"id": "N6-02", "severity": "high", "where": "scripts/agent_guard.py is_secret_path", "what": "Secret reads through wildcards (~/.ssh/id*, ~/.aws/cred*, ~/.git-cred*, *env) and unknown names (.envrc, gcloud application_default_credentials.json)", "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied", "status": "fixed"},
-    {"id": "N6-03", "severity": "high", "where": "scripts/secgate.py collect_semgrep, collect_gitleaks, collect_trivy", "what": "In ci mode the scanned repo could silence scanners (.gitleaks.toml allowlist, .gitleaksignore, # nosemgrep, .semgrepignore, .trivyignore, trivy.yaml). ci mode now uses package-owned settings; a repo .gitleaksignore (which gitleaks 8.x always reads) is itself a HIGH finding", "check": "tests/test_review6_regressions.py::test_ci_mode_scanner_argv_ignores_repo_suppressions and ::test_ci_mode_real_scanners_still_block_a_hostile_repo", "status": "fixed"},
-    {"id": "N6-04", "severity": "medium", "where": "scripts/agent_guard.py git_rule", "what": "Force, delete or mirror push through -c remote.x.push=+ref, git config remote.x.push/mirror, git remote add --mirror, GIT_CONFIG_KEY_n env and git send-pack --force", "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied", "status": "fixed"},
-    {"id": "N6-05", "severity": "medium", "where": "scripts/agent_guard.py pipe_runs_code, check_statement", "what": "Download piped into perl, py, $SHELL, exec sh, b\\ash, xargs bash, timeout zsh; perl -e \"$(curl)\", backticks; [scriptblock]::Create((irm URL))", "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied", "status": "fixed"},
-    {"id": "N6-06", "severity": "medium", "where": "scripts/agent_guard.py gh_rule", "what": "gh gist create --public/-p, GraphQL visibility with spaces, gh api --input to repo, gist or GraphQL endpoints", "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied", "status": "fixed"},
-    {"id": "N6-07", "severity": "medium", "where": "scripts/agent_guard.py STARTUP_NAMES, startup_file", "what": "Startup-file persistence through cp, sed -i, Copy-Item $PROFILE and the zsh, fish and other login files the list did not name", "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied", "status": "fixed"},
-    {"id": "N6-08", "severity": "medium", "where": "scripts/agent_guard.py check, canon_path", "what": "MCP arguments named url or href (browser_navigate file:///.../.env) were not checked; file: URLs are now percent-decoded", "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied", "status": "fixed"},
-    {"id": "OPEN-01", "severity": "medium", "where": "semgrep/laravel-authz.yml", "what": "IDOR through route model binding is not found by the static rules (benchmark L18); the skill's authz matrix and cross-user tests are the control", "check": "py -I benchmark/run_lab.py --mode full (L18)", "status": "open"},
-    {"id": "V7E-01", "severity": "medium", "where": "scripts/engines (tools folder)", "what": "Scanners installed by securecode setup live in a user-writable folder the agent guard does not protect yet; a program or prompt-injected agent writing there could swap a scanner for a fake", "check": "tests/test_guard_positive_model.py::test_scanner_tools_folder_writes_are_denied_reads_allowed and ::test_nexaforge_tools_dir_override_is_protected (closed by V7G-05 in the guard merge)", "status": "fixed"},
-    {"id": "V7E-02", "severity": "low", "where": "scripts/engines/_install.py install_pip, install_npm", "what": "Only the engine's own wheel or npm package is hash-checked; their dependencies are resolved by pip or npm and are not pinned by hash", "check": "tests/test_v7_engines.py::test_pip_route_refuses_a_wheel_with_the_wrong_hash (top-level only)", "status": "open"},
-    {"id": "V7E-03", "severity": "low", "where": "scripts/secgate.py RULES XSS_RAW_TEMPLATE", "what": "The pattern holds a literal backspace character where \\b was meant, so its v-html branch never matches (VUE_RAW_HTML still reports v-html). Found during the 7.0 engines work; not changed there to avoid duplicate findings", "check": "tests/test_v7_integration_fixes.py::test_rule_patterns_hold_no_control_characters and ::test_v_html_is_reported_once", "status": "fixed"},
-    {"id": "V7R-01", "severity": "high", "where": "scripts/secgate.py code_scan _ASSIGN", "what": "Assignment regex was quadratic per line (a$a$a$...): 42 s on an 800 KB file", "check": "tests/test_v7_rules.py::test_hostile_files_stay_fast_and_capped", "status": "fixed"},
-    {"id": "V7R-02", "severity": "high", "where": "scripts/secgate.py code_scan controller loop", "what": "Line numbers counted from offset 0 per method: 69 s on a 2.9 MB controller, and no cap on findings", "check": "tests/test_v7_rules.py::test_hostile_files_stay_fast_and_capped", "status": "fixed"},
-    {"id": "V7R-03", "severity": "high", "where": "scripts/secgate.py route group stack", "what": "Throttle/auth group stack rescanned per route: 62 s on a 2 MB routes file", "check": "tests/test_v7_rules.py::test_hostile_files_stay_fast_and_capped", "status": "fixed"},
-    {"id": "V7R-04", "severity": "medium", "where": "scripts/secgate.py BACKDOOR_REQUEST_EXEC (PHP)", "what": "CRITICAL on template words (required, System, include) next to $_GET; argument lists reported as CRITICAL", "check": "tests/test_v7_rules.py::test_template_words_are_not_backdoors", "status": "fixed"},
-    {"id": "V7R-05", "severity": "medium", "where": "scripts/secgate.py malware_scan uploads and images", "what": "Uploads/ and Images/ with capitals and <?= in images were missed", "check": "tests/test_v7_rules.py::test_upload_folder_casing_and_short_echo_tag", "status": "fixed"},
-    {"id": "V7R-06", "severity": "medium", "where": "scripts/secgate.py _redact and finding code", "what": "IDENTIFIED BY / PASSWORD '...' values, quoted passwords with spaces, salts and base64 blobs were echoed in findings", "check": "tests/test_v7_rules.py::test_redaction_of_sql_passwords_salts_and_blobs", "status": "fixed"},
-    {"id": "V7R-07", "severity": "medium", "where": "scripts/secgate.py code_scan app/ walk", "what": "A junction or symlink named app/ was followed outside the project and could lower a severity", "check": "tests/test_v7_rules.py::test_linked_app_folder_is_not_walked", "status": "fixed"},
-    {"id": "V7R-08", "severity": "medium", "where": "semgrep/java-spring.yml", "what": "permitAll on /env and /console missed; FEATURE_SECURE_PROCESSING treated as XXE fix; principal null check treated as owner check; FPs on @jakarta.validation.Valid, RestTemplate.execute, SHA-256 of reset tokens, shuffleMappings", "check": "tests/test_java_spring.py::test_findings_match_markers_exactly", "status": "fixed"},
-    {"id": "V7R-09", "severity": "low", "where": "scripts/secgate.py db_config_scan", "what": "LOAD DATA LOCAL reported as DB_GRANT_ALL; now DB_LOCAL_INFILE", "check": "tests/test_v7_rules.py::test_local_infile_has_its_own_rule", "status": "fixed"},
-    {"id": "V7R-10", "severity": "medium", "where": "scripts/secgate.py default_cred_scan", "what": "Unquoted code expressions (X_SECRET = re.compile(...)) read as short secrets; found by the self-scan", "check": "tests/test_v7_rules.py::test_default_secret_keys", "status": "fixed"},
-    {"id": "V7I-01", "severity": "medium", "where": "scripts/secgate.py valid_expiry, apply_suppressions", "what": "Suppression expiry was compared as a string and Python 3.11+ fromisoformat accepts 20260115 and 2026-W01, so such entries never expired. Only YYYY-MM-DD is accepted now; anything else counts as expired with a NOTE naming the entry", "check": "tests/test_v7_integration_fixes.py::test_non_iso_expiry_is_expired_and_named", "status": "fixed"},
-    {"id": "V7I-02", "severity": "medium", "where": "scripts/secgate.py collect_semgrep, collect_trivy, collect_gitleaks, collect_retire, collect_psalm, main", "what": "Malformed scanner JSON (wrong types, deep nesting, huge numbers) crashed the gate with AttributeError or RecursionError. It is now a NOTE 'scanner output unreadable' and the required scanner counts as failed (ci mode blocks)", "check": "tests/test_v7_integration_fixes.py::test_malformed_semgrep_is_unreadable_not_a_crash, ::test_malformed_trivy_is_unreadable_not_a_crash, ::test_malformed_gitleaks_is_unreadable_not_a_crash, ::test_unreadable_required_scanner_blocks_ci_and_is_a_note", "status": "fixed"},
-    {"id": "V7I-03", "severity": "low", "where": "scripts/release/make_release.py, tests/test_v7_pentest.py, tests/fixtures/zap-report.json", "what": "Literal BOM, bidi and zero-width characters in tracked source; replaced with escapes and guarded by a repo-wide test", "check": "tests/test_v7_integration_fixes.py::test_tracked_source_files_hold_no_hidden_characters", "status": "fixed"},
-    {"id": "V7I-04", "severity": "high", "where": "scripts/run-nuclei-authorized.py check_url, scripts/run-zap-authorized.py", "what": "nuclei accepted [fd00:ec2:0::254], [::ffff:100.100.100.200], metadata.goog and decimal, octal and hex IPv4 forms of metadata and private addresses; the ZAP wrapper had no host checks and ran bare 'docker'. Both now use scripts/dast_target.py (browser-style parsing, resolve once, metadata and link-local always refused, private and loopback only when named in SECURITY_DAST_PRIVATE_HOSTS) and docker comes from an absolute PATH lookup", "check": "tests/test_v7_integration_fixes.py::test_nuclei_refuses_metadata_private_and_odd_ip_forms, ::test_zap_wrapper_checks_the_target_and_pins_it", "status": "fixed"},
-    {"id": "V7I-05", "severity": "low", "where": "scripts/secgate.py local_scan SQL_CONCAT", "what": "False positive on setParameter(\"n\", \"%\" + note + \"%\"), a bound parameter; concatenation inside binding-call arguments is no longer SQL_CONCAT. Spring lab clean files reported: 0 of 1", "check": "tests/test_v7_integration_fixes.py::test_concat_inside_bound_parameters_is_not_sql_concat and tests/test_benchmark_lab.py::test_spring_lab_quick_floor", "status": "fixed"},
-    {"id": "V7I-06", "severity": "low", "where": "scripts/run-nuclei-authorized.py", "what": "nuclei resolves the staging host again itself, so a DNS answer that changes between the check and the scan can still move a nuclei scan (ZAP is pinned with --add-host). The URL is set by a person", "check": "documented in SECURITY-CONTEXT.md (staging scans)", "status": "open"},
-    {"id": "V7G-01", "severity": "medium", "where": "scripts/agent_guard.py show_command", "what": "Found in self-review before commit: the owner-mode approval text showed only the collapse() form, which reads ./x/../../y as y, so the person could approve a different path than the one that runs. The literal command is now shown first, with the collapsed form added only when it differs", "check": "tests/test_v7_guard.py::test_ask_text_is_the_literal_collapsed_command_with_hidden_characters_spelled_out", "status": "fixed"},
-    {"id": "V7G-02", "severity": "high", "where": "scripts/agent_guard.py check_statement, git_rule", "what": "Design hazard for owner mode, fixed before it shipped: a class result (destructive, exposure) returning early would skip the later deny checks, so a force push redirected into ~/.claude or a hard reset inside ~/.claude would only ask. Every deny rule now runs on the statement and the protected-write check in git_rule comes before the class checks", "check": "tests/test_v7_guard.py::test_deny_classes_never_become_ask_in_owner_mode", "status": "fixed"},
-    {"id": "V7G-03", "severity": "low", "where": "scripts/agent_guard.py publish_rule, install_rule", "what": "Found in self-review: publish and install were judged only at the pipeline head, so sh -c 'npm publish', timeout 60 npm publish or cmd /c npm publish were not classed", "check": "tests/test_v7_guard.py::test_publish_through_wrappers_is_still_exposure", "status": "fixed"},
-    {"id": "R2-H1", "severity": "high", "where": "scripts/agent_guard.py path resolution", "what": "Relative paths reached ~/.claude from a project under home (../../.claude, cd ~/Documents && cp x ../.claude, git -C ../.., tar -C ../.., gci ..\\.. -Recurse | Remove-Item, links and junctions to ..\\..): the tracked folder was unused and follow_cd dropped it", "check": "tests/test_guard_positive_model.py::test_round2_bypasses (H1 block) and ::test_a_link_inside_the_project_is_judged_where_it_points", "status": "fixed"},
-    {"id": "R2-H2", "severity": "high", "where": "scripts/agent_guard.py shell normalizer", "what": "Shell syntax was not modelled: brace expansion, [^x] classes, backslash-newline inside words, $'\\x2e' quoting, process substitution, escaped option letters (find -ex\\ec, sort -\\o, sort --out), functions and aliases shadowing readers, writing a script and running it in the same command", "check": "tests/test_guard_positive_model.py::test_round2_bypasses (H2 block) and tests/test_fuzz_guard.py", "status": "fixed"},
-    {"id": "R2-H3", "severity": "high", "where": "scripts/agent_guard.py python_startup", "what": "Python startup persistence: .pth in the interpreter prefix or site dirs and sitecustomize packages were allowed through Bash and Write", "check": "tests/test_guard_positive_model.py::test_round2_bypasses (H3) and ::test_round2_file_and_mcp_tools", "status": "fixed"},
-    {"id": "R2-H4", "severity": "high", "where": "scripts/agent_guard.py regexes", "what": "Quadratic regex on long runs of slashes (20k slashes took 18 to 24 s, near the 20 s hook timeout)", "check": "tests/test_guard_positive_model.py::test_20k_pathological_commands_finish_fast, ::test_200k_inputs_finish_under_a_second, ::test_internal_deadline_answers_unknown", "status": "fixed"},
-    {"id": "R2-M1", "severity": "medium", "where": "scripts/agent_guard.py secret_hit", "what": "Secret reads through ~/.ssh/i*, ~/.ssh/./*, ~/.s?h/*, ~/.aws/c*, brace and [^x] forms, whole-folder reads (grep -r . ~/.ssh, tar -c ~/.ssh | base64, gci ~/.ssh | gc) and line continuation inside .env", "check": "tests/test_guard_positive_model.py::test_round2_bypasses (M1 block) and tests/test_fuzz_guard.py::test_secret_reads_are_never_allowed", "status": "fixed"},
-    {"id": "R2-M2", "severity": "medium", "where": "scripts/agent_guard.py expand_text, GuardEnv", "what": "Home spellings $env:TEMP\\..\\..\\.., $env:APPDATA\\X\\..\\..\\.., $env:HOMEPATH, $PWD\\..\\.., [Environment]::GetFolderPath were not resolved; CLAUDE_CONFIG_DIR was not protected", "check": "tests/test_guard_positive_model.py::test_round2_bypasses (M2 block) and ::test_claude_config_dir_is_protected", "status": "fixed"},
-    {"id": "R2-M3", "severity": "medium", "where": "install-global.py, install-managed.py, enterprise-managed-settings.example.json, check_tool_paths", "what": "Tools skipped the guard: the hook matcher was an allowlist (Artifact and other tools never reached it) and MCP write detection keyed on tool-name verbs (browser_take_screenshot filename, save_file, keys to and content_path)", "check": "tests/test_guard_positive_model.py::test_guard_hook_matcher_is_every_tool_in_all_installers and ::test_round2_file_and_mcp_tools", "status": "fixed"},
-    {"id": "R2-M4", "severity": "medium", "where": "scripts/agent_guard.py pipelines", "what": "Download-and-run shapes: | python3.12, | nodejs, | awk system, c\\url ... | sh, httpie http, base64 -d | sh, powershell /enc and en-dash -enc", "check": "tests/test_guard_positive_model.py::test_round2_bypasses (M4 block)", "status": "fixed"},
-    {"id": "R2-M5", "severity": "medium", "where": "scripts/stop_gate.py, scripts/secgate.py run, scripts/safe_git.py", "what": "The stop gate (and scanners that run git) honoured the repo's .git/config, so core.fsmonitor, hooks, filter and textconv drivers could run code; .git/config writes were allowed", "check": "tests/test_safe_git.py and tests/test_guard_positive_model.py::test_round2_bypasses (M5 block)", "status": "fixed"},
-    {"id": "R2-L1", "severity": "low", "where": "scripts/stop_gate.py", "what": "The stop gate skipped non-ASCII and quoted file names (git core.quotePath)", "check": "tests/test_safe_git.py::test_stop_gate_sees_non_ascii_and_quoted_names", "status": "fixed"},
-    {"id": "V7G-04", "severity": "medium", "where": "scripts/agent_guard.py (6.2.2 home_or_parent)", "what": "False positives seen live: a quoted grep pattern with \\| split the command and the lone backslash read as the root; a python heredoc naming ~/Downloads/x.pdf was denied as the home folder itself", "check": "tests/test_guard_positive_model.py::test_plain_read_only_sed_grep_head_never_prompt and ::test_file_below_home_is_outside_the_project_not_a_home_write", "status": "fixed"},
-    {"id": "V7G-05", "severity": "medium", "where": "scripts/agent_guard.py protected targets", "what": "The 7.0 scanner tools folder (%LOCALAPPDATA%\\NexaForgeTools, ~/.local/share/nexaforge-tools, NEXAFORGE_TOOLS_DIR) could be written by the agent, which could swap a scanner for one that always passes", "check": "tests/test_guard_positive_model.py::test_scanner_tools_folder_writes_are_denied_reads_allowed and ::test_nexaforge_tools_dir_override_is_protected", "status": "fixed"},
-    {"id": "OPEN-02", "severity": "medium", "where": "scripts/adapters/cursor_hook.py", "what": "Cursor has no permission hook before file edits, so file writes by the Cursor agent (including to its own hooks.json) are not checked by the guard; preToolUse takes only allow or deny and its Write input is not documented well enough to rely on", "check": "docs/AI-AGENT-SECURITY.md (What runs where)", "status": "open"},
-    {"id": "OPEN-03", "severity": "low", "where": "scripts/agent_guard.py rule classes", "what": "Only shell commands are classed: an MCP tool that publishes a package or creates a public repo, gh repo sync --force, and wrappers with their own arguments (sudo -u x npm publish) are not recognized as exposure or destructive", "check": "SECURITY-CONTEXT.md (Owner mode vs managed mode, known gaps)", "status": "open"},
-    {"id": "OPEN-04", "severity": "medium", "where": "scripts/agent_guard.py (accepted scope)", "what": "Code execution inside allowed commands is out of scope: a project script or test the agent wrote in an earlier tool call can itself write outside the project (python build.py, npm test). The guard only sees command text. Use Claude Code's native sandbox where available.", "check": "SECURITY-CONTEXT.md (positive model, what is out of scope)", "status": "open"},
-    {"id": "OPEN-05", "severity": "low", "where": "scripts/safe_git.py", "what": "diff.external and per-driver diff commands from the repo's config cannot be switched off through the environment (an empty value makes git fail); the stop gate passes --no-ext-diff and git log only uses them with --ext-diff, but a scanner that ran plain git diff would honour them", "check": "tests/test_safe_git.py (no scanner in the gate runs git diff today)", "status": "open"},
-    {"id": "V7U-01", "severity": "medium", "where": "install-global.py register_updates", "what": "The daily task was created with schtasks /TR, which has a 261-character limit: a long Python or app path (a venv under a deep folder) made the installer skip the update task with only a 'skipped' line, and test_brand_overlay failed for that reason on a longer venv path. The task is now created from an XML definition (XML-escaped paths, no /TR limit) by the System32 schtasks.exe", "check": "tests/test_brand_overlay.py::test_legacy_task_is_removed_only_when_it_runs_our_updater and tests/test_update_mechanism.py::test_task_xml_escapes_hostile_paths_and_names", "status": "fixed"},
-    {"id": "V7U-02", "severity": "medium", "where": "install-global.py register_updates (schedule)", "what": "A machine that was off or asleep at 11:00 skipped that day's update check (schtasks /SC DAILY without catch-up; cron on Linux and macOS). Windows now has StartWhenAvailable, a logon trigger, a network condition, a one-hour limit and restart on failure; --update-timer installs a Persistent systemd user timer or a RunAtLoad launchd agent", "check": "tests/test_update_mechanism.py::test_task_xml_catches_up_retries_and_needs_a_network, ::test_linux_timer_is_persistent_and_enabled, ::test_macos_launch_agent_runs_at_load_and_daily", "status": "fixed"},
-    {"id": "V7U-03", "severity": "low", "where": "scripts/updater.py check_and_update, main", "what": "A GitHub rate limit (403 or 429) was reported as a failure and retried on every run; a download cut short was only caught as 'signature invalid'. Rate limits are now a logged back-off with a bounded retry time, and a size different from the release listing or Content-Length is 'download-incomplete'", "check": "tests/test_update_mechanism.py::test_rate_limit_backs_off_logs_and_exits_cleanly, ::test_429_retry_after_and_absurd_reset_times_are_bounded, ::test_incomplete_downloads_are_refused_before_the_signature_check, ::test_download_compares_content_length", "status": "fixed"},
-    {"id": "OPEN-06", "severity": "low", "where": "Task Scheduler RestartOnFailure, systemd timer", "what": "Task Scheduler restarts a task only when it fails to start, not when updater.py exits with an error, and the systemd service has no Restart= (Type=oneshot with Restart= fails to load on systemd before 244). After a network error the next try is the logon trigger, the next boot or the next day, not 30 minutes later", "check": "ENTERPRISE_DEPLOYMENT.md (Auto-update table)", "status": "open"},
-    {"id": "V7G-06", "severity": "high", "where": "scripts/safe_git.py safe_git_env", "what": "Found in the independent review of the 7.0 merge: only the first 200 filter, diff and merge driver keys were neutralised, so a repo with 200 dummy drivers and one real one ran its program through the stop gate and the scanners; a config git could not list was read as empty. Too many drivers or an unreadable config now refuses to run git at all", "check": "tests/test_safe_git.py::test_more_drivers_than_the_cap_means_git_never_runs and ::test_a_broken_config_is_refused_not_read_as_empty", "status": "fixed"},
-    {"id": "V7G-07", "severity": "high", "where": "scripts/safe_git.py FIXED", "what": "Found in the independent review: log.showSignature with gpg.ssh.program (or the x509 and openpgp verifiers) in the repo's config ran a repo program on git log -p, which gitleaks runs. These keys are now switched off", "check": "tests/test_safe_git.py::test_signature_verifiers_from_repo_config_never_run", "status": "fixed"},
-    {"id": "V7U-04", "severity": "medium", "where": "install-global.py register_unix_schedule (launchd)", "what": "Found in the independent review: an update started by the launchd agent runs the new installer, whose launchctl bootout of the same job would kill the update half way. A loaded agent is now left alone", "check": "tests/test_update_mechanism.py::test_macos_update_never_boots_out_the_running_agent (code path only; not run on a real Mac)", "status": "fixed"},
-    {"id": "V7U-05", "severity": "medium", "where": "scripts/secgate.py run (project tests)", "what": "Found in the independent review: the project's own test commands got the safe git environment (no local clones, empty hooks path), which could show up as false TEST_FAILURE findings. They run the project's code anyway and now keep the normal environment", "check": "tests/test_safe_git.py::test_project_test_commands_keep_the_normal_git_environment", "status": "fixed"},
-    {"id": "V7U-06", "severity": "low", "where": "install-global.py _systemd_quote", "what": "Found in the independent review: $ in a path was expanded by systemd in ExecStart; it is now written as $$", "check": "tests/test_update_mechanism.py::test_linux_timer_is_persistent_and_enabled", "status": "fixed"},
-    {"id": "OPEN-07", "severity": "low", "where": "scripts/secgate.py scanner_env", "what": "Driver keys are listed from the engine's working folder, not the scanned project; for an engine whose working folder is its output folder (CodeQL, only with --run-tests) the project's drivers are not listed", "check": "code reading in the 7.0 review", "status": "open"},
-    {"id": "OPEN-08", "severity": "low", "where": "scripts/install-ci-scanners.sh, scripts/install-ci-scanners.ps1", "what": "Semgrep is installed in CI by exact version, not with --require-hashes, and its dependencies are resolved by pip; trivy and gitleaks are SHA-256 checked", "check": "tests/test_ci_skip_check.py::test_linux_and_windows_ci_installers_pin_the_same_versions_and_hashes_as_the_lock (versions only)", "status": "open"}
+    {
+      "id": "R3-01",
+      "severity": "high",
+      "where": "scripts/secgate.py run, find_tool",
+      "what": "A scanner binary planted in the scanned repo ran on Windows and could fake a clean scan",
+      "check": "tests/test_review3_regressions.py::test_a_scanner_planted_in_the_repo_never_runs",
+      "status": "fixed"
+    },
+    {
+      "id": "R3-02",
+      "severity": "high",
+      "where": "scripts/agent_guard.py git handling",
+      "what": "git could write into the agent's own settings (redirect, --work-tree)",
+      "check": "tests/test_review3_regressions.py::test_review3_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "R3-03",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py",
+      "what": "Force-push, public repo, path normalisation, UNC, escaped secret names, Monitor tool and MCP path keys bypasses",
+      "check": "tests/test_review3_regressions.py::test_review3_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "R3-04",
+      "severity": "low",
+      "where": "scripts/agent_guard.py check",
+      "what": "Non-object tool input failed open",
+      "check": "tests/test_review3_regressions.py::test_non_object_tool_input_fails_closed",
+      "status": "fixed"
+    },
+    {
+      "id": "R3-05",
+      "severity": "low",
+      "where": "scripts/secgate.py output and walks",
+      "what": "Console output injection, null scanner JSON crash, symlinked files followed",
+      "check": "tests/test_review3_regressions.py",
+      "status": "fixed"
+    },
+    {
+      "id": "R3-06",
+      "severity": "medium",
+      "where": "scripts/global_hook.py",
+      "what": "Per-edit hook scanned the whole working folder when the file was outside it and timed out",
+      "check": "tests/test_review3_regressions.py::test_edit_hook_scans_only_the_changed_file",
+      "status": "fixed"
+    },
+    {
+      "id": "R3-07",
+      "severity": "low",
+      "where": "scripts/updater.py download",
+      "what": "Storage redirect hop followed further redirects, including to http",
+      "check": "tests/test_review3_regressions.py::test_updater_storage_hop_never_follows_a_second_redirect",
+      "status": "fixed"
+    },
+    {
+      "id": "R3-08",
+      "severity": "high",
+      "where": "scripts/release/make_release.py",
+      "what": "Release zip took every file in the folder, including local drafts",
+      "check": "tests/test_review3_regressions.py::test_release_zip_takes_only_committed_files",
+      "status": "fixed"
+    },
+    {
+      "id": "R4-01",
+      "severity": "high",
+      "where": "scripts/agent_guard.py",
+      "what": "Writes into the agent's config folder through programs outside the write-verb list (curl -o, tar, mkdir, npm --prefix, .NET file APIs) and redirect forms",
+      "check": "tests/test_review4_regressions.py::test_review4_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "R4-02",
+      "severity": "high",
+      "where": "scripts/agent_guard.py git_rule",
+      "what": "git clone/init/diff --output/archive, GIT_DIR env, -C home into the config folder; option abbreviations and aliases for force push and hard reset",
+      "check": "tests/test_review4_regressions.py::test_review4_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "R4-03",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py paths",
+      "what": "Trailing dot, AppData/../.., spaces in user name, \\\\?\\UNC, cd tracking, links and subst",
+      "check": "tests/test_review4_regressions.py",
+      "status": "fixed"
+    },
+    {
+      "id": "R4-04",
+      "severity": "medium",
+      "where": "scripts/secgate.py walks",
+      "what": "Directory junctions were followed",
+      "check": "tests/test_review4_regressions.py::test_secgate_does_not_walk_into_linked_folders",
+      "status": "fixed"
+    },
+    {
+      "id": "R4-05",
+      "severity": "low",
+      "where": "scripts/agent_guard.py collapse",
+      "what": "Quadratic path collapsing on long input",
+      "check": "tests/test_review4_regressions.py::test_long_paths_stay_fast",
+      "status": "fixed"
+    },
+    {
+      "id": "P1-01",
+      "severity": "high",
+      "where": "scripts/secgate.py collect_semgrep",
+      "what": "Semgrep injection rules rated WARNING never blocked at --fail-on high",
+      "check": "tests/test_phase1.py::test_semgrep_warning_injection_rules_block_at_high",
+      "status": "fixed"
+    },
+    {
+      "id": "P1-02",
+      "severity": "medium",
+      "where": "scripts/secgate.py config_scan",
+      "what": "Headers check passed if any file mentioned a header name",
+      "check": "tests/test_phase1.py (headers tests)",
+      "status": "fixed"
+    },
+    {
+      "id": "P1-03",
+      "severity": "medium",
+      "where": "scripts/updater.py verify_signature",
+      "what": "A signer file saved with a byte order mark made every update fail",
+      "check": "tests/test_review4_regressions.py::test_signer_file_saved_with_a_bom_still_verifies",
+      "status": "fixed"
+    },
+    {
+      "id": "P1-04",
+      "severity": "low",
+      "where": "scripts/stop_gate.py",
+      "what": "No changed files were found in a repo with no commits; git resolved from the project folder",
+      "check": "tests/test_phase1.py::test_stop_gate_checks_a_repo_with_no_commits",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-01",
+      "severity": "medium",
+      "where": "ENTERPRISE_DEPLOYMENT.md, tests/test_brand_overlay.py",
+      "what": "An organization's internal product name left in public files",
+      "check": "tests/test_review5_regressions.py::test_no_organization_names_in_tracked_text",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-02",
+      "severity": "medium",
+      "where": "scripts/secgate.py collect_psalm",
+      "what": "Psalm (which loads project code) ran without --run-tests",
+      "check": "tests/test_review5_regressions.py::test_psalm_runs_only_with_run_tests",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-03",
+      "severity": "medium",
+      "where": "scripts/package_age.py",
+      "what": "Backtracking regex on packagist names (ReDoS)",
+      "check": "tests/test_phase2.py::test_package_age_name_check_is_fast",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-04",
+      "severity": "medium",
+      "where": "scripts/secgate.py is_test_path, cookie check",
+      "what": "Test-path downgrade and cookie skip depended on folders above the project",
+      "check": "tests/test_review5_regressions.py::test_test_paths_are_judged_inside_the_project",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-05",
+      "severity": "low",
+      "where": "scripts/secgate.py optional scanners",
+      "what": "A malformed Retire.js or Psalm report crashed the gate",
+      "check": "tests/test_review5_regressions.py::test_malformed_optional_reports_are_notes_not_crashes",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-06",
+      "severity": "low",
+      "where": "scripts/run-nuclei-authorized.py",
+      "what": "Metadata host with a trailing dot, 169.254.x.x.nip.io, instance-data and api-prod hosts accepted",
+      "check": "tests/test_phase2.py::test_nuclei_wrapper_refuses_without_permission_and_bad_targets",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-07",
+      "severity": "low",
+      "where": "scripts/release/make_release.py",
+      "what": "Uncommitted edits could ship and an empty index signed an empty zip",
+      "check": "tests/test_review3_regressions.py::test_release_zip_takes_only_committed_files",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-08",
+      "severity": "low",
+      "where": "install-global.py retire_old_task",
+      "what": "Recorded task name passed to schtasks unvalidated; task XML decoded as UTF-8 only",
+      "check": "tests/test_review5_regressions.py (task tests)",
+      "status": "fixed"
+    },
+    {
+      "id": "R5-09",
+      "severity": "low",
+      "where": "update.json readers",
+      "what": "A Notepad BOM in update.json broke install and update",
+      "check": "utf-8-sig in install-global.py, updater.py, make_release.py",
+      "status": "fixed"
+    },
+    {
+      "id": "N6-01",
+      "severity": "high",
+      "where": "scripts/agent_guard.py USER_HOME, READ_ONLY, deglob, home_or_parent",
+      "what": "Writes into the agent's config folder or the runtime through macOS /Users, root-relative \\Users, ~user, $env:SystemDrive, Documents and Settings, %USERPROFILE:~0%, wildcards (.cl*, OrgAIS*), tree copies or extraction into the home folder, and readers that run code or write (ForEach-Object, Where-Object, sort -o, uniq, method calls)",
+      "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "N6-02",
+      "severity": "high",
+      "where": "scripts/agent_guard.py is_secret_path",
+      "what": "Secret reads through wildcards (~/.ssh/id*, ~/.aws/cred*, ~/.git-cred*, *env) and unknown names (.envrc, gcloud application_default_credentials.json)",
+      "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "N6-03",
+      "severity": "high",
+      "where": "scripts/secgate.py collect_semgrep, collect_gitleaks, collect_trivy",
+      "what": "In ci mode the scanned repo could silence scanners (.gitleaks.toml allowlist, .gitleaksignore, # nosemgrep, .semgrepignore, .trivyignore, trivy.yaml). ci mode now uses package-owned settings; a repo .gitleaksignore (which gitleaks 8.x always reads) is itself a HIGH finding",
+      "check": "tests/test_review6_regressions.py::test_ci_mode_scanner_argv_ignores_repo_suppressions and ::test_ci_mode_real_scanners_still_block_a_hostile_repo",
+      "status": "fixed"
+    },
+    {
+      "id": "N6-04",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py git_rule",
+      "what": "Force, delete or mirror push through -c remote.x.push=+ref, git config remote.x.push/mirror, git remote add --mirror, GIT_CONFIG_KEY_n env and git send-pack --force",
+      "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "N6-05",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py pipe_runs_code, check_statement",
+      "what": "Download piped into perl, py, $SHELL, exec sh, b\\ash, xargs bash, timeout zsh; perl -e \"$(curl)\", backticks; [scriptblock]::Create((irm URL))",
+      "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "N6-06",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py gh_rule",
+      "what": "gh gist create --public/-p, GraphQL visibility with spaces, gh api --input to repo, gist or GraphQL endpoints",
+      "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "N6-07",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py STARTUP_NAMES, startup_file",
+      "what": "Startup-file persistence through cp, sed -i, Copy-Item $PROFILE and the zsh, fish and other login files the list did not name",
+      "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "N6-08",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py check, canon_path",
+      "what": "MCP arguments named url or href (browser_navigate file:///.../.env) were not checked; file: URLs are now percent-decoded",
+      "check": "tests/test_review6_regressions.py::test_review6_bypasses_are_denied",
+      "status": "fixed"
+    },
+    {
+      "id": "OPEN-01",
+      "severity": "medium",
+      "where": "semgrep/laravel-authz.yml",
+      "what": "IDOR through route model binding is not found by the static rules (benchmark L18); the skill's authz matrix and cross-user tests are the control",
+      "check": "py -I benchmark/run_lab.py --mode full (L18)",
+      "status": "open"
+    },
+    {
+      "id": "V7E-01",
+      "severity": "medium",
+      "where": "scripts/engines (tools folder)",
+      "what": "Scanners installed by securecode setup live in a user-writable folder the agent guard does not protect yet; a program or prompt-injected agent writing there could swap a scanner for a fake",
+      "check": "tests/test_guard_positive_model.py::test_scanner_tools_folder_writes_are_denied_reads_allowed and ::test_nexaforge_tools_dir_override_is_protected (closed by V7G-05 in the guard merge)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7E-02",
+      "severity": "low",
+      "where": "scripts/engines/_install.py install_pip, install_npm",
+      "what": "Only the engine's own wheel or npm package is hash-checked; their dependencies are resolved by pip or npm and are not pinned by hash",
+      "check": "tests/test_v7_engines.py::test_pip_route_refuses_a_wheel_with_the_wrong_hash (top-level only)",
+      "status": "open"
+    },
+    {
+      "id": "V7E-03",
+      "severity": "low",
+      "where": "scripts/secgate.py RULES XSS_RAW_TEMPLATE",
+      "what": "The pattern holds a literal backspace character where \\b was meant, so its v-html branch never matches (VUE_RAW_HTML still reports v-html). Found during the 7.0 engines work; not changed there to avoid duplicate findings",
+      "check": "tests/test_v7_integration_fixes.py::test_rule_patterns_hold_no_control_characters and ::test_v_html_is_reported_once",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-01",
+      "severity": "high",
+      "where": "scripts/secgate.py code_scan _ASSIGN",
+      "what": "Assignment regex was quadratic per line (a$a$a$...): 42 s on an 800 KB file",
+      "check": "tests/test_v7_rules.py::test_hostile_files_stay_fast_and_capped",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-02",
+      "severity": "high",
+      "where": "scripts/secgate.py code_scan controller loop",
+      "what": "Line numbers counted from offset 0 per method: 69 s on a 2.9 MB controller, and no cap on findings",
+      "check": "tests/test_v7_rules.py::test_hostile_files_stay_fast_and_capped",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-03",
+      "severity": "high",
+      "where": "scripts/secgate.py route group stack",
+      "what": "Throttle/auth group stack rescanned per route: 62 s on a 2 MB routes file",
+      "check": "tests/test_v7_rules.py::test_hostile_files_stay_fast_and_capped",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-04",
+      "severity": "medium",
+      "where": "scripts/secgate.py BACKDOOR_REQUEST_EXEC (PHP)",
+      "what": "CRITICAL on template words (required, System, include) next to $_GET; argument lists reported as CRITICAL",
+      "check": "tests/test_v7_rules.py::test_template_words_are_not_backdoors",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-05",
+      "severity": "medium",
+      "where": "scripts/secgate.py malware_scan uploads and images",
+      "what": "Uploads/ and Images/ with capitals and <?= in images were missed",
+      "check": "tests/test_v7_rules.py::test_upload_folder_casing_and_short_echo_tag",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-06",
+      "severity": "medium",
+      "where": "scripts/secgate.py _redact and finding code",
+      "what": "IDENTIFIED BY / PASSWORD '...' values, quoted passwords with spaces, salts and base64 blobs were echoed in findings",
+      "check": "tests/test_v7_rules.py::test_redaction_of_sql_passwords_salts_and_blobs",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-07",
+      "severity": "medium",
+      "where": "scripts/secgate.py code_scan app/ walk",
+      "what": "A junction or symlink named app/ was followed outside the project and could lower a severity",
+      "check": "tests/test_v7_rules.py::test_linked_app_folder_is_not_walked",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-08",
+      "severity": "medium",
+      "where": "semgrep/java-spring.yml",
+      "what": "permitAll on /env and /console missed; FEATURE_SECURE_PROCESSING treated as XXE fix; principal null check treated as owner check; FPs on @jakarta.validation.Valid, RestTemplate.execute, SHA-256 of reset tokens, shuffleMappings",
+      "check": "tests/test_java_spring.py::test_findings_match_markers_exactly",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-09",
+      "severity": "low",
+      "where": "scripts/secgate.py db_config_scan",
+      "what": "LOAD DATA LOCAL reported as DB_GRANT_ALL; now DB_LOCAL_INFILE",
+      "check": "tests/test_v7_rules.py::test_local_infile_has_its_own_rule",
+      "status": "fixed"
+    },
+    {
+      "id": "V7R-10",
+      "severity": "medium",
+      "where": "scripts/secgate.py default_cred_scan",
+      "what": "Unquoted code expressions (X_SECRET = re.compile(...)) read as short secrets; found by the self-scan",
+      "check": "tests/test_v7_rules.py::test_default_secret_keys",
+      "status": "fixed"
+    },
+    {
+      "id": "V7I-01",
+      "severity": "medium",
+      "where": "scripts/secgate.py valid_expiry, apply_suppressions",
+      "what": "Suppression expiry was compared as a string and Python 3.11+ fromisoformat accepts 20260115 and 2026-W01, so such entries never expired. Only YYYY-MM-DD is accepted now; anything else counts as expired with a NOTE naming the entry",
+      "check": "tests/test_v7_integration_fixes.py::test_non_iso_expiry_is_expired_and_named",
+      "status": "fixed"
+    },
+    {
+      "id": "V7I-02",
+      "severity": "medium",
+      "where": "scripts/secgate.py collect_semgrep, collect_trivy, collect_gitleaks, collect_retire, collect_psalm, main",
+      "what": "Malformed scanner JSON (wrong types, deep nesting, huge numbers) crashed the gate with AttributeError or RecursionError. It is now a NOTE 'scanner output unreadable' and the required scanner counts as failed (ci mode blocks)",
+      "check": "tests/test_v7_integration_fixes.py::test_malformed_semgrep_is_unreadable_not_a_crash, ::test_malformed_trivy_is_unreadable_not_a_crash, ::test_malformed_gitleaks_is_unreadable_not_a_crash, ::test_unreadable_required_scanner_blocks_ci_and_is_a_note",
+      "status": "fixed"
+    },
+    {
+      "id": "V7I-03",
+      "severity": "low",
+      "where": "scripts/release/make_release.py, tests/test_v7_pentest.py, tests/fixtures/zap-report.json",
+      "what": "Literal BOM, bidi and zero-width characters in tracked source; replaced with escapes and guarded by a repo-wide test",
+      "check": "tests/test_v7_integration_fixes.py::test_tracked_source_files_hold_no_hidden_characters",
+      "status": "fixed"
+    },
+    {
+      "id": "V7I-04",
+      "severity": "high",
+      "where": "scripts/run-nuclei-authorized.py check_url, scripts/run-zap-authorized.py",
+      "what": "nuclei accepted [fd00:ec2:0::254], [::ffff:100.100.100.200], metadata.goog and decimal, octal and hex IPv4 forms of metadata and private addresses; the ZAP wrapper had no host checks and ran bare 'docker'. Both now use scripts/dast_target.py (browser-style parsing, resolve once, metadata and link-local always refused, private and loopback only when named in SECURITY_DAST_PRIVATE_HOSTS) and docker comes from an absolute PATH lookup",
+      "check": "tests/test_v7_integration_fixes.py::test_nuclei_refuses_metadata_private_and_odd_ip_forms, ::test_zap_wrapper_checks_the_target_and_pins_it",
+      "status": "fixed"
+    },
+    {
+      "id": "V7I-05",
+      "severity": "low",
+      "where": "scripts/secgate.py local_scan SQL_CONCAT",
+      "what": "False positive on setParameter(\"n\", \"%\" + note + \"%\"), a bound parameter; concatenation inside binding-call arguments is no longer SQL_CONCAT. Spring lab clean files reported: 0 of 1",
+      "check": "tests/test_v7_integration_fixes.py::test_concat_inside_bound_parameters_is_not_sql_concat and tests/test_benchmark_lab.py::test_spring_lab_quick_floor",
+      "status": "fixed"
+    },
+    {
+      "id": "V7I-06",
+      "severity": "low",
+      "where": "scripts/run-nuclei-authorized.py",
+      "what": "nuclei resolves the staging host again itself, so a DNS answer that changes between the check and the scan can still move a nuclei scan (ZAP is pinned with --add-host). The URL is set by a person",
+      "check": "documented in SECURITY-CONTEXT.md (staging scans)",
+      "status": "open"
+    },
+    {
+      "id": "V7G-01",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py show_command",
+      "what": "Found in self-review before commit: the owner-mode approval text showed only the collapse() form, which reads ./x/../../y as y, so the person could approve a different path than the one that runs. The literal command is now shown first, with the collapsed form added only when it differs",
+      "check": "tests/test_v7_guard.py::test_ask_text_is_the_literal_collapsed_command_with_hidden_characters_spelled_out",
+      "status": "fixed"
+    },
+    {
+      "id": "V7G-02",
+      "severity": "high",
+      "where": "scripts/agent_guard.py check_statement, git_rule",
+      "what": "Design hazard for owner mode, fixed before it shipped: a class result (destructive, exposure) returning early would skip the later deny checks, so a force push redirected into ~/.claude or a hard reset inside ~/.claude would only ask. Every deny rule now runs on the statement and the protected-write check in git_rule comes before the class checks",
+      "check": "tests/test_v7_guard.py::test_deny_classes_never_become_ask_in_owner_mode",
+      "status": "fixed"
+    },
+    {
+      "id": "V7G-03",
+      "severity": "low",
+      "where": "scripts/agent_guard.py publish_rule, install_rule",
+      "what": "Found in self-review: publish and install were judged only at the pipeline head, so sh -c 'npm publish', timeout 60 npm publish or cmd /c npm publish were not classed",
+      "check": "tests/test_v7_guard.py::test_publish_through_wrappers_is_still_exposure",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-H1",
+      "severity": "high",
+      "where": "scripts/agent_guard.py path resolution",
+      "what": "Relative paths reached ~/.claude from a project under home (../../.claude, cd ~/Documents && cp x ../.claude, git -C ../.., tar -C ../.., gci ..\\.. -Recurse | Remove-Item, links and junctions to ..\\..): the tracked folder was unused and follow_cd dropped it",
+      "check": "tests/test_guard_positive_model.py::test_round2_bypasses (H1 block) and ::test_a_link_inside_the_project_is_judged_where_it_points",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-H2",
+      "severity": "high",
+      "where": "scripts/agent_guard.py shell normalizer",
+      "what": "Shell syntax was not modelled: brace expansion, [^x] classes, backslash-newline inside words, $'\\x2e' quoting, process substitution, escaped option letters (find -ex\\ec, sort -\\o, sort --out), functions and aliases shadowing readers, writing a script and running it in the same command",
+      "check": "tests/test_guard_positive_model.py::test_round2_bypasses (H2 block) and tests/test_fuzz_guard.py",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-H3",
+      "severity": "high",
+      "where": "scripts/agent_guard.py python_startup",
+      "what": "Python startup persistence: .pth in the interpreter prefix or site dirs and sitecustomize packages were allowed through Bash and Write",
+      "check": "tests/test_guard_positive_model.py::test_round2_bypasses (H3) and ::test_round2_file_and_mcp_tools",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-H4",
+      "severity": "high",
+      "where": "scripts/agent_guard.py regexes",
+      "what": "Quadratic regex on long runs of slashes (20k slashes took 18 to 24 s, near the 20 s hook timeout)",
+      "check": "tests/test_guard_positive_model.py::test_20k_pathological_commands_finish_fast, ::test_200k_inputs_finish_under_a_second, ::test_internal_deadline_answers_unknown",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-M1",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py secret_hit",
+      "what": "Secret reads through ~/.ssh/i*, ~/.ssh/./*, ~/.s?h/*, ~/.aws/c*, brace and [^x] forms, whole-folder reads (grep -r . ~/.ssh, tar -c ~/.ssh | base64, gci ~/.ssh | gc) and line continuation inside .env",
+      "check": "tests/test_guard_positive_model.py::test_round2_bypasses (M1 block) and tests/test_fuzz_guard.py::test_secret_reads_are_never_allowed",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-M2",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py expand_text, GuardEnv",
+      "what": "Home spellings $env:TEMP\\..\\..\\.., $env:APPDATA\\X\\..\\..\\.., $env:HOMEPATH, $PWD\\..\\.., [Environment]::GetFolderPath were not resolved; CLAUDE_CONFIG_DIR was not protected",
+      "check": "tests/test_guard_positive_model.py::test_round2_bypasses (M2 block) and ::test_claude_config_dir_is_protected",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-M3",
+      "severity": "medium",
+      "where": "install-global.py, install-managed.py, enterprise-managed-settings.example.json, check_tool_paths",
+      "what": "Tools skipped the guard: the hook matcher was an allowlist (Artifact and other tools never reached it) and MCP write detection keyed on tool-name verbs (browser_take_screenshot filename, save_file, keys to and content_path)",
+      "check": "tests/test_guard_positive_model.py::test_guard_hook_matcher_is_every_tool_in_all_installers and ::test_round2_file_and_mcp_tools",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-M4",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py pipelines",
+      "what": "Download-and-run shapes: | python3.12, | nodejs, | awk system, c\\url ... | sh, httpie http, base64 -d | sh, powershell /enc and en-dash -enc",
+      "check": "tests/test_guard_positive_model.py::test_round2_bypasses (M4 block)",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-M5",
+      "severity": "medium",
+      "where": "scripts/stop_gate.py, scripts/secgate.py run, scripts/safe_git.py",
+      "what": "The stop gate (and scanners that run git) honoured the repo's .git/config, so core.fsmonitor, hooks, filter and textconv drivers could run code; .git/config writes were allowed",
+      "check": "tests/test_safe_git.py and tests/test_guard_positive_model.py::test_round2_bypasses (M5 block)",
+      "status": "fixed"
+    },
+    {
+      "id": "R2-L1",
+      "severity": "low",
+      "where": "scripts/stop_gate.py",
+      "what": "The stop gate skipped non-ASCII and quoted file names (git core.quotePath)",
+      "check": "tests/test_safe_git.py::test_stop_gate_sees_non_ascii_and_quoted_names",
+      "status": "fixed"
+    },
+    {
+      "id": "V7G-04",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py (6.2.2 home_or_parent)",
+      "what": "False positives seen live: a quoted grep pattern with \\| split the command and the lone backslash read as the root; a python heredoc naming ~/Downloads/x.pdf was denied as the home folder itself",
+      "check": "tests/test_guard_positive_model.py::test_plain_read_only_sed_grep_head_never_prompt and ::test_file_below_home_is_outside_the_project_not_a_home_write",
+      "status": "fixed"
+    },
+    {
+      "id": "V7G-05",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py protected targets",
+      "what": "The 7.0 scanner tools folder (%LOCALAPPDATA%\\NexaForgeTools, ~/.local/share/nexaforge-tools, NEXAFORGE_TOOLS_DIR) could be written by the agent, which could swap a scanner for one that always passes",
+      "check": "tests/test_guard_positive_model.py::test_scanner_tools_folder_writes_are_denied_reads_allowed and ::test_nexaforge_tools_dir_override_is_protected",
+      "status": "fixed"
+    },
+    {
+      "id": "OPEN-02",
+      "severity": "medium",
+      "where": "scripts/adapters/cursor_hook.py",
+      "what": "Cursor has no permission hook before file edits, so file writes by the Cursor agent (including to its own hooks.json) are not checked by the guard; preToolUse takes only allow or deny and its Write input is not documented well enough to rely on",
+      "check": "docs/AI-AGENT-SECURITY.md (What runs where)",
+      "status": "open"
+    },
+    {
+      "id": "OPEN-03",
+      "severity": "low",
+      "where": "scripts/agent_guard.py rule classes",
+      "what": "Only shell commands are classed: an MCP tool that publishes a package or creates a public repo, gh repo sync --force, and wrappers with their own arguments (sudo -u x npm publish) are not recognized as exposure or destructive",
+      "check": "SECURITY-CONTEXT.md (Owner mode vs managed mode, known gaps)",
+      "status": "open"
+    },
+    {
+      "id": "OPEN-04",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py (accepted scope)",
+      "what": "Code execution inside allowed commands is out of scope: a project script or test the agent wrote in an earlier tool call can itself write outside the project (python build.py, npm test). The guard only sees command text. Use Claude Code's native sandbox where available.",
+      "check": "SECURITY-CONTEXT.md (positive model, what is out of scope)",
+      "status": "open"
+    },
+    {
+      "id": "OPEN-05",
+      "severity": "low",
+      "where": "scripts/safe_git.py",
+      "what": "diff.external and per-driver diff commands from the repo's config cannot be switched off through the environment (an empty value makes git fail); the stop gate passes --no-ext-diff and git log only uses them with --ext-diff, but a scanner that ran plain git diff would honour them",
+      "check": "tests/test_safe_git.py (no scanner in the gate runs git diff today)",
+      "status": "open"
+    },
+    {
+      "id": "V7U-01",
+      "severity": "medium",
+      "where": "install-global.py register_updates",
+      "what": "The daily task was created with schtasks /TR, which has a 261-character limit: a long Python or app path (a venv under a deep folder) made the installer skip the update task with only a 'skipped' line, and test_brand_overlay failed for that reason on a longer venv path. The task is now created from an XML definition (XML-escaped paths, no /TR limit) by the System32 schtasks.exe",
+      "check": "tests/test_brand_overlay.py::test_legacy_task_is_removed_only_when_it_runs_our_updater and tests/test_update_mechanism.py::test_task_xml_escapes_hostile_paths_and_names",
+      "status": "fixed"
+    },
+    {
+      "id": "V7U-02",
+      "severity": "medium",
+      "where": "install-global.py register_updates (schedule)",
+      "what": "A machine that was off or asleep at 11:00 skipped that day's update check (schtasks /SC DAILY without catch-up; cron on Linux and macOS). Windows now has StartWhenAvailable, a logon trigger, a network condition, a one-hour limit and restart on failure; --update-timer installs a Persistent systemd user timer or a RunAtLoad launchd agent",
+      "check": "tests/test_update_mechanism.py::test_task_xml_catches_up_retries_and_needs_a_network, ::test_linux_timer_is_persistent_and_enabled, ::test_macos_launch_agent_runs_at_load_and_daily",
+      "status": "fixed"
+    },
+    {
+      "id": "V7U-03",
+      "severity": "low",
+      "where": "scripts/updater.py check_and_update, main",
+      "what": "A GitHub rate limit (403 or 429) was reported as a failure and retried on every run; a download cut short was only caught as 'signature invalid'. Rate limits are now a logged back-off with a bounded retry time, and a size different from the release listing or Content-Length is 'download-incomplete'",
+      "check": "tests/test_update_mechanism.py::test_rate_limit_backs_off_logs_and_exits_cleanly, ::test_429_retry_after_and_absurd_reset_times_are_bounded, ::test_incomplete_downloads_are_refused_before_the_signature_check, ::test_download_compares_content_length",
+      "status": "fixed"
+    },
+    {
+      "id": "OPEN-06",
+      "severity": "low",
+      "where": "Task Scheduler RestartOnFailure, systemd timer",
+      "what": "Task Scheduler restarts a task only when it fails to start, not when updater.py exits with an error, and the systemd service has no Restart= (Type=oneshot with Restart= fails to load on systemd before 244). After a network error the next try is the logon trigger, the next boot or the next day, not 30 minutes later",
+      "check": "ENTERPRISE_DEPLOYMENT.md (Auto-update table)",
+      "status": "open"
+    },
+    {
+      "id": "V7G-06",
+      "severity": "high",
+      "where": "scripts/safe_git.py safe_git_env",
+      "what": "Found in the independent review of the 7.0 merge: only the first 200 filter, diff and merge driver keys were neutralised, so a repo with 200 dummy drivers and one real one ran its program through the stop gate and the scanners; a config git could not list was read as empty. Too many drivers or an unreadable config now refuses to run git at all",
+      "check": "tests/test_safe_git.py::test_more_drivers_than_the_cap_means_git_never_runs and ::test_a_broken_config_is_refused_not_read_as_empty",
+      "status": "fixed"
+    },
+    {
+      "id": "V7G-07",
+      "severity": "high",
+      "where": "scripts/safe_git.py FIXED",
+      "what": "Found in the independent review: log.showSignature with gpg.ssh.program (or the x509 and openpgp verifiers) in the repo's config ran a repo program on git log -p, which gitleaks runs. These keys are now switched off",
+      "check": "tests/test_safe_git.py::test_signature_verifiers_from_repo_config_never_run",
+      "status": "fixed"
+    },
+    {
+      "id": "V7U-04",
+      "severity": "medium",
+      "where": "install-global.py register_unix_schedule (launchd)",
+      "what": "Found in the independent review: an update started by the launchd agent runs the new installer, whose launchctl bootout of the same job would kill the update half way. A loaded agent is now left alone",
+      "check": "tests/test_update_mechanism.py::test_macos_update_never_boots_out_the_running_agent (code path only; not run on a real Mac)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7U-05",
+      "severity": "medium",
+      "where": "scripts/secgate.py run (project tests)",
+      "what": "Found in the independent review: the project's own test commands got the safe git environment (no local clones, empty hooks path), which could show up as false TEST_FAILURE findings. They run the project's code anyway and now keep the normal environment",
+      "check": "tests/test_safe_git.py::test_project_test_commands_keep_the_normal_git_environment",
+      "status": "fixed"
+    },
+    {
+      "id": "V7U-06",
+      "severity": "low",
+      "where": "install-global.py _systemd_quote",
+      "what": "Found in the independent review: $ in a path was expanded by systemd in ExecStart; it is now written as $$",
+      "check": "tests/test_update_mechanism.py::test_linux_timer_is_persistent_and_enabled",
+      "status": "fixed"
+    },
+    {
+      "id": "OPEN-07",
+      "severity": "low",
+      "where": "scripts/secgate.py scanner_env",
+      "what": "Driver keys are listed from the engine's working folder, not the scanned project; for an engine whose working folder is its output folder (CodeQL, only with --run-tests) the project's drivers are not listed",
+      "check": "code reading in the 7.0 review",
+      "status": "open"
+    },
+    {
+      "id": "OPEN-08",
+      "severity": "low",
+      "where": "scripts/install-ci-scanners.sh, scripts/install-ci-scanners.ps1",
+      "what": "Semgrep is installed in CI by exact version, not with --require-hashes, and its dependencies are resolved by pip; trivy and gitleaks are SHA-256 checked",
+      "check": "tests/test_ci_skip_check.py::test_linux_and_windows_ci_installers_pin_the_same_versions_and_hashes_as_the_lock (versions only)",
+      "status": "open"
+    },
+    {
+      "id": "V7D-01",
+      "severity": "medium",
+      "where": "scripts/local_dast.py find_zap",
+      "what": "First real ZAP run on Windows crashed: zap.sh was picked from PATH and CreateProcess cannot start a shell script; an OSError became a traceback. ZAP now runs as java -jar from PATH or the tools folder, and a start failure is a clear note",
+      "check": "tests/test_v7_pentest.py::test_find_zap_uses_java_jar_from_the_tools_folder_not_a_shell_script, test_zap_that_cannot_start_is_a_note_not_a_traceback; real ZAP 2.17.0 run on 2026-11-03 found 9 alerts on a throwaway local site",
+      "status": "fixed"
+    }
   ]
 }
