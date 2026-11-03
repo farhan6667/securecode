@@ -9,6 +9,8 @@
      "reason": "Optional per-language engine, not installed in the test job; covered with fakes in the same file."},
     {"test": "tests/test_v7_engines.py::test_real_engine_when_installed[[]gosec[]]",
      "reason": "Optional per-language engine (needs Go too), not installed in the test job; covered with fakes in the same file."},
+    {"test": "tests/test_update_mechanism.py::test_task_scheduler_accepts_the_generated_xml", "os": ["linux", "macos"],
+     "reason": "Creates a real (disabled) Windows scheduled task, so it runs on the Windows CI jobs only; on a developer machine it skips and this check reports it."},
     {"test": "tests/test_v7_guard.py::test_hook_ignores_owner_policy_when_managed_settings_exist", "os": ["linux", "macos"],
      "reason": "Managed markers under ProgramFiles are Windows paths; the test runs on the Windows jobs."},
     {"test": "tests/test_guard_positive_model.py::test_a_link_inside_the_project_is_judged_where_it_points", "os": ["windows"],

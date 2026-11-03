@@ -1,7 +1,8 @@
 # Installs pinned Semgrep, Trivy and Gitleaks on a Windows x64 CI runner, the Windows twin of
 # install-ci-scanners.sh. Versions, URLs and SHA-256 values come from scripts/engines/engines.lock.json (the
-# reviewed lock the setup command uses too), so a hijacked release or tag cannot swap a binary: a hash mismatch
-# stops the job before anything is extracted. Also puts the Windows OpenSSH folder (ssh-keygen, used by the
+# reviewed lock the setup command uses too), so a hijacked release or tag cannot swap the trivy or gitleaks
+# binary: a hash mismatch stops the job before anything is extracted. Semgrep is pinned by version only (pip),
+# like in install-ci-scanners.sh; its dependencies are resolved by pip. Also puts the Windows OpenSSH folder (ssh-keygen, used by the
 # signed-update tests) on PATH.
 # Usage (GitHub Actions, shell: pwsh): ./scripts/install-ci-scanners.ps1
 $ErrorActionPreference = 'Stop'

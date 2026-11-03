@@ -1,6 +1,6 @@
 """R2-M5 and R2-L1: git run by the stop gate and by the scanners must not run programs named in the scanned repo's
 own .git/config (core.fsmonitor, hooks, filter and textconv drivers, external diff), and must see non-ASCII names."""
-import importlib.util, json, os, shutil, subprocess, sys
+import importlib.util, json, os, shutil, subprocess, sys, types
 from pathlib import Path
 
 import pytest
@@ -115,6 +115,85 @@ def test_engine_env_keeps_its_values_but_gets_the_safe_git_settings(tmp_path):
     rc, out, err = g.run(["git", "diff", "--no-ext-diff", "HEAD"], repo, env=base)
     assert rc == 0 and "print(2)" in out, err
     assert not list(marks.iterdir()), [p.name for p in marks.iterdir()]
+
+
+def test_more_drivers_than_the_cap_means_git_never_runs(tmp_path):
+    # Review finding: after 200 driver keys the rest were left as they were, so the 201st (the repo's own program)
+    # ran through the stop gate. Now a config with too many drivers is refused as a whole.
+    repo, marks = hostile_repo(tmp_path)
+    sgit = load("safe_git")
+    cfg = (repo / ".git" / "config").read_text()
+    cfg = "".join(f'[filter "d{i}"]\n\tclean = true\n' for i in range(sgit.MAX_DRIVERS + 5)) + cfg
+    (repo / ".git" / "config").write_text(cfg)
+    with pytest.raises(sgit.UnsafeConfig):
+        sgit.safe_git_env(GIT, repo, str(tmp_path / "h"))
+    sg = load("stop_gate")
+    assert sg.changed_files(repo) == []
+    rc, out, err = load("secgate").run(["git", "status"], repo)
+    assert rc == 125 and "safe git environment" in err
+    assert not list(marks.iterdir()), [p.name for p in marks.iterdir()]
+
+
+def test_a_broken_config_is_refused_not_read_as_empty(tmp_path):
+    repo, marks = hostile_repo(tmp_path)
+    (repo / ".git" / "config").write_text((repo / ".git" / "config").read_text() + "[broken\n")
+    sgit = load("safe_git")
+    with pytest.raises(sgit.UnsafeConfig):
+        sgit.safe_git_env(GIT, repo, str(tmp_path / "h"))
+    with sgit.SafeGit(GIT, repo) as g:
+        assert g.run("status") == (1, "")
+
+
+def test_signature_verifiers_from_repo_config_never_run(tmp_path):
+    # Review finding: log.showSignature plus gpg.ssh.program made git log -p (what gitleaks runs) start a repo program.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    (repo / "f").write_text("x")
+    git(repo, "add", "f")
+    git(repo, "commit", "-q", "-m", "c1")
+    tree = git(repo, "rev-parse", "HEAD^{tree}").stdout.decode().strip()
+    sig = "-----BEGIN SSH SIGNATURE-----\n U1NIU0lHAAAAAQ==\n -----END SSH SIGNATURE-----"
+    obj = f"tree {tree}\nauthor a <a@b> 0 +0000\ncommitter a <a@b> 0 +0000\ngpgsig {sig}\n\nsigned\n"
+    h = subprocess.run([GIT, "hash-object", "-t", "commit", "-w", "--stdin", "--literally"], cwd=repo, input=obj.encode(),
+                       capture_output=True).stdout.decode().strip()
+    git(repo, "update-ref", "refs/heads/signed", h)
+    marker = tmp_path / "ran"
+    prog = tmp_path / "verify.sh"
+    prog.write_text(f"#!/bin/sh\necho ran > '{marker.as_posix()}'\nexit 1\n", newline="\n")
+    prog.chmod(0o755)
+    (tmp_path / "allowed").write_text("")
+    for k, v in (("log.showSignature", "true"), ("gpg.ssh.program", prog.as_posix()), ("gpg.x509.program", prog.as_posix()),
+                 ("gpg.program", prog.as_posix()), ("gpg.ssh.allowedSignersFile", (tmp_path / "allowed").as_posix())):
+        git(repo, "config", k, v)
+    git(repo, "log", "-p", "-1", "signed")          # the fixture really runs the verifier without protection
+    assert marker.exists(), "fixture did not run the verifier; the check below would prove nothing"
+    marker.unlink()
+    g = load("secgate")
+    rc, out, err = g.run(["git", "log", "-p", "-1", "signed"], repo)
+    assert rc == 0, err
+    g.run(["git", "log", "--show-signature", "-1", "signed"], repo)
+    assert not marker.exists()
+
+
+def test_project_test_commands_keep_the_normal_git_environment(tmp_path, monkeypatch):
+    # Review finding: the project's own tests got protocol.file.allow=never and an empty hooks path, so suites that
+    # clone local repos or test hooks failed and showed up as TEST_FAILURE. Scanners keep the safe environment.
+    g = load("secgate")
+    seen = {}
+
+    def fake(cmd, cwd=None, env=None, **kw):
+        if "config" in cmd:                         # safe_git listing the repo's config keys: none
+            return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        seen[tuple(cmd[1:])] = env
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(g.subprocess, "run", fake)
+    g.run(["git", "status"], tmp_path, safe_git=False)
+    assert seen[("status",)] is None
+    g.run(["git", "log"], tmp_path)
+    assert seen[("log",)] and seen[("log",)]["GIT_CONFIG_COUNT"]
+    src = (SCRIPTS / "secgate.py").read_text(encoding="utf-8")
+    assert "rc,out,err=run(cmd,root,1200,safe_git=False)" in src
 
 
 def test_inherited_git_variables_are_dropped(monkeypatch, tmp_path):

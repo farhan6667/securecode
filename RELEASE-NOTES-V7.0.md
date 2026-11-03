@@ -22,7 +22,8 @@ release key); nothing to do by hand.
   installed by hand. Cursor: shell, MCP and file reads (Cursor has no hook before its own file edits). Codex:
   shell, `apply_patch` and MCP; Codex hooks cannot ask yet, so an ask becomes a deny there.
 - **Git without the repo's programs.** The stop gate, the scanners and the engines run git with the repo's
-  fsmonitor, hooks, filter and textconv drivers switched off (`scripts/safe_git.py`).
+  fsmonitor, hooks, filter and textconv drivers and signature verifiers switched off (`scripts/safe_git.py`); a
+  config it cannot fully neutralise means git does not run.
 - **End-of-task offer.** After a bigger change (3 or more code files or 40 or more lines) the agent offers
   "Run Security Test" once.
 - Measured: 1 ask and 0 denies on a corpus of 256 everyday commands (0.4 percent), and the round-2 Hypothesis
@@ -91,8 +92,8 @@ release key); nothing to do by hand.
 
 ## Proof from this release's runs
 
-- Tests: 927 passed, 8 skipped (Windows, Python 3.14; the skips are symlink tests this machine has no rights for
-  and three optional engines that are not installed). CI installs Semgrep, Trivy, Gitleaks and ssh-keygen in the
+- Tests: 932 passed, 9 skipped (Windows, Python 3.14; the skips are symlink tests this machine has no rights for,
+  three optional engines that are not installed, and the real Task Scheduler test, which runs on CI runners only). CI installs Semgrep, Trivy, Gitleaks and ssh-keygen in the
   test job now and fails when a test is skipped that is not on `tests/skip-allowlist.json`.
 - The gate on its own repository: `secgate.py . --mode ci --fail-on high` passes (0 critical, 0 high).
 - Labs: the numbers in "Rules and labs" above.
@@ -112,14 +113,17 @@ These are open entries in `FINDINGS.json`:
   native sandbox where your tool has one.
 - A repo's `diff.external` cannot be switched off through the environment; nothing in the gate runs plain
   `git diff` today.
+- Semgrep is installed in CI by exact version, not by hash, and the gate lists git driver keys from an engine's
+  working folder rather than the project (matters only for CodeQL with `--run-tests`).
 - Task Scheduler restarts a task only when it fails to start, not when the updater exits with an error, and the
   systemd service has no restart, so after a network error the next try is the next logon, boot or day.
 
 ## Review history
 
 Up to 6.2.2: five internal review rounds and two outside-style attack rounds (the second with fuzzing). The 7.0
-guard is the answer to the second attack round, and each fix has a regression test. This is not a third-party
-audit.
+guard is the answer to the second attack round, and each fix has a regression test. The 7.0 merge also had one
+independent internal review (a separate agent), which found two ways a repo's git config could still run a
+program and three update-mechanism bugs; all are fixed with tests. This is not a third-party audit.
 
 ## Try it
 

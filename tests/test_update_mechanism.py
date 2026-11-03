@@ -40,14 +40,16 @@ def update_ready_app(tmp: Path, product="NexaForge SecureCode") -> Path:
 
 
 class Recorder:
-    def __init__(self, rc=0):
-        self.calls, self.rc, self.xml = [], rc, {}
+    def __init__(self, rc=0, loaded=False):
+        self.calls, self.rc, self.xml, self.loaded = [], rc, {}, loaded
 
     def __call__(self, args, **kw):
         self.calls.append(list(args))
         if "/XML" in args and "/Create" in args:
             self.xml[args[args.index("/TN") + 1]] = Path(args[args.index("/XML") + 1]).read_text(encoding="utf-16")
-        return types.SimpleNamespace(returncode=self.rc if "/Query" not in args else 1, stdout="", stderr="boom" if self.rc else "")
+        if "/Query" in args or "print" in args:     # no task to query; launchd job loaded only when asked
+            return types.SimpleNamespace(returncode=0 if (self.loaded and "print" in args) else 1, stdout="", stderr="")
+        return types.SimpleNamespace(returncode=self.rc, stdout="", stderr="boom" if self.rc else "")
 
 
 # ---------- Windows Task Scheduler definition ----------
@@ -111,6 +113,26 @@ def test_windows_registration_uses_the_xml_file_and_the_system_schtasks(tmp_path
     assert not list(Path(os.environ.get("TEMP", tmp_path)).glob("nfsc-task-*"))  # the temp XML folder is removed
 
 
+@pytest.mark.skipif(os.name != "nt" or os.environ.get("GITHUB_ACTIONS") != "true",
+                    reason="creates a real (disabled) scheduled task: only on a throwaway CI runner")
+def test_task_scheduler_accepts_the_generated_xml(tmp_path):
+    # FakeSchtasks only reads the file back; this asks the real Task Scheduler. The task is disabled and removed.
+    upd = str(tmp_path / "R&D <x> it's" / "updater.py")
+    xml = G.windows_task_xml(sys.executable, upd, G.windows_user(), "NFSC CI Check")
+    xml = xml.replace("    <Enabled>true</Enabled>\n    <Hidden>", "    <Enabled>false</Enabled>\n    <Hidden>")
+    f = tmp_path / "t.xml"; f.write_text(xml, encoding="utf-16")
+    name, exe = "NFSC CI XML Check", G.schtasks_exe()
+    try:
+        p = subprocess.run([exe, "/Create", "/F", "/TN", name, "/XML", str(f)], capture_output=True, text=True)
+        assert p.returncode == 0, p.stdout + p.stderr
+        text = G._xml_text(subprocess.run([exe, "/Query", "/TN", name, "/XML"], capture_output=True).stdout)
+        for needle in ("<StartWhenAvailable>true", "<RunOnlyIfNetworkAvailable>true", "<Count>3</Count>", "<LogonTrigger>"):
+            assert needle in text, needle
+        assert upd.lower() in text.lower()
+    finally:
+        subprocess.run([exe, "/Delete", "/TN", name, "/F"], capture_output=True)
+
+
 def test_windows_registration_failure_is_reported(tmp_path, monkeypatch):
     monkeypatch.setattr(G, "SYSTEM", "windows")
     assert G.register_updates(update_ready_app(tmp_path), run=Recorder(rc=1)).startswith("schedule failed: boom")
@@ -124,13 +146,14 @@ def test_linux_without_the_flag_prints_cron_and_writes_nothing(tmp_path, monkeyp
     rec = Recorder()
     res = G.register_updates(app, run=rec)
     assert res.startswith("add to crontab: 0 11 * * * ") and "--update-timer" in res
-    assert not rec.calls and not (tmp_path / "env").exists() or not list((tmp_path / "env").rglob("*.timer"))
+    assert not rec.calls
+    assert not list(tmp_path.rglob("*.timer")) and not list(tmp_path.rglob("*.service"))
 
 
 def test_linux_timer_is_persistent_and_enabled(tmp_path, monkeypatch):
     monkeypatch.setattr(G, "SYSTEM", "linux")
     monkeypatch.setattr(G, "_tool", lambda n: "/usr/bin/" + n)
-    monkeypatch.setattr(G.sys, "executable", "/opt/py 3/bin/python%1")
+    monkeypatch.setattr(G.sys, "executable", "/opt/py $HOME 3/bin/python%1")
     app = update_ready_app(tmp_path / "my apps", "Acme SecureCode")
     rec = Recorder()
     res = G.register_updates(app, run=rec, timer=True)
@@ -141,7 +164,7 @@ def test_linux_timer_is_persistent_and_enabled(tmp_path, monkeypatch):
     assert "Persistent=true" in timer and "OnCalendar=*-*-* 11:00:00" in timer and "RandomizedDelaySec=30min" in timer
     assert "WantedBy=timers.target" in timer and "Type=oneshot" in service
     upd = str(app / "scripts" / "updater.py").replace("\\", "\\\\")
-    assert f'ExecStart="/opt/py 3/bin/python%%1" -I "{upd}"' in service
+    assert f'ExecStart="/opt/py $$HOME 3/bin/python%%1" -I "{upd}"' in service
     assert rec.calls == [["/usr/bin/systemctl", "--user", "daemon-reload"],
                          ["/usr/bin/systemctl", "--user", "enable", "--now", "acme-securecode-update.timer"]]
     # An update re-runs the installer without the flag: the timer we wrote is refreshed, not dropped.
@@ -172,6 +195,19 @@ def test_macos_launch_agent_runs_at_load_and_daily(tmp_path, monkeypatch):
     assert d["RunAtLoad"] is True and d["StartCalendarInterval"] == {"Hour": 11, "Minute": 0}
     assert d["ProgramArguments"] == [sys.executable, "-I", str(app / "scripts" / "updater.py")]
     assert rec.calls[-1] == ["/bin/launchctl", "bootstrap", "gui/501", str(plist)]
+    assert not any("bootout" in c for c in rec.calls)
+
+
+def test_macos_update_never_boots_out_the_running_agent(tmp_path, monkeypatch):
+    # Review finding: the updater runs as a child of the launchd job; a bootout from the installer it starts would
+    # kill the update half way. A loaded agent is left alone.
+    monkeypatch.setattr(G, "SYSTEM", "darwin")
+    monkeypatch.setattr(G, "_tool", lambda n: "/bin/" + n)
+    monkeypatch.setattr(G.os, "getuid", lambda: 501, raising=False)
+    app = update_ready_app(tmp_path)
+    rec = Recorder(loaded=True)
+    assert "already loaded" in G.register_updates(app, run=rec, timer=True)
+    assert [c[1] for c in rec.calls] == ["print"]
 
 
 def test_unit_names_come_only_from_safe_brand_characters(tmp_path):

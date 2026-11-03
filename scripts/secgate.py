@@ -1319,7 +1319,7 @@ def scanner_env(cwd,hooks_dir,base=None):
     merged.update({k:v for k,v in safe.items() if k.upper().startswith("GIT_")})
     return merged
 
-def run(cmd,cwd,timeout=600,env=None):
+def run(cmd,cwd,timeout=600,env=None,safe_git=True):
     # Run exactly the executable find_tool chose, never a bare name that the OS would resolve itself.
     exe=find_tool(cmd[0])
     if not exe: return 127,"",f"missing executable: {cmd[0]}"
@@ -1328,8 +1328,12 @@ def run(cmd,cwd,timeout=600,env=None):
     cmd=[exe,*cmd[1:]]
     hooks=tempfile.mkdtemp(prefix="nfsc-nohooks-")
     try:
-        env=scanner_env(cwd,hooks,env)
-        if env is None: return 125,"","could not prepare a safe git environment for the scanner"
+        # Scanners and engines get the safe git environment. The project's own test commands (safe_git=False) run
+        # the project's code anyway, so they keep the normal one: a test suite that uses git hooks or local clones
+        # must not fail because of us.
+        if safe_git:
+            env=scanner_env(cwd,hooks,env)
+            if env is None: return 125,"","could not prepare a safe git environment for the scanner"
         p=subprocess.run(cmd,cwd=str(cwd),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=timeout,env=env)
         return p.returncode,p.stdout,p.stderr
     except FileNotFoundError: return 127,"",f"missing executable: {cmd[0]}"
@@ -1754,7 +1758,7 @@ def main():
                 notes.append(f"per-language engines stopped ({type(e).__name__}); their findings are missing")
         if args.run_tests:
             for cmd in project_commands(root,notes):
-                rc,out,err=run(cmd,root,1200)
+                rc,out,err=run(cmd,root,1200,safe_git=False)
                 ran_tests.append({"command":" ".join([Path(str(cmd[0])).name,*map(str,cmd[1:])]),"exit":rc})
                 if rc!=0:
                     findings.append({"rule":"TEST_FAILURE","severity":"HIGH","file":"","line":0,

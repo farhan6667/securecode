@@ -403,7 +403,7 @@ def unit_slug(ad: Path) -> str:
 
 def _systemd_quote(v: str) -> str:
     # systemd splits ExecStart on spaces and honours "..." with C-style escapes; % starts a specifier.
-    return '"'+v.replace("\\","\\\\").replace('"','\\"').replace("%","%%")+'"'
+    return '"'+v.replace("\\","\\\\").replace('"','\\"').replace("%","%%").replace("$","$$")+'"'
 
 def systemd_units(py: str, upd: str, product: str) -> tuple[str,str]:
     py=_plain(py,"Python path"); upd=_plain(upd,"updater path")
@@ -462,7 +462,10 @@ def register_unix_schedule(ad: Path, upd: str, run, install: bool) -> str:
         lc=_tool("launchctl")
         if not lc: return f"launchd agent written to {sp['plist']} but launchctl was not found; {cron}"
         dom=f"gui/{os.getuid()}"
-        run([lc,"bootout",f"{dom}/{sp['label']}"],capture_output=True,text=True)   # not loaded yet is fine
+        # An update runs this installer as a child of the launchd job itself: booting that job out would kill the
+        # update half way. A loaded agent is left running; launchd reads the rewritten plist at the next login.
+        if run([lc,"print",f"{dom}/{sp['label']}"],capture_output=True,text=True).returncode==0:
+            return f"scheduled daily (launchd agent {sp['label']}: {UPDATE_HOUR}:00 and at login; already loaded)"
         p=run([lc,"bootstrap",dom,str(sp["plist"])],capture_output=True,text=True)
         if p.returncode!=0:
             return f"launchd agent written but launchctl bootstrap failed: {(p.stderr or '').strip()[:200]}; {cron}"
