@@ -824,6 +824,22 @@
       "what": "Not covered: output of the Monitor tool (notifications, not a tool result), secrets in the tool input, and secrets with no recognisable shape (short passwords in oddly named fields)",
       "check": "documented in docs/SECRET-SHIELD-AND-MCP.md (What it does not do)",
       "status": "open"
+    },
+    {
+      "id": "V7GAP-7",
+      "severity": "low",
+      "where": "docs/STANDARDS-COVERAGE.md",
+      "what": "The owner asked for OWASP ASVS coverage and the coverage page mapped only Top 10, CWE Top 25 and API Top 10. Added one row per ASVS 5.0 chapter (V1 to V17) as guidance, not a compliance claim, plus a test that every rule id cited on the page exists",
+      "check": "tests/test_v7_docs.py::test_every_rule_id_in_standards_coverage_exists and test_standards_coverage_maps_asvs5_chapters_without_claiming_compliance",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-8",
+      "severity": "low",
+      "where": "README.md, How a review works",
+      "what": "README still said the Laravel lab found 17 of 18 with one miss on purpose, while benchmark/RESULTS.md shows 18 of 18 since OPEN-01 was closed",
+      "check": "tests/test_v7_docs.py::test_readme_laravel_lab_sentence_matches_results",
+      "status": "fixed"
     }
   ]
 }

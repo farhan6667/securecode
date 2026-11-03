@@ -9,6 +9,9 @@ How to review: list every entry point (routes, controllers, API handlers, webhoo
 links), then for each one trace input to sink. Scanners find patterns; this trace finds IDOR,
 missing checks and logic bugs, which make up most real pentest findings.
 
+For the OWASP ASVS 5.0 chapters, the table in `docs/STANDARDS-COVERAGE.md` ("OWASP ASVS 5.0") shows which
+ones the gate covers in part and which ones depend on this review alone, so check those by hand.
+
 ---
 
 ## A01 Broken access control (IDOR / BOLA, function-level, mass assignment)
