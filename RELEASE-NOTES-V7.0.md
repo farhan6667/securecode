@@ -50,10 +50,19 @@ release key); nothing to do by hand.
   deprecated up to 8.5.
 - Database and default-value checks: root or empty-password database users, no TLS, bound to every interface,
   GRANT ALL, sensitive columns, guessable default credentials and secret keys, exposed admin paths and tools.
-- Lab results from `py -I benchmark/run_lab.py --mode full` on this release: Laravel 17 of 18, Spring 20 of 20,
-  legacy 17 of 17, web 22 of 22, with 0 clean files reported in every lab. The Laravel miss is L18 (IDOR through
-  route model binding), which static rules do not find; the review's authorization matrix and cross-user tests
-  are the control for it.
+- Laravel IDOR through route model binding (`show(Invoice $invoice)` with no `authorize`) is now found by a new
+  rule. It reads the route files, FormRequests and policies first, so routes that are already protected are not
+  reported. It does not follow checks hidden in helper methods or in only one branch.
+- Lab results from `py -I benchmark/run_lab.py --mode full` on this release: Laravel 18 of 18, Spring 20 of 20,
+  legacy 17 of 17, web 22 of 22, with 0 clean files reported in every lab.
+
+## Secret shield and MCP check
+
+- `scripts/secret_shield.py` runs after each tool and masks keys, tokens and passwords in the output before the
+  agent sees it (Claude Code `updatedToolOutput`). `secret_shield.py sweep` finds secrets already sitting in a
+  project.
+- `scripts/mcp_scan.py` reads your MCP server configs offline and reports plain-text tokens, `@latest` or
+  unpinned packages and risky launch commands. Details and limits: `docs/SECRET-SHIELD-AND-MCP.md`.
 
 ## Automated pentest
 
@@ -70,8 +79,8 @@ release key); nothing to do by hand.
 ## Gemini CLI and Antigravity
 
 - The rules and the gate now work there too: `templates/gemini/` has the settings and a `GEMINI.md` that loads
-  `AGENTS.md`, and Antigravity reads `~/.gemini/AGENTS.md` without a setting. Both tools have pre-tool hooks;
-  wiring the guard to them is future work.
+  `AGENTS.md`, and Antigravity reads `~/.gemini/AGENTS.md` without a setting. The agent guard is wired to both
+  through their pre-tool hooks (`scripts/adapters/gemini_hook.py` and `antigravity_hook.py`, installed by hand).
 
 ## Update mechanism
 
@@ -102,7 +111,8 @@ release key); nothing to do by hand.
 
 These are open entries in `FINDINGS.json`:
 
-- IDOR through Laravel route model binding is not found by the static rules (lab L18).
+- The Laravel binding rule does not follow authorization done in helper methods or in only one branch.
+- The secret shield does not see secrets in the tool input or secrets with no recognisable shape.
 - Engines installed with pip or npm have only their own package hash-checked, not their dependencies.
 - nuclei resolves the staging host again itself, so a DNS answer that changes between the check and the scan
   can still move a nuclei scan.

@@ -33,7 +33,10 @@ APIs or Android apps with AI.
   Dependency-Check and SpotBugs, installed pinned and hash-checked (each engine's own package; pip and npm
   dependencies are resolved, not hash-pinned) with one setup command.
 - **New rules and labs:** Java and Spring Boot, a legacy audit for planted webshells, database and default-password
-  checks. Lab scores: Laravel 17/18, Spring 20/20, legacy 17/17, web 22/22, no clean file flagged.
+  checks. Lab scores: Laravel 18/18, Spring 20/20, legacy 17/17, web 22/22, no clean file flagged.
+- **Secrets stay out of the agent's view:** the secret shield masks keys and tokens in tool output before the
+  agent reads them, and `mcp_scan.py` checks your MCP server configs offline for plain-text tokens and unpinned
+  packages.
 - **Automated pentest flow:** a passive ZAP scan of your own app, a readable report, and a draft fix pull request.
 - **Gemini CLI and Antigravity** get the rules, the gate and the agent guard.
 - **Updates that catch up:** a laptop that was off at check time updates as soon as it can, and 6.x installs move
@@ -154,7 +157,7 @@ change its own settings or push your code somewhere public.
 | Guards your machine from the agent | no | no | no | **yes** |
 | Signed auto-updates | varies | no | no | **yes** |
 | Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity | n/a | one tool | one tool | **all five, guard included (Cursor's own file edits not yet)** |
-| Measured on labs with planted bugs | varies | no | no | **yes: four labs, 76 of 77 found, 0 clean files flagged** |
+| Measured on labs with planted bugs | varies | no | no | **yes: four labs, 77 of 77 found, 0 clean files flagged** |
 
 ## Works with
 
