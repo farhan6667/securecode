@@ -1,6 +1,6 @@
 NexaForge SecureCode (Org AI Secure AppSec Gate) V6.2
 =====================================================
-Version: 6.2.1
+Version: 6.2.2
 
 Code security (unchanged core, fixed)
 - Global Claude Code skill (org-appsec-security), /security-gate and /sec-review commands

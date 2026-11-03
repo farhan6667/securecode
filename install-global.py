@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse, json, os, platform, shutil, sys, time
 from pathlib import Path
 
-VERSION="6.2.1"
+VERSION="6.2.2"
 PKG=Path(__file__).resolve().parent
 SYSTEM=platform.system().lower()
 HOME=Path.home()
