@@ -41,10 +41,12 @@ Antigravity workflows (saved prompts started with `/name`) are not needed: say "
 "Run Advisory QA" as in the other agents. The workflows page says current workflows stop working on
 19 October 2026 in favour of Agent skills. Source: https://antigravity.google/docs/ide/workflows/
 
-## The agent guard (7.0.1)
+## The agent guard
 
-Both tools get the agent guard through a small adapter. Replace `<PYTHON>` with the full path of your Python and
-`<APP>` with the installed runtime folder (Windows: `%LOCALAPPDATA%\OrgAISecureAppSec`), using forward slashes.
+Install it with `py -I install-global.py --agent gemini` or `--agent antigravity` (it fills the paths, picks the
+Windows form and backs up your config). To do it by hand instead, replace `<PYTHON>` with the full path of your
+Python and `<APP>` with the installed runtime folder (Windows: `%LOCALAPPDATA%\OrgAISecureAppSec`), using forward
+slashes, and follow the steps below.
 
 **Gemini CLI.** Merge `settings.hooks.json` (macOS and Linux) or `settings.hooks.windows.json` (Windows) from this
 folder into `~/.gemini/settings.json` (keep your other keys). Use the Windows file on Windows: Gemini CLI runs hook

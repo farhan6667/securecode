@@ -159,3 +159,83 @@ def test_readme_laravel_lab_sentence_matches_results():
 def test_install_docs_have_no_em_or_en_dashes():
     for rel in ("ONE_PROMPT_INSTALL.md", "README.md", "templates/gemini/README.md"):
         assert not re.search("[\u2013\u2014]", text(rel)), rel
+
+
+def tracked(suffix):
+    import shutil, subprocess
+    git = shutil.which("git")
+    assert git and (ROOT / ".git").exists(), "these checks need a git checkout (CI always has one)"
+    out = subprocess.run([git, "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True).stdout
+    return [p for p in out.decode("utf-8").split("\0") if p and p.endswith(suffix)]
+
+
+def test_no_tracked_markdown_has_em_or_en_dashes():
+    bad = [rel for rel in tracked(".md") if (ROOT / rel).exists() and re.search("[\u2013\u2014]", text(rel))]
+    assert not bad, bad
+
+
+TRIGGERS = ("Run Security Test", "Run Advisory QA", "Security Test Karo", "Advisory QA Karo")
+
+
+def test_review_triggers_are_named_in_the_skill_agents_md_and_global_claude_md():
+    for rel in (".claude/skills/security-review/SKILL.md", "AGENTS.md", "global-CLAUDE.md"):
+        t = text(rel)
+        for phrase in TRIGGERS:
+            assert phrase in t, (rel, phrase)
+
+
+def test_no_engine_in_the_lock_is_agpl():
+    import json
+    found = []
+
+    def walk(node, path=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k.lower() in ("licence", "license"):
+                    found.append((path, str(v)))
+                walk(v, f"{path}/{k}")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{path}[{i}]")
+
+    walk(json.loads(text("scripts/engines/engines.lock.json")))
+    assert len(found) >= 10, "the lock no longer carries a licence per engine; update this test"
+    agpl = [(p, lic) for p, lic in found if "AGPL" in lic.upper()]
+    assert not agpl, agpl
+
+
+def make_release_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mk_rel_docs", ROOT / "scripts" / "release" / "make_release.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_manifest_files_section_lists_exactly_what_the_release_ships():
+    tracked("")                               # clear message outside a git checkout
+    m = make_release_module()
+    want = m.shipped_names(m.tracked_files())
+    have = m.manifest_listed(text("MANIFEST.txt"))
+    assert have, "MANIFEST.txt has no ## Files section; run py -I scripts/release/make_release.py --manifest"
+    assert have == want, ("MANIFEST.txt ## Files is stale; run py -I scripts/release/make_release.py --manifest",
+                          sorted(set(want) - set(have))[:20], sorted(set(have) - set(want))[:20])
+
+
+def test_manifest_file_list_reader_needs_the_heading():
+    m = make_release_module()
+    assert m.manifest_listed("Version: 1\n- not a file list\n") == []
+    assert m.manifest_listed("x\n## Files\n(note)\n- a.py\n- b/c.md\n") == ["a.py", "b/c.md"]
+
+
+def test_release_refuses_unfilled_test_count_placeholders():
+    # README and the release notes carry {{TESTCOUNT}} and {{TESTRUN}} until the lead fills in the real numbers
+    # from the release run; make_release.py refuses to build while any is left, so they never ship.
+    m = make_release_module()
+    left = m.unfilled_placeholders()
+    for rel in m.PLACEHOLDER_FILES:
+        if re.search(r"\{\{[A-Z_]+\}\}", text(rel)):
+            assert any(x.startswith(rel + ":") for x in left), rel
+    src = text("scripts/release/make_release.py")
+    body = src[src.index("def main"):]
+    assert body.index("unfilled_placeholders()") < body.index("ZipFile(")

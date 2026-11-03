@@ -17,7 +17,7 @@ For every security-sensitive feature, ask Claude to cover:
 
 ## Mobile (Android & iOS)
 
-Triggered the same way as the Web matrix — by the "Run Security Test" phrase, scoped
+Triggered the same way as the Web matrix, by the "Run Security Test" phrase, scoped
 to mobile when a mobile project (Gradle/Android manifest, Xcode project/Info.plist) is
 detected, or when `--target mobile` is passed.
 

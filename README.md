@@ -238,7 +238,7 @@ You can also use `/security-gate` and `/advisory-qa`, or just ask in your own wo
 - Optional webhook to send findings to your tracker.
 
 **Proof, not promises**
-- 404 tests, 1058 cases (counted from a pytest run, parametrized cases included), CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
+- {{TESTCOUNT}} test cases (counted with pytest --collect-only, parametrized cases included), run in CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
 - Four labs with planted vulnerabilities (Laravel, Spring Boot, legacy webshells, common pentest findings),
   each with clean files that must stay quiet. Scores and every miss are in
   [benchmark/RESULTS.md](benchmark/RESULTS.md).
@@ -370,13 +370,16 @@ ship the package under its own internal name and still receive the signed update
   sandbox where you have it.
 - The deep review is done by the AI and can miss things, especially business logic. Keep the human pentest.
 - Server settings (TLS ciphers, open ports, admin panels on the host) are outside the code and are listed for the server team.
-- Claude Code gets the full hooks. Cursor, Codex, Gemini CLI and Antigravity get guard adapters that you install
-  by hand, with gaps: Cursor's generic preToolUse hook is not wired to the guard yet, so Cursor's own file edits
-  are not checked. Codex and Gemini CLI hooks cannot ask, so an "ask" is a deny there. Antigravity can ask, but
-  whether it blocks a call when the hook itself crashes or times out is untested.
+- Claude Code gets the full hooks. Cursor, Codex, Gemini CLI and Antigravity get guard adapters that
+  `install-global.py --agent` writes for you, with gaps: Cursor's generic preToolUse hook is not wired to the guard
+  yet, so Cursor's own file edits are not checked. Codex and Gemini CLI hooks cannot ask, so an "ask" is a deny
+  there. Antigravity can ask, but whether it blocks a call when the hook itself crashes or times out is untested.
+  Gemini CLI enforcement was checked live with the CLI's own test mode. For Codex and Antigravity the filled-in
+  hook lines are tested through PowerShell, Windows PowerShell and cmd, but not yet in a live session.
   Details in [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
 - The review history up to 6.2.2 is five internal review rounds and two outside-style attack rounds (the second
-  with fuzzing), each fix with a regression test. That is not a third-party audit.
+  with fuzzing), each fix with a regression test, and one internal pentest round, which found V7P-01 to V7P-03,
+  all fixed with tests. That is not a third-party audit.
 - Local DAST is a passive ZAP scan by default; it finds configuration and header issues far more often than
   logic bugs. It has been run live: real OWASP ZAP 2.17.0 (the cross-platform zip, started with `java -jar`)
   against a throwaway local site on 2026-11-03 found 9 alerts, and the report PDF passed `report_lint.py`. The
@@ -396,7 +399,7 @@ more secure code and protect the developer's machine from the agent. It is free 
 
 **Does it work with Cursor, Codex, Gemini CLI and Antigravity, or only Claude Code?**
 The rules, the deep review, the gate and the agent guard work with all five. The guard runs in Claude Code
-through its hooks, and in the others through small adapters you install by hand (Cursor: shell, MCP and file
+through its hooks, and in the others through small adapters that `install-global.py --agent` sets up (Cursor: shell, MCP and file
 reads; Codex: shell, patches and MCP, plus the stop gate; Gemini CLI and Antigravity: every tool). The per-edit
 check and the injection watch are Claude Code only. Setup is in [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md)
 and [templates/gemini/README.md](templates/gemini/README.md).

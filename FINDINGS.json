@@ -206,7 +206,7 @@
       "severity": "low",
       "where": "update.json readers",
       "what": "A Notepad BOM in update.json broke install and update",
-      "check": "utf-8-sig in install-global.py, updater.py, make_release.py",
+      "check": "check by reading install-global.py (no test covers a BOM in update.json): every update.json read uses encoding utf-8-sig, as do scripts/updater.py and scripts/release/make_release.py",
       "status": "fixed"
     },
     {

@@ -19,7 +19,7 @@ release key); nothing to do by hand.
 - **Every tool goes through the guard** (the hook matcher is `.*`), and any string argument that looks like a path
   or a file URL is checked, whatever its name or nesting.
 - **Cursor and Codex adapters** (`scripts/adapters/`, templates in `templates/cursor` and `templates/codex`),
-  installed by hand. Cursor: shell, MCP and file reads (Cursor has no hook before its own file edits). Codex:
+  set up with `install-global.py --agent cursor` or `--agent codex`. Cursor: shell, MCP and file reads (Cursor has no hook before its own file edits). Codex:
   shell, `apply_patch` and MCP; Codex hooks cannot ask yet, so an ask becomes a deny there.
 - **Git without the repo's programs.** The stop gate, the scanners and the engines run git with the repo's
   fsmonitor, hooks, filter and textconv drivers and signature verifiers switched off (`scripts/safe_git.py`); a
@@ -80,7 +80,43 @@ release key); nothing to do by hand.
 
 - The rules and the gate now work there too: `templates/gemini/` has the settings and a `GEMINI.md` that loads
   `AGENTS.md`, and Antigravity reads `~/.gemini/AGENTS.md` without a setting. The agent guard is wired to both
-  through their pre-tool hooks (`scripts/adapters/gemini_hook.py` and `antigravity_hook.py`, installed by hand).
+  through their pre-tool hooks (`scripts/adapters/gemini_hook.py` and `antigravity_hook.py`), set up with
+  `install-global.py --agent gemini` or `--agent antigravity`. Gemini CLI enforcement was checked live with the
+  CLI's own test mode; for Antigravity the filled-in hook line is tested through PowerShell, Windows PowerShell
+  and cmd.
+
+## Install and outside-test fixes
+
+- **Committed secrets stay out of reach** (V7P-01, high). The guard allowed git pathspecs such as `<rev>:<path>`
+  (`git show HEAD:.env`), which read a committed secret file straight from git's object store. They are now
+  checked like any other path.
+- **The secret shield masks app secret keys with a longer name** (V7P-02), such as `SECRET_KEY_BASE`, where the
+  secret word is followed by more of the name.
+- **A huge MCP config no longer stalls the gate** (V7P-03). The config scan read the file again for every server,
+  which was quadratic on a hostile `.mcp.json`; it is now one pass.
+- **Gemini CLI, Codex and Antigravity hooks on Windows really block** (V7L-01 and V7L-02, high). The hook lines
+  failed in the shell these tools use on Windows, and a failed hook lets the tool run. The lines are fixed and now
+  tested through pwsh, Windows PowerShell and cmd.
+- **Python paths with spaces work in hook lines** (V7GAP-H, high). Windows hook lines start with an unquoted
+  Python, so the installer writes the 8.3 short path, or refuses the adapter when there is no safe form.
+- **One command sets up the other agents** (V7GAP-4). `install-global.py --agent cursor|codex|gemini|antigravity`
+  fills the paths, backs up and merges your config, and `verify-global.py` shows which adapters are installed.
+- **"Run Security Test" finds Python on Windows** (V7GAP-1). The skill and rules carry the exact Python that
+  installed them.
+- **Windows users can check the signature** (V7GAP-2). The docs give the PowerShell form of the check.
+- **Old Python is refused up front** (V7GAP-3). Python older than 3.10 stops with the version found and how to
+  get a current one.
+- **The docs match the release zip** (V7GAP-A and V7GAP-C). They name the `aisec/` folder inside the zip, and
+  `doctor` and `setup` are pointed at your project, not at SecureCode itself.
+- **Update task problems are visible** (V7GAP-F, V7GAP-G and V7GAP-I). A task that could not be created is a
+  failed check; `--no-update-task` installs without it; and a schedule-only failure exits 4, so the updater
+  reports "updated, schedule warning" instead of a failed install.
+- **Local DAST works with Docker stopped** (V7GAP-5). A local ZAP jar is preferred over a Docker that is installed
+  but not running. `securecode.py setup --engine zap` installs ZAP 2.17.0, pinned with its SHA-256.
+- **A crashing scanner no longer hides the rest** (V7GAP-9). In `ci` mode the gate still prints every other
+  finding and a readable error for the scanner that failed.
+- **OWASP ASVS 5.0 chapters are mapped** (V7GAP-7) in `docs/STANDARDS-COVERAGE.md`, as guidance for reviewers,
+  not a compliance claim.
 
 ## Update mechanism
 
@@ -101,39 +137,52 @@ release key); nothing to do by hand.
 
 ## Proof from this release's runs
 
-- Tests: 932 passed, 9 skipped (Windows, Python 3.14; the skips are symlink tests this machine has no rights for,
-  three optional engines that are not installed, and the real Task Scheduler test, which runs on CI runners only). CI installs Semgrep, Trivy, Gitleaks and ssh-keygen in the
-  test job now and fails when a test is skipped that is not on `tests/skip-allowlist.json`.
+- Tests: {{TESTRUN}} on Windows, Python 3.14; CI runs the same suite on Windows and Linux with Python 3.10, 3.12
+  and 3.13 and fails on any skip that is not on tests/skip-allowlist.json.
 - The gate on its own repository: `secgate.py . --mode ci --fail-on high` passes (0 critical, 0 high).
 - Labs: the numbers in "Rules and labs" above.
 
 ## Known gaps
 
-These are open entries in `FINDINGS.json`:
+These are open entries in `FINDINGS.json` (ids in brackets):
+
+- A Claude Code transcript may keep the original tool output before the secret shield masks it, so a withheld
+  secret could still sit in `~/.claude/projects`. Run `secret_shield.py sweep` to find it. This needs a live
+  check on a real session (V7S-05).
+- The secret shield does not see secrets in the tool input, Monitor tool output, or secrets with no recognisable
+  shape (V7S-07).
+- Engines installed with pip or npm have only their own package hash-checked, not their dependencies (V7E-02).
+- nuclei resolves the staging host again itself, so a DNS answer that changes between the check and the scan
+  can still move a nuclei scan (V7I-06).
+- Cursor has no hook before its own file edits, so those edits are not checked by the guard (OPEN-02).
+- Only shell commands are classed as destructive or exposure: an MCP tool that publishes a package, or wrappers
+  with their own arguments such as `sudo -u x npm publish`, are not recognized (OPEN-03).
+- The guard reads command text, so a script or test the agent wrote earlier can do anything once it runs. Use the
+  native sandbox where your tool has one (OPEN-04).
+- A repo's `diff.external` cannot be switched off through the environment; nothing in the gate runs plain
+  `git diff` today (OPEN-05).
+- Task Scheduler restarts a task only when it fails to start, not when the updater exits with an error, and the
+  systemd service has no restart, so after a network error the next try is the next logon, boot or day (OPEN-06).
+- The gate lists git driver keys from an engine's working folder rather than the project, which matters only for
+  CodeQL with `--run-tests` (OPEN-07).
+- Semgrep is installed in CI by exact version, not by hash (OPEN-08).
+- `git clean -fdx` or `find . -delete` on the whole tree can still remove `.security` with its audit files, and
+  the size cap during the ZAP download is the global 400 MB, not the pinned size; the SHA-256 is still checked
+  (OPEN-09).
+
+Other limits, documented but not tracked as findings:
 
 - The Laravel binding rule does not follow authorization done in helper methods or in only one branch.
-- The secret shield does not see secrets in the tool input or secrets with no recognisable shape.
-- Engines installed with pip or npm have only their own package hash-checked, not their dependencies.
-- nuclei resolves the staging host again itself, so a DNS answer that changes between the check and the scan
-  can still move a nuclei scan.
-- Cursor has no hook before its own file edits, so those edits are not checked by the guard.
-- Only shell commands are classed as destructive or exposure: an MCP tool that publishes a package, or wrappers
-  with their own arguments such as `sudo -u x npm publish`, are not recognized.
-- The guard reads command text, so a script or test the agent wrote earlier can do anything once it runs. Use the
-  native sandbox where your tool has one.
-- A repo's `diff.external` cannot be switched off through the environment; nothing in the gate runs plain
-  `git diff` today.
-- Semgrep is installed in CI by exact version, not by hash, and the gate lists git driver keys from an engine's
-  working folder rather than the project (matters only for CodeQL with `--run-tests`).
-- Task Scheduler restarts a task only when it fails to start, not when the updater exits with an error, and the
-  systemd service has no restart, so after a network error the next try is the next logon, boot or day.
+- Codex and Antigravity enforcement is tested by running the filled-in hook lines through their documented
+  shells, not yet in a live session. Gemini CLI enforcement was checked live with the CLI's own test mode.
 
 ## Review history
 
 Up to 6.2.2: five internal review rounds and two outside-style attack rounds (the second with fuzzing). The 7.0
 guard is the answer to the second attack round, and each fix has a regression test. The 7.0 merge also had one
 independent internal review (a separate agent), which found two ways a repo's git config could still run a
-program and three update-mechanism bugs; all are fixed with tests. This is not a third-party audit.
+program and three update-mechanism bugs; all are fixed with tests. There was also one internal pentest round,
+which found V7P-01 to V7P-03, all fixed with tests. This is not a third-party audit.
 
 ## Try it
 
