@@ -883,11 +883,11 @@
     },
     {
       "id": "V7L-02",
-      "severity": "medium",
-      "where": "templates/codex/hooks.json, templates/antigravity/hooks.json",
-      "what": "Same '\"<PYTHON>\" -I ...' line shape as V7L-01. Not verified live: the Codex live run was stopped before a hook fired, and Antigravity is a GUI. If either runs hook commands through PowerShell on Windows, the guard fails open there too. Codex documents a commandWindows override that could carry a Windows form",
-      "check": "live test still to do: one blocked action per tool on Windows, with hook log evidence",
-      "status": "open"
+      "severity": "high",
+      "where": "templates/codex/hooks.json, scripts/adapters/codex_hook.py, templates/antigravity/hooks.windows.json",
+      "what": "Codex source (codex-rs/core/src/session/mod.rs build_hooks_config, core/src/shell.rs, hooks/src/engine/command_runner.rs, hooks/src/events/pre_tool_use.rs at 75a4146): on Windows Codex runs the hook line in the session shell, 'pwsh -NoProfile -Command <line>', 'cmd /c \"<line>\"' or 'bash -c', and any exit other than 0 or 2 is a failed hook and the tool runs. The old line ('\"<PYTHON>\" -I ...') is a parse error in PowerShell, and in PowerShell even a working line turns the adapter's exit 2 into 1. So in a PowerShell session no Codex deny could block (matches the live run where the hook log stayed empty). Fix: commandWindows for PreToolUse and Stop with an unquoted, space-free <PYTHON> (the only first word that runs in pwsh, Windows PowerShell and cmd; '&' breaks cmd), and codex_hook.py answers a deny with exit 0 + hookSpecificOutput.permissionDecision deny (exit 0 survives every shell). Antigravity does not document its shell; its adapter already answers exit 0 + JSON, and hooks.windows.json uses the same unquoted line",
+      "check": "tests/test_v7_guard.py::test_codex_template_lines_really_block_in_every_shell, ::test_antigravity_template_line_really_blocks_in_every_shell, ::test_codex_hook_process_end_to_end (each runs the filled-in line through pwsh, powershell and cmd as Codex spawns them). Still unverified in a live Codex or Antigravity session",
+      "status": "fixed"
     }
   ]
 }

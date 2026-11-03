@@ -8,7 +8,11 @@ Codex hook contract, checked against https://learn.chatgpt.com/docs/hooks on 202
 - PreToolUse input: common fields (session_id, cwd, hook_event_name, model, permission_mode) plus
   tool_name ("Bash", "apply_patch" or an MCP name such as mcp__fs__read), tool_use_id and tool_input.
   Bash and apply_patch put their text in tool_input.command; MCP tools send their arguments.
-- Deny: exit code 2 with the reason on stderr (or hookSpecificOutput.permissionDecision "deny").
+- Deny: exit code 2 with the reason on stderr, or exit 0 with hookSpecificOutput.permissionDecision "deny". Any
+  other exit code is a failed hook and the tool runs (codex-rs/hooks/src/events/pre_tool_use.rs). On Windows Codex
+  runs the hook line in the session shell (PowerShell, cmd or bash; codex-rs/core/src/session/mod.rs), and
+  'pwsh -Command' turns exit 2 into 1. So this adapter answers a deny with exit 0 and the JSON (V7L-02), and the
+  Windows template line (commandWindows) starts with an unquoted Python path, which every one of those shells runs.
 - permissionDecision "ask" is parsed but NOT supported yet: Codex marks the hook failed and runs the tool.
   So every "ask" from the guard is turned into a deny here, with the reason, and the person runs the
   command themselves. Owner mode therefore cannot prompt inside Codex today.
@@ -74,7 +78,14 @@ def handle(payload: dict, mode: str | None = None):
     return 2, f"Blocked by Org AI agent guard: {reason}\n"
 
 
+def deny_json(reason: str) -> str:
+    """Codex's JSON deny. Answered with exit 0, because a non-zero exit code does not survive every shell (V7L-02)."""
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                              "permissionDecisionReason": reason.strip() or "Blocked by Org AI agent guard."}})
+
+
 def main() -> int:
+    """Allow: exit 0, no output. Deny (and every error): exit 0 with the JSON deny on stdout, reason also on stderr."""
     try:
         data = sys.stdin.read(MAX_INPUT + 1)
         if len(data) > MAX_INPUT:
@@ -84,11 +95,15 @@ def main() -> int:
             raise ValueError("hook input is not an object")
         rc, err = handle(payload)
     except Exception as e:
-        sys.stderr.write(f"Blocked by Org AI agent guard: could not check this action safely ({type(e).__name__}).\n")
-        return 2
-    if err:
+        rc, err = 2, f"Blocked by Org AI agent guard: could not check this action safely ({type(e).__name__}).\n"
+    if rc == 0:
+        return 0
+    try:
+        print(deny_json(err), flush=True)
         sys.stderr.write(err)
-    return rc
+    except BaseException:
+        return 2                                       # could not answer in JSON: exit 2 still blocks in cmd and sh
+    return 0
 
 
 if __name__ == "__main__":

@@ -51,6 +51,11 @@ Sources: see `docs/SOURCES.md`.
   `~/.codex/config.toml`, copy `templates/codex/rules/org.rules` to `~/.codex/rules/`. Guard and stop hooks:
   copy `templates/codex/hooks.json` to `~/.codex/hooks.json`, fill in `<PYTHON>` and `<APP>`, then trust the
   hooks in `/hooks` (Codex skips untrusted hooks; managed `requirements.toml` hooks are trusted by policy).
+  On Windows Codex uses `commandWindows` and runs it in the session shell (PowerShell, cmd or bash), so that line
+  starts with an unquoted `<PYTHON>` that has no spaces (use the 8.3 short path): a quoted first word is a parse
+  error in PowerShell and `&` is an error in cmd. `pwsh -Command` also turns exit 2 into 1, which Codex counts as
+  a failed hook and then runs the tool, so the adapter answers a deny with exit 0 and Codex's JSON
+  `permissionDecision: "deny"` (finding V7L-02, checked against the Codex source, not yet in a live Codex run).
   Codex parses a hook "ask" but does not support it yet and would run the tool, so the adapter turns every
   ask into a deny with the reason; the developer runs such a command themselves.
 - **Gemini CLI**: copy `AGENTS.md` to `~/.gemini/AGENTS.md` and merge `templates/gemini/settings.json`
@@ -66,12 +71,15 @@ Sources: see `docs/SOURCES.md`.
   tool (https://geminicli.com/docs/hooks/reference/). Gemini CLI lets a tool run when a hook exits with any code
   other than 0 or 2 or prints text that is not JSON, so the adapter only exits 0 (allow) or 2 (deny) and denies
   on every error. There is no "ask" decision, so an ask becomes a deny with the reason.
-- Guard hooks for Antigravity: copy `templates/antigravity/hooks.json` to `~/.gemini/config/hooks.json` (or
+- Guard hooks for Antigravity: copy `templates/antigravity/hooks.json` (macOS, Linux) or
+  `templates/antigravity/hooks.windows.json` (Windows) to `~/.gemini/config/hooks.json` (or
   `.agents/hooks.json` in one workspace), fill in `<PYTHON>` and `<APP>`, and check it with `/hooks`. It runs
   `scripts/adapters/antigravity_hook.py` as a `PreToolUse` hook (https://antigravity.google/docs/hooks/). Asks
   are sent as `force_ask`, so a cached "Always Allow" cannot skip them. The docs describe only the JSON decision,
   not exit codes or timeouts, so the adapter always prints an explicit decision; whether Antigravity blocks a
-  call when the hook itself crashes or times out is untested. Details: `templates/gemini/README.md`.
+  call when the hook itself crashes or times out is untested. The docs do not name the shell either, so the
+  Windows line starts with an unquoted, space-free `<PYTHON>`, which PowerShell, Windows PowerShell and cmd all
+  run (tested in those shells, not yet in a live Antigravity session). Details: `templates/gemini/README.md`.
 
 ## Owner mode and managed mode
 

@@ -30,7 +30,8 @@ Follow these steps in order and stop and tell me if any check fails.
    guard hook by hand, following docs/AI-AGENT-SECURITY.md (Codex: ~/.codex/AGENTS.md plus templates/codex;
    Cursor: User Rules, .cursorignore for .env files, templates/cursor/hooks.json; Gemini CLI: ~/.gemini/AGENTS.md,
    templates/gemini/settings.json and settings.hooks.json; Antigravity: ~/.gemini/AGENTS.md and
-   templates/antigravity/hooks.json). Back up every file first.
+   templates/antigravity/hooks.json; on Windows use settings.hooks.windows.json, hooks.windows.json and the Codex
+   commandWindows lines). Back up every file first.
 10. Tell me to restart this AI tool, because rules and hooks load at start.
 11. Explain auto-update: a daily task checks GitHub for newer signed releases and installs them by itself; an
     unsigned, tampered or older release is refused. Show me how to turn it off (ENTERPRISE_DEPLOYMENT.md). The
