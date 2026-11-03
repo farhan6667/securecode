@@ -450,6 +450,126 @@ def test_no_update_task_and_update_task_are_exclusive_flags():
         G.main(["--no-update-task", "--update-task"])
 
 
+def test_exit_code_is_4_only_when_the_schedule_alone_failed():
+    good = {"runtime": True, "agent_guard": True}
+    assert G.exit_code(dict(good, auto_update=True)) == 0
+    assert G.exit_code(dict(good)) == 0
+    assert G.exit_code(dict(good, auto_update=False)) == G.EXIT_SCHEDULE_ONLY == 4
+    assert G.exit_code(dict(good, runtime=False, auto_update=False)) == 1
+    assert G.exit_code(dict(good, auto_update=False), ["FAILED cursor: x"]) == 1
+    upd = load(ROOT / "scripts" / "updater.py", "upd_gapfix_code")
+    assert upd.INSTALL_SCHEDULE_ONLY == G.EXIT_SCHEDULE_ONLY
+
+
+KEYGEN = shutil.which("ssh-keygen")
+
+
+@pytest.mark.skipif(not KEYGEN, reason="ssh-keygen not installed")
+@pytest.mark.parametrize("rc,want", [(4, "updated-schedule-warning"), (0, "updated"), (1, "install-failed rc=1")])
+def test_updater_reports_a_schedule_only_failure_as_updated_with_a_warning(tmp_path, rc, want):
+    import zipfile
+    app = tmp_path / "app"
+    (app / "scripts").mkdir(parents=True); (app / "config").mkdir()
+    shutil.copy2(ROOT / "scripts" / "updater.py", app / "scripts" / "updater.py")
+    (app / "install-report.json").write_text(json.dumps({"version": "7.0.0"}), encoding="utf-8")
+    key = tmp_path / "k"
+    subprocess.run([KEYGEN, "-q", "-t", "ed25519", "-N", "", "-C", "t", "-f", str(key)], check=True,
+                   stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+    (app / "config" / "allowed_signers").write_text("security@org " + (tmp_path / "k.pub").read_text(), encoding="utf-8")
+    z = tmp_path / "Org_AI.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr("aisec/install-global.py", f'VERSION="7.9.0"\nimport sys\nsys.exit({rc})\n')
+    subprocess.run([KEYGEN, "-Y", "sign", "-f", str(key), "-n", "org-appsec-update", str(z)], check=True,
+                   stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+    sig = Path(str(z) + ".sig")
+
+    def fetch(kind, url, dest):
+        if kind == "release":
+            return {"tag_name": "v7.9.0", "assets": [{"name": "Org_AI.zip", "url": "zip", "size": z.stat().st_size},
+                                                    {"name": "Org_AI.zip.sig", "url": "sig", "size": sig.stat().st_size}]}
+        shutil.copy2(z if url == "zip" else sig, dest)
+    upd = load(app / "scripts" / "updater.py", f"upd_gapfix_{rc}")
+    cfg = {"repo": "org/x", "asset": "Org_AI.zip", "signer_identity": "security@org"}
+    assert upd.check_and_update(cfg, None, fetch=fetch, workdir=tmp_path / "w") == want
+    if rc == 4:
+        assert "schedule warning" in upd.result_line(want) and "updated to" in upd.result_line(want)
+
+
+# ---------- V7GAP-H: unquoted, space-free Python in Windows hook lines (Codex commandWindows, Antigravity) ----------
+
+def test_bare_python_shortens_a_path_with_spaces():
+    calls = []
+
+    def short(p):
+        calls.append(p)
+        return r"C:\PROGRA~1\PYTHON~1\python.exe"
+    assert G.bare_python(r"C:\Program Files\Python 3\python.exe", short) == "C:/PROGRA~1/PYTHON~1/python.exe"
+    assert calls == [r"C:\Program Files\Python 3\python.exe"]
+    assert G.bare_python(r"C:\Python312\python.exe", lambda p: pytest.fail("no short name needed")) == "C:/Python312/python.exe"
+
+
+@pytest.mark.parametrize("short", ["", r"C:\Program Files\Python 3\python.exe", r"C:\A&B\python.exe", r"C:\a^b\py.exe",
+                                   r"C:\a%b%\py.exe", 'C:\\a"b\\py.exe', r"C:\a;b\py.exe"])
+def test_bare_python_refuses_when_no_safe_short_form_exists(short):
+    with pytest.raises(RuntimeError, match="without spaces"):
+        G.bare_python(r"C:\Program Files\Python 3\python.exe", lambda p: short)
+
+
+@pytest.mark.parametrize("agent", ["codex", "antigravity"])
+def test_windows_lines_get_the_short_path_and_quoted_lines_the_full_one(tmp_path, monkeypatch, agent):
+    monkeypatch.setattr(G, "SYSTEM", "windows")
+    exe = r"C:\Program Files\Python 3\python.exe"
+    filled = G.agent_template(agent, tmp_path / "OrgAISecureAppSec", exe=exe,
+                              get_short=lambda p: r"C:\PROGRA~1\PYTHON~1\python.exe")
+    raw = json.dumps(filled)
+    assert "<PYTHON>" not in raw and "<APP>" not in raw
+    if agent == "codex":
+        entries = [h for ev in filled["hooks"].values() for g in ev for h in g["hooks"]]
+        assert all(h["commandWindows"].startswith('C:/PROGRA~1/PYTHON~1/python.exe -I "') for h in entries)
+        assert all(h["command"].startswith('"C:/Program Files/Python 3/python.exe" -I') for h in entries)
+    else:
+        cmds = commands(filled)
+        assert cmds and all(c.startswith('C:/PROGRA~1/PYTHON~1/python.exe -I "') for c in cmds)
+
+
+@pytest.mark.parametrize("agent", ["codex", "antigravity"])
+def test_windows_adapter_is_refused_and_nothing_written_without_a_short_path(tmp_path, monkeypatch, agent):
+    monkeypatch.setattr(G, "SYSTEM", "windows")
+    monkeypatch.setattr(G, "_get_short_path_name", lambda p: "")
+    monkeypatch.setattr(G, "console_python", lambda exe=None: r"C:\Program Files\Python 3\python.exe")
+    ad = app_with_runtime(tmp_path)
+    res = G.install_agents(ad, [agent], G.HOME)
+    assert res[0].startswith(f"FAILED {agent}") and "without spaces" in res[0]
+    assert not G.agent_config_path(agent, G.HOME).exists()
+    # Gemini has no unquoted line, so it still installs with the same Python.
+    assert not G.install_agents(ad, ["gemini"], G.HOME)[0].startswith("FAILED")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows hook lines")
+def test_installer_filled_windows_lines_really_deny_in_every_shell(tmp_path, monkeypatch):
+    """The lines --agent writes (not hand-filled ones) run in pwsh, Windows PowerShell and cmd, and deny."""
+    V = load(ROOT / "tests" / "test_v7_guard.py", "v7guard_for_gapfix")
+    if V._plain_python() is None:
+        pytest.skip("no space-free path to this Python")
+    shells = V._hook_shells()
+    project, app, env = V._runtime_with_space(tmp_path)
+    monkeypatch.setattr(G, "SYSTEM", "windows")
+    codex = G.agent_template("codex", app)["hooks"]["PreToolUse"][0]["hooks"][0]["commandWindows"]
+    anti = commands(G.agent_template("antigravity", app))[0]
+    assert not codex.startswith(('"', "&")) and not anti.startswith(('"', "&"))
+    ev = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "git reset --hard"},
+                     "cwd": str(project)})
+    a = json.dumps({"workspacePaths": [str(project)], "toolCall": {"name": "run_command", "args": {"CommandLine": "cat .env"}}})
+    assert shells
+    for name, wrap in shells.items():
+        p = subprocess.run(wrap(codex), input=ev, text=True, capture_output=True, env=env, cwd=project, timeout=60,
+                           encoding="utf-8")
+        assert V._codex_verdict(p) == "deny", (name, p.returncode, p.stderr[-300:])
+        p = subprocess.run(wrap(anti), input=a, text=True, capture_output=True, env=env, cwd=project, timeout=60,
+                           encoding="utf-8")
+        assert p.returncode == 0 and json.loads(p.stdout)["decision"] == "deny", (name, p.returncode, p.stderr[-300:])
+
+
 def test_windows_installer_passes_its_arguments_on():
     ps = text("install-windows.ps1")
     assert '"$Root\\install-global.py" @args' in ps

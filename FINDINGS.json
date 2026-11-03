@@ -968,6 +968,22 @@
       "what": "No way to install without the scheduled update task; --no-update-task skips it (remembered for later runs, undone by --update-task) and install-windows.ps1 passes its arguments on",
       "check": "tests/test_v7_gapfix_install.py::test_no_update_task_never_calls_schtasks_and_is_remembered; tests/test_v7_gapfix_install.py::test_no_update_task_and_update_task_are_exclusive_flags; tests/test_v7_gapfix_install.py::test_windows_installer_passes_its_arguments_on",
       "status": "fixed"
+    },
+    {
+      "id": "V7GAP-H",
+      "severity": "high",
+      "where": "install-global.py agent_template, bare_python (--agent codex, --agent antigravity on Windows)",
+      "what": "The Windows hook lines (Codex commandWindows, Antigravity hooks.windows.json) start with an unquoted Python, so a path with a space or & ^ % \" would make the line fail and the tool run. The installer now writes the 8.3 short path (GetShortPathNameW) and refuses the adapter with a plain message, writing nothing, when no safe form exists",
+      "check": "tests/test_v7_gapfix_install.py::test_bare_python_shortens_a_path_with_spaces; tests/test_v7_gapfix_install.py::test_bare_python_refuses_when_no_safe_short_form_exists; tests/test_v7_gapfix_install.py::test_windows_lines_get_the_short_path_and_quoted_lines_the_full_one; tests/test_v7_gapfix_install.py::test_windows_adapter_is_refused_and_nothing_written_without_a_short_path; tests/test_v7_gapfix_install.py::test_installer_filled_windows_lines_really_deny_in_every_shell",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-I",
+      "severity": "low",
+      "where": "install-global.py exit_code, scripts/updater.py check_and_update",
+      "what": "After an auto-update where only schtasks failed, the updater logged install-failed although the files were updated. The installer now exits 4 for a schedule-only failure and the updater reports updated (schedule warning)",
+      "check": "tests/test_v7_gapfix_install.py::test_exit_code_is_4_only_when_the_schedule_alone_failed; tests/test_v7_gapfix_install.py::test_updater_reports_a_schedule_only_failure_as_updated_with_a_warning",
+      "status": "fixed"
     }
   ]
 }

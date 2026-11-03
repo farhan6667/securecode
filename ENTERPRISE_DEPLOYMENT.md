@@ -83,6 +83,10 @@ that already exists; remove that as shown below. If the schedule is wanted but c
 `schtasks` fails), the installer prints a WARNING, `install-report.json` shows `"auto_update": false` under
 `checks`, and `verify-global.py` warns when the Windows task is missing.
 
+Installer exit codes: `0` everything installed; `4` everything installed except the daily update schedule (for
+example `schtasks` failed), so an auto-update that hits this logs `updated (schedule warning)` instead of a failed
+install; `1` anything else failed.
+
 To stop it: Windows `schtasks /Delete /TN "NexaForge SecureCode Update" /F` (or your brand name followed by
 ` Update`); Linux `systemctl --user disable --now nexaforge-securecode-update.timer` and delete the two unit
 files in `~/.config/systemd/user/`; macOS `launchctl bootout gui/$(id -u)/eu.nexaforge.nexaforge-securecode.update`
