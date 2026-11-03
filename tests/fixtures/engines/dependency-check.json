@@ -1,0 +1,23 @@
+{
+  "reportSchema": "1.1",
+  "scanInfo": {"engineVersion": "13.0.0", "dataSource": [{"name": "NVD API Last Modified", "timestamp": "2026-11-01T00:00:00Z"}]},
+  "projectInfo": {"name": "securecode-scan", "reportDate": "2026-11-03T10:00:00Z", "credits": {"NVD": "This product uses the NVD API but is not endorsed or certified by the NVD."}},
+  "dependencies": [
+    {
+      "isVirtual": false, "fileName": "log4j-core-2.14.1.jar", "filePath": "PROJECT/lib/log4j-core-2.14.1.jar",
+      "sha1": "9141212b8507ab50a45525b545b39d224614528b",
+      "vulnerabilities": [
+        {"source": "NVD", "name": "CVE-2021-44228", "severity": "CRITICAL",
+         "cvssv3": {"baseScore": 10.0, "attackVector": "NETWORK", "baseSeverity": "CRITICAL"},
+         "cwes": ["CWE-502", "CWE-400", "CWE-20"],
+         "description": "Apache Log4j2 JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled endpoints."}
+      ]
+    },
+    {
+      "isVirtual": false, "fileName": "commons-text-1.9.jar", "filePath": "PROJECT/lib/commons-text-1.9.jar",
+      "vulnerabilities": [{"source": "NVD", "name": "CVE-2022-42889", "severity": "UNKNOWN", "cvssv3": {"baseScore": 9.8},
+                           "description": "Apache Commons Text performs variable interpolation."}]
+    },
+    {"isVirtual": false, "fileName": "slf4j-api-2.0.17.jar", "filePath": "PROJECT/lib/slf4j-api-2.0.17.jar"}
+  ]
+}

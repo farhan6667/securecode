@@ -1,0 +1,3 @@
+# Package-owned osv-scanner settings for secgate ci mode. Passing this file with --config makes osv-scanner
+# ignore every osv-scanner.toml inside the scanned repo, so a pull request cannot hide its own
+# vulnerabilities. Reviewed exceptions belong in the security team's central suppressions file instead.

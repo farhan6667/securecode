@@ -1,0 +1,20 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {"driver": {"name": "SpotBugs", "version": "4.9.3", "language": "en",
+                          "rules": [{"id": "SQL_INJECTION_JDBC", "shortDescription": {"text": "Potential JDBC Injection"}},
+                                    {"id": "PREDICTABLE_RANDOM", "shortDescription": {"text": "Predictable Pseudo Random Number Generator"}}]}},
+      "results": [
+        {"ruleId": "SQL_INJECTION_JDBC", "ruleIndex": 0, "level": "error",
+         "message": {"text": "This use of java/sql/Statement.executeQuery can be vulnerable to SQL injection (with JDBC)"},
+         "locations": [{"physicalLocation": {"artifactLocation": {"uri": "com/example/UserDao.java", "uriBaseId": "SRCROOT"},
+                                             "region": {"startLine": 42}}}]},
+        {"ruleId": "PREDICTABLE_RANDOM", "ruleIndex": 1, "level": "warning",
+         "message": {"text": "This random generator (java.util.Random) is predictable"},
+         "locations": [{"physicalLocation": {"artifactLocation": {"uri": "com/example/Tokens.java"}, "region": {"startLine": 9}}}]}
+      ]
+    }
+  ]
+}
