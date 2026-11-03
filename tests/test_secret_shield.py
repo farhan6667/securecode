@@ -395,3 +395,23 @@ def test_shield_is_registered_identically_in_all_installers():
     for tool in ("Bash", "Read", "Grep", "WebFetch", "PowerShell"):
         assert tool in m.group(1).split("|")
     assert "mcp__.*" in m.group(1)
+
+
+# --- V7P pentest round (Fable) ---
+
+@pytest.mark.parametrize("key", ["SECRET_KEY", "JWT_SECRET_KEY", "APP_SECRET_KEY", "SECRET_KEY_BASE", "TOKEN_VALUE"])
+def test_v7p_secret_word_before_more_key_chars_is_redacted(key):
+    """V7P-02: the secret-assignment rule missed SECRET_KEY=... because the secret word had to sit right
+    before the separator, so a trailing _KEY/_BASE broke the match. Django/Rails/Flask's canonical secret
+    leaked through the shield."""
+    val = j("Q7v", "x9Lp", "2ZaR", "8mKd", "Wq1")
+    red, live = S.redact_text(f"{key}={val}")
+    assert live and "[REDACTED by secret shield:" in red and val not in red, key
+
+
+def test_v7p_secret_word_key_redos_budget():
+    import time
+    for txt in ("SECRET_KEY=" * 180000, "secret" + "_K1" * 90000 + "=abcDEF123456"):
+        t0 = time.monotonic()
+        S.redact_text(txt, time.monotonic() + 10)
+        assert time.monotonic() - t0 < 4, len(txt)
