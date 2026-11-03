@@ -131,7 +131,8 @@ def everyday_cases(tmp_root):
     return out
 
 
-def test_everyday_corpus_prompt_rate_is_under_five_percent():
+def test_everyday_corpus_prompt_rate_is_under_one_percent():
+    # README claims "1 of 256 everyday commands asked" and "under 1 in 100"; this enforces it (V7GAP-6).
     cases = everyday_cases(ROOT)
     assert len(cases) >= 200, len(cases)
     asks, denies = [], []
@@ -149,7 +150,7 @@ def test_everyday_corpus_prompt_rate_is_under_five_percent():
     rate = len(asks) / len(cases)
     print(f"everyday corpus: {len(cases)} commands, {len(asks)} ask, {len(denies)} deny, ask rate {rate:.1%}")
     assert not denies, denies
-    assert rate < 0.05, (rate, asks)
+    assert rate < 0.01, (rate, asks)
 
 
 def test_plain_read_only_sed_grep_head_never_prompt():

@@ -239,26 +239,59 @@ def _zap_dirs() -> list[Path]:
         tools = str(Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "nexaforge-tools")
     zroot = Path(tools) / "zap"
     if zroot.is_dir():
-        dirs += sorted((d for d in zroot.glob("ZAP_*") if d.is_dir() and not d.is_symlink()), reverse=True)
+        dirs += sorted((d for d in zroot.glob("ZAP_*") if d.is_dir() and not d.is_symlink()), key=version_key, reverse=True)
     dirs += [Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "ZAP/Zed Attack Proxy",
              Path("/Applications/ZAP.app/Contents/Java"), Path("/opt/zaproxy"), Path("/usr/share/zaproxy")]
     return dirs
 
 
-def find_zap() -> tuple[str, object] | None:
-    """Returns ("docker", path) or ("local", argv prefix). A local ZAP is run as `java -jar zap-X.jar`
-    with an absolute java from PATH: no .bat (cmd.exe parsing) and no zap.sh on Windows, where a shell
-    script cannot be started (that crashed the first real run)."""
-    docker = find_tool("docker")
-    if docker:
-        return "docker", docker
+def version_key(p) -> tuple:
+    """Sort key from the dotted version in a ZAP folder or jar name, compared as numbers: ZAP_2.17.0 beats
+    ZAP_2.9.0 (a text sort picks 2.9). Names without a dotted version (weekly builds) sort below released ones."""
+    name = Path(str(p)).name
+    m = re.search(r"(\d{1,6}(?:\.\d{1,6}){1,4})", name)
+    if not m:
+        return (0, (), name)
+    return (1, tuple(int(x) for x in m.group(1).split(".")), name)
+
+
+DOCKER_DOWN_NOTE = ("Docker is installed but not running; start Docker Desktop or run: "
+                    "py -I scripts/securecode.py setup --engine zap")
+
+
+def docker_running(docker: str, runner=None) -> bool:
+    """`docker info` talks to the daemon; it fails fast when Docker Desktop is installed but not started."""
+    runner = runner or subprocess.run
+    try:
+        r = runner([docker, "info"], capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return getattr(r, "returncode", 1) == 0
+
+
+def find_local_zap() -> list[str] | None:
+    """A local ZAP is run as `java -jar zap-X.jar` with an absolute java from PATH: no .bat (cmd.exe parsing)
+    and no zap.sh on Windows, where a shell script cannot be started (that crashed the first real run)."""
     java = find_tool("java")
     for d in _zap_dirs():
-        jars = sorted(p for p in d.glob("zap-*.jar") if p.is_file()) if d.is_dir() else []
+        jars = sorted((p for p in d.glob("zap-*.jar") if p.is_file()), key=version_key) if d.is_dir() else []
         if jars and java:
-            return "local", [java, "-Xmx1g", "-jar", str(jars[-1])]
+            return [java, "-Xmx1g", "-jar", str(jars[-1])]
         if os.name != "nt" and (d / "zap.sh").is_file():
-            return "local", [str(d / "zap.sh")]
+            return [str(d / "zap.sh")]
+    return None
+
+
+def find_zap(runner=None) -> tuple[str, object] | None:
+    """Returns ("local", argv prefix), ("docker", path), ("docker_down", path) or None.
+    A local ZAP (what `securecode setup --engine zap` installs) wins. Docker is used only when there is no local
+    ZAP and its daemon answers `docker info`; Docker Desktop that is installed but not started is "docker_down"."""
+    local = find_local_zap()
+    if local:
+        return "local", local
+    docker = find_tool("docker")
+    if docker:
+        return ("docker", docker) if docker_running(docker, runner) else ("docker_down", docker)
     return None
 
 
@@ -369,6 +402,10 @@ def main(argv=None, resolver=default_resolver, runner=subprocess.run, popen=subp
         write_result(out, {**base, "status": "not_run", "note": "OWASP ZAP and Docker are not installed. " + INSTALL_HINT})
         return 0
     kind, exe = zap
+    if kind == "docker_down":
+        print(f"NOTE: {DOCKER_DOWN_NOTE}. Nothing was scanned.")
+        write_result(out, {**base, "tool": "docker", "status": "failed", "note": DOCKER_DOWN_NOTE})
+        return 5
     work = out.parent / "dast"
     work.mkdir(parents=True, exist_ok=True)
     report_json = work / "zap-report.json"
