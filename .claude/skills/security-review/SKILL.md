@@ -83,9 +83,40 @@ until the developer agrees: produce the Advisory QA report (format below), then 
    queries, parameter binding, auto-escaping, validated upload rules). Add a negative test per fix
    (user A cannot read user B's object; a script tag is escaped; an `.php` upload is refused).
    If a fix needs a product decision, stop and ask with the exact options.
-5. **Re-run** the gate and the new tests. Repeat until the verdict is PASSED or only items that need
+   Before the first fix, copy `.security/findings.json` to `.security/findings-before.json`: the
+   report lists what was found then and checks every retest against the latest run.
+5. **Re-run** the gate and the project tests. Repeat until the verdict is PASSED or only items that need
    a decision remain.
-6. **Report** in the format below. Never call the project "100% secure"; list what was not checked
+
+Steps 6 to 9 are the automated pentest at the end of Mode B. Mode C runs step 6 (if the developer
+agrees) and step 8 without a retest, and never step 9.
+
+6. **Local DAST (optional, ask once).** Ask the developer one question: "Can the app run on this
+   machine? If yes, give me the URL (for example http://127.0.0.1:8000) and, if I should start it, the
+   exact start command." Then run
+   `python "<APP>/scripts/local_dast.py" --target <url> [--start "<their command>"] [--api openapi.json]`.
+   It scans loopback only (127.0.0.0/8, ::1) and refuses anything else. Never make up a start command
+   from package.json, a Procfile or other repo files; use only what the developer typed. It runs a
+   passive baseline by default; add `--active` only if the developer agrees (it sends attack payloads to
+   their local app). No Docker or ZAP: it prints a note and an install hint; carry on without DAST.
+   Staging hosts stay on the existing explicit flow (`SECURITY_DAST_ALLOW=true` plus `SECURITY_DAST_URL`).
+7. **Retest with outcome labels.** Write `.security/retest.json` with one entry per id (`F-01`, `D-01`):
+   `Pass` only with evidence (the test or command that reached the sink and was refused, after trying
+   at least one variant: other quoting, encoding, verb or field), `Fail`, `Partial`,
+   `Compensating control`, or `Risk accepted` (only with `accepted_by` and `date` given by the
+   developer, never assumed). "The gate is silent now" is never the evidence. Grep for the same
+   construction elsewhere (the missing instance): each sibling becomes its own finding, or, when found
+   during the retest, an entry under `observations`. List test users, seeded rows and files you
+   created in `.security/artifacts.json`.
+8. **Professional report.** Run `python "<APP>/scripts/report.py" --pdf` (writes `.security/REPORT.md`,
+   `REPORT.html`, and `REPORT.pdf` when Chrome or Edge is installed), then
+   `python "<APP>/scripts/report_lint.py"`. Fix every lint error before handover.
+9. **Offer a fix PR.** Ask whether to open a pull request with the fixes. If yes, run
+   `python "<APP>/scripts/fix_pr.py" --add <each new test file>` (a dry run) and show the plan; only
+   after the developer agrees, run it again with `--open`. It never touches the default branch, never
+   force pushes, refuses when gitleaks finds a secret in the added lines, and the push asks the
+   developer for approval. It needs `gh` (GitHub CLI) signed in.
+10. **Report** in the format below. Never call the project "100% secure"; list what was not checked
    (runtime config, infrastructure, business rules you could not infer).
 
 ## Report format (required when triggered)
@@ -95,7 +126,10 @@ until the developer agrees: produce the Advisory QA report (format below), then 
 2. **Coverage**: entry points reviewed vs found, classes checked, what could not be checked.
 3. **Findings table**: # | Issue | OWASP category | Severity | File:line / function | Impact and root cause | Status (fixed / needs decision / open).
 4. **Hardened remediation**: vulnerable vs fixed code for every finding, and the negative test added.
-5. **Developer pre-pentest verification**: the exact commands to re-run (gate, tests).
+5. **Developer pre-pentest verification**: the exact commands to re-run (gate, tests), and the path to
+   `.security/REPORT.html` (and the PDF): executive summary, scope and method (tools that ran and that
+   did not), findings with CIA impact and a retest outcome label on every one, attack chains,
+   artifacts and limits.
 6. **Mode C only, Advisory QA summary**: per OWASP Top 10 category a status (OK / issues / not
    applicable / not verifiable from code), the top fixes in priority order, and a plain readiness
    call: "ready for security team", "ready after fixes 1-3", or "not ready".

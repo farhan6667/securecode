@@ -204,6 +204,27 @@ py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on h
 
 `RESULT: PASS` means no High or Critical finding. Reports go to `.security/findings.json` and `.security/findings.sarif`.
 
+## Automated pentest when you're done
+
+After `Run Security Test` has fixed what it can, the agent finishes the job the way a pentester would:
+
+| Step | What happens | What it needs |
+|---|---|---|
+| Local DAST | asks once whether your app runs on this machine, then runs an OWASP ZAP baseline (or API) scan against it. Only `localhost`, `127.x.x.x` and `::1` are allowed; the name is resolved once and the IP pinned | Docker, or ZAP installed. Without them it says so and carries on |
+| Retest | every finding gets a label: Pass, Fail, Partial, Compensating control or Risk accepted. A Pass needs the test that proves it; a risk acceptance needs your name and a date | nothing extra |
+| Report | `.security/REPORT.html` (print-ready A4) and `REPORT.md`: executive summary, what ran and what did not, findings with CIA impact, attack chains, artifacts, limits. `report_lint.py` checks it before handover | Chrome or Edge for the optional PDF |
+| Fix PR | a dry run first; on your yes, a `securecode/fix-<date>` branch and a draft PR with the report summary. Never the default branch, never a force push, refused if gitleaks finds a secret in the change | `gh` (GitHub CLI) signed in, and gitleaks |
+
+```bash
+py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\local_dast.py" --target http://127.0.0.1:8000 --start "php artisan serve --port 8000"
+py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\report.py" --pdf
+py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\report_lint.py"
+py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\fix_pr.py" --add tests/Security/OrderPolicyTest.php
+```
+
+`--start` is only ever the command you type; nothing is started from files in the repo. The scan is passive
+unless you add `--active`. It is still an automated test, not a replacement for a human pentest.
+
 ## For teams
 
 Per-user installs can be removed by their user. Real enforcement is the managed install (read-only runtime,
@@ -217,6 +238,8 @@ ship the package under its own internal name and still receive the signed update
 - The deep review is done by the AI and can miss things, especially business logic. Keep the human pentest.
 - Server settings (TLS ciphers, open ports, admin panels on the host) are outside the code and are listed for the server team.
 - Cursor and Codex get the rules and the gate, but not the Claude Code hooks.
+- Local DAST is a passive ZAP scan by default and needs Docker or ZAP; it finds configuration and header
+  issues far more often than logic bugs. Attack chains in the report are a simple heuristic for a person to confirm.
 - No tool proves software is free of vulnerabilities. Known gaps are in [SECURITY-CONTEXT.md](SECURITY-CONTEXT.md).
 
 ## Frequently asked questions

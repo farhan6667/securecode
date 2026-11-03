@@ -1,0 +1,93 @@
+{
+  "@programName": "ZAP",
+  "@version": "2.17.0",
+  "@generated": "Mon, 3 Nov 2026 10:00:00",
+  "created": "2026-11-03T10:00:00Z",
+  "insights": [],
+  "site": [
+    {
+      "@name": "http://127.0.0.1:8000",
+      "@host": "127.0.0.1",
+      "@port": "8000",
+      "@ssl": "false",
+      "alerts": [
+        {
+          "pluginid": "10038",
+          "alertRef": "10038-1",
+          "alert": "Content Security Policy (CSP) Header Not Set",
+          "name": "Content Security Policy (CSP) Header Not Set",
+          "riskcode": "2",
+          "confidence": "3",
+          "riskdesc": "Medium (High)",
+          "desc": "<p>Content Security Policy (CSP) is an added layer of security that helps to detect and mitigate certain types of attacks.</p>",
+          "instances": [
+            {"id": "1", "uri": "http://127.0.0.1:8000/orders/7", "method": "GET", "param": "", "attack": "", "evidence": "", "otherinfo": ""}
+          ],
+          "count": "1",
+          "solution": "<p>Ensure that your web server, application server, load balancer, etc. is configured to set the Content-Security-Policy header.</p>",
+          "otherinfo": "",
+          "reference": "<p>https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP</p>",
+          "cweid": "693",
+          "wascid": "15",
+          "sourceid": "1"
+        },
+        {
+          "pluginid": "10023",
+          "alertRef": "10023",
+          "alert": "Information Disclosure - Debug Error Messages",
+          "name": "Information Disclosure - Debug Error Messages",
+          "riskcode": "1",
+          "confidence": "2",
+          "riskdesc": "Low (Medium)",
+          "desc": "<p>The response appeared to contain common error messages returned by platforms such as ASP.NET, and Web-servers such as IIS and Apache.</p>",
+          "instances": [
+            {"id": "2", "uri": "http://127.0.0.1:8000/orders/7?debug=1", "method": "GET", "param": "", "attack": "", "evidence": "<script>alert('x')</script> Stack trace ‮", "otherinfo": ""}
+          ],
+          "count": "1",
+          "solution": "<p>Disable debugging messages before pushing to production.</p>",
+          "cweid": "1295",
+          "wascid": "13",
+          "sourceid": "2"
+        },
+        {
+          "pluginid": "40012",
+          "alertRef": "40012",
+          "alert": "Cross Site Scripting (Reflected)",
+          "name": "Cross Site Scripting (Reflected)",
+          "riskcode": "3",
+          "confidence": "2",
+          "desc": "<p>Cross-site Scripting (XSS) is an attack technique that involves echoing attacker-supplied code into a user's browser instance.</p>",
+          "instances": [
+            {"id": "3", "uri": "http://127.0.0.1:8000/orders/7?q=x", "method": "GET", "param": "q", "attack": "<scrIpt>alert(1);</scRipt>", "evidence": "<scrIpt>alert(1);</scRipt>", "otherinfo": ""}
+          ],
+          "count": "1",
+          "solution": "<p>Use output encoding.</p>",
+          "cweid": "79",
+          "wascid": "8",
+          "sourceid": "3"
+        },
+        {
+          "pluginid": "10096",
+          "alertRef": "10096",
+          "alert": "Timestamp Disclosure - Unix",
+          "name": "Timestamp Disclosure - Unix",
+          "riskcode": "0",
+          "confidence": "0",
+          "desc": "<p>Marked as a false positive by the reviewer.</p>",
+          "instances": [],
+          "count": "0",
+          "cweid": "497"
+        },
+        "not an alert object",
+        {
+          "pluginid": "10020",
+          "name": "Missing Anti-clickjacking Header",
+          "riskcode": "weird",
+          "confidence": "2",
+          "instances": "not a list",
+          "cweid": 1021
+        }
+      ]
+    }
+  ]
+}

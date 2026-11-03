@@ -59,6 +59,39 @@ developer machines, plus CI templates. It runs with the developer's own rights a
   edit to a config template) is blocked too. Use the Edit tool for such files.
 - Heuristic rules have false positives; the self-scan suppressions cover the package's own rule tables only.
 
+**Automated pentest scripts (7.0, new attack surface).**
+- `report.py` reads `.security/*.json` that scanners filled with text taken from the scanned code and from
+  HTTP responses, so every value is attacker-controlled. It redacts secret values (gitleaks-style patterns;
+  secret-type findings show no excerpt at all), shows control, zero-width and bidirectional characters as
+  `[U+XXXX]`, escapes Markdown (pipes, links, headings, raw HTML) and HTML, and gives REPORT.html a
+  `default-src 'none'` CSP so a missed escape still cannot run script. Malformed or oversized (50 MB) input
+  gives a BLOCKED report, not a crash. `report_lint.py` refuses overclaims ("100% secure"), unlabelled
+  findings, a Pass without evidence, a risk acceptance without a name and date, unmasked secrets and hidden
+  characters. Optional PDF printing runs a locally installed Chrome or Edge headless, with a throwaway
+  profile, on the local file only.
+- `local_dast.py` sends traffic, so its target check is the security boundary. It accepts http(s) only, with no
+  user info, backslashes or zone ids in the URL. Hosts are parsed the way browsers parse them (decimal, octal
+  and hex IPv4 forms, IPv4-mapped IPv6) and must be loopback; a DNS name is resolved once, every answer must be
+  loopback, and ZAP gets the pinned IP literal, so DNS rebinding cannot move the scan. Anything else needs the
+  existing person-set `SECURITY_DAST_ALLOW=true` plus an exact `SECURITY_DAST_URL` and the staging checks of
+  `run-nuclei-authorized.py`. With Docker on Windows or macOS the container reaches the host through Docker
+  Desktop's fixed `host.docker.internal` name (not attacker DNS); on Linux it uses host networking. The ZAP
+  image is pinned by digest. The ZAP plan is written as JSON, so no value can change its structure.
+  `--start` is the only way it starts a program: the command typed by the person, split into an argument list
+  (no shell; shell operators refused; the program looked up on PATH, never in the project folder; cmd.exe
+  metacharacters refused on Windows), refused when the port is already taken, with a start timeout and a
+  process-tree teardown. Accepted: the agent could still pass `--start` itself. The skill tells it to use only
+  the developer's own command, and the agent guard's normal rules apply to that command line. The developer's
+  app is a program they asked to run; `--active` sends attack payloads to it and is opt-in.
+- `fix_pr.py` writes to git and GitHub. It is a dry run unless `--open` is given. It never stages untracked
+  files (only `git add -u`, plus files named one by one with `--add`, which must be inside the repo, not
+  ignored, and not secret-looking names such as `.env` or key files); it refuses when new files are already
+  staged that were not named; it refuses without gitleaks and when gitleaks or the built-in patterns find a
+  secret in the added lines; it creates only `securecode/fix-YYYYMMDD[-n]` branches, refuses the default and
+  protected branch names, pushes an explicit refspec with no force, and the agent guard asks the person before
+  the push. The PR body is the escaped report summary. Accepted: the PR holds code the agent wrote; a person
+  still reviews it before merging.
+
 **Deployment.** Per user (`%LOCALAPPDATA%\OrgAISecureAppSec`), managed (`%ProgramFiles%\OrgAISecureAppSec`),
 CI (pinned, hash-verified scanners). Updates from the public GitHub repo `farhan6667/nexaforge-securecode`
 (or an organization's own fork), signed with an offline ed25519 key.
