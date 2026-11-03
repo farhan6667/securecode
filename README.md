@@ -378,8 +378,9 @@ ship the package under its own internal name and still receive the signed update
   hook lines are tested through PowerShell, Windows PowerShell and cmd, but not yet in a live session.
   Details in [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
 - The review history up to 6.2.2 is five internal review rounds and two outside-style attack rounds (the second
-  with fuzzing), each fix with a regression test, and one internal pentest round, which found V7P-01 to V7P-03,
-  all fixed with tests. That is not a third-party audit.
+  with fuzzing), each fix with a regression test. 7.0 then had four more internal attack rounds, each attacking
+  the previous round's fixes; every finding is fixed with a test, and the last round still found one high, so the
+  guard is a strong tripwire, not a sandbox. That is not a third-party audit.
 - Local DAST is a passive ZAP scan by default; it finds configuration and header issues far more often than
   logic bugs. It has been run live: real OWASP ZAP 2.17.0 (the cross-platform zip, started with `java -jar`)
   against a throwaway local site on 2026-11-03 found 9 alerts, and the report PDF passed `report_lint.py`. The

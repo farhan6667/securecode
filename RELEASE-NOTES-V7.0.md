@@ -117,6 +117,23 @@ release key); nothing to do by hand.
   finding and a readable error for the scanner that failed.
 - **OWASP ASVS 5.0 chapters are mapped** (V7GAP-7) in `docs/STANDARDS-COVERAGE.md`, as guidance for reviewers,
   not a compliance claim.
+- **More ways to read a committed secret through git are closed** (V7P2-02 high, V7P2-03). `git cat-file --batch`
+  fed from stdin or a file, `--pathspec-from-file`, pathspec magic, and `git archive`, `format-patch` or
+  `stash show` of a secret are refused in managed mode and asked about on your own machine; dumps of the whole
+  tree ask first.
+- **The secret shield cannot be stalled into giving up** (V7P2-01 high). A crafted tool output could make one
+  pattern so slow that the hook timed out and the original output went through; every pattern is now linear,
+  measured up to 2 MB.
+- **The guard reads commands the way the shell does** (V7P3-01 high). PowerShell treats a lone carriage return as
+  a new line and curly quotes as quotes, and Git Bash drops carriage returns; the guard now does the same before
+  it decides.
+- **Very large tool calls are no longer cut short** (V7P3-02 high). A file tool call with hundreds of paths was
+  checked only up to a limit; past a much higher limit the call is now asked about or refused, never passed.
+- **A control character in a file path is refused** (V7P4-01 high). A newline inside a file tool's path skipped
+  the path check, and Windows still resolved the path; this was there since 6.2.0.
+- **The shield sees through terminal colours and more secret shapes** (V7P3-03, V7P3-04). Colour codes or NUL
+  bytes around a token no longer hide it, and `Authorization` headers, XML passwords and `redis://:pw@host` are
+  masked.
 
 ## Update mechanism
 
@@ -169,6 +186,12 @@ These are open entries in `FINDINGS.json` (ids in brackets):
 - `git clean -fdx` or `find . -delete` on the whole tree can still remove `.security` with its audit files, and
   the size cap during the ZAP download is the global 400 MB, not the pinned size; the SHA-256 is still checked
   (OPEN-09).
+- `git log -p`, `git grep "" HEAD` and reading a blob by its id can still print a committed secret; blocking them
+  would break everyday git, so the secret shield is the control there (OPEN-10).
+- The secret shield misses some shapes: space-separated values (`.netrc`, `--password X`, Dockerfile `ENV`),
+  cookies, keys whose name has no secret word (`APP_KEY`, `SIGNING_KEY`), XML CDATA and a few odd byte tricks
+  (V7P3-L1, V7P3-L2, V7P4-L1, V7P4-L2). Very long strings under non-path keys of a tool call are not checked
+  (V7P4-L3).
 
 Other limits, documented but not tracked as findings:
 
@@ -181,8 +204,11 @@ Other limits, documented but not tracked as findings:
 Up to 6.2.2: five internal review rounds and two outside-style attack rounds (the second with fuzzing). The 7.0
 guard is the answer to the second attack round, and each fix has a regression test. The 7.0 merge also had one
 independent internal review (a separate agent), which found two ways a repo's git config could still run a
-program and three update-mechanism bugs; all are fixed with tests. There was also one internal pentest round,
-which found V7P-01 to V7P-03, all fixed with tests. This is not a third-party audit.
+program and three update-mechanism bugs; all are fixed with tests. Before release there were four more
+internal attack rounds, each by a separate agent with fuzzing and live shell checks, each attacking the previous
+round's fixes: 6 high and 5 medium findings in total (V7P, V7P2, V7P3, V7P4), all fixed with regression tests
+that fail without the fix. The fourth round still found one high, so we expect more edge cases in a
+pattern-based guard; treat it as a strong tripwire, not a sandbox. This is not a third-party audit.
 
 ## Try it
 
