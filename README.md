@@ -63,6 +63,49 @@ macOS: `brew install semgrep trivy gitleaks`. Restart the AI tool afterwards.
 Updates install by themselves once a day, and only releases signed with the NexaForge key.
 [How to turn that off](ENTERPRISE_DEPLOYMENT.md#auto-update).
 
+## It fixes OWASP Top 10 issues while you vibe code
+
+You don't need to know security. You ask for a feature, and the agent builds it the safe way from the first
+line. Three layers work together:
+
+1. **While writing**, the agent follows the rules, so the safe version is what gets written.
+2. **After every edit** (Claude Code), a quick check flags risky code right away, and the agent fixes it in the same session.
+3. **Before handover**, `Security Test Karo` reviews the whole project, fixes what it safely can, re-tests it,
+   and the gate blocks anything still high risk.
+
+| Risk (OWASP Top 10 and common pentest findings) | What the agent does for you |
+|---|---|
+| **IDOR and broken access control** (user A opens user B's order) | checks ownership on every route, scopes queries to the logged-in user, adds a cross-user test; Laravel rules flag routes and controllers missing it |
+| **SQL and command injection** | parameterized queries and argument lists only; Semgrep injection rules block the build |
+| **XSS** | output encoding by default; flags raw template output (Blade `{!! !!}`, Twig `raw`, React raw HTML) |
+| **Mass assignment** | no `$request->all()` into models; the rule catches it, including through a variable |
+| **Security misconfiguration** | security headers per framework, secure cookies, debug off, no exposed `.git` or backups in the web root |
+| **Outdated libraries** | finds old jQuery, Bootstrap and other packages (Trivy, plus Retire.js when installed) and upgrades instead of hiding them |
+| **Secrets in code** | Gitleaks plus a hard rule: no keys or passwords in code, tests or commits |
+| **Weak crypto and auth** | no MD5/SHA1 for passwords, secure random tokens, TLS checks on, login rate limits |
+| **Unsafe uploads** | type and content checks, private storage, scripts refused |
+| **Supply chain** | asks before any new package and checks it exists and is not days old (`package_age.py`) |
+
+It also protects you from the agent: a poisoned file in a cloned repo cannot make it read your `.env`,
+change its own settings or push your code somewhere public.
+
+## How it is different
+
+| | Plain scanner | AI review only | Rules file only | **NexaForge SecureCode** |
+|---|:---:|:---:|:---:|:---:|
+| Secure code from the first line | no | no | yes | **yes** |
+| Finds issues after each edit | no | no | no | **yes (Claude Code)** |
+| Fixes the code and re-tests it | no | sometimes | no | **yes** |
+| Real scanners (Semgrep, Trivy, Gitleaks) | yes | no | no | **yes** |
+| Access control (IDOR) rules and tests | rarely | sometimes | no | **yes** |
+| Guards your machine from the agent | no | no | no | **yes** |
+| Signed auto-updates | varies | no | no | **yes** |
+| Works with Claude Code, Cursor and Codex | n/a | one tool | one tool | **all three** |
+| Measured on a lab with planted bugs | varies | no | no | **yes, 17 of 18** |
+
+Everything runs on your machine. Your code is not sent to any NexaForge service (your AI tool still talks to its own model provider, as usual). The limits are listed
+plainly under [Honest limits](#honest-limits).
+
 ## What you get
 
 | Part | What it does |
