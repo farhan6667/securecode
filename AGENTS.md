@@ -91,3 +91,11 @@ readiness call: ready for the security team, ready after fixes 1-3, or not ready
 
 Before saying any feature is done, review your own change against the classes it touches
 (endpoint: access control and IDOR; upload: upload rules; query: injection; dependency: versions) and fix it.
+
+## 8. Offer the security test when the work is done
+
+When you finish a substantial task (3 or more code files changed, or 40 or more changed lines, since you last
+offered) and no "Run Security Test" has run since those changes, end by asking the developer one short question:
+"Do you want me to run a full security test now (Run Security Test)?" Run it only after a yes. If they say no or
+later, accept it and do not ask again for the same changes. Skip the offer for tiny edits, docs-only changes
+and pure questions. In Claude Code and Codex the stop hook reminds you; in Cursor this rule is the reminder.

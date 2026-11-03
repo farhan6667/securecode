@@ -203,7 +203,52 @@ def put_hook(hooks: dict, event: str, matcher: str, cmd: str, marker: str, timeo
     filtered.append({"matcher":matcher,"hooks":[{"type":"command","command":cmd,"timeout":timeout,"description":marker}]})
     hooks[event]=filtered
 
-def install_settings(ad: Path):
+GUARD_MODES=("owner","managed")
+POLICY_NAME="guard-policy.json"
+# Claude Code permission rules that deny what owner mode turns into an "ask" (deny beats every hook "ask",
+# so in owner mode they move to the ask list; in managed mode they stay in deny).
+OWNER_ASK_RULES=["Bash(git push --force*)","Bash(git push -f*)","Bash(git reset --hard*)"]
+
+def read_guard_mode(ad: Path):
+    """The mode in <app>/config/guard-policy.json, or None when missing or not a valid policy."""
+    try:
+        f=Path(ad)/"config"/POLICY_NAME
+        if f.is_symlink() or f.stat().st_size>4096: return None
+        data=json.loads(f.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return None
+    return data.get("mode") if isinstance(data,dict) and data.get("mode") in GUARD_MODES else None
+
+def install_guard_policy(ad: Path, mode: str|None=None) -> str:
+    """Per-user installs default to owner mode. A valid existing policy is kept unless --guard-mode is given,
+    so an organization that set "managed" for a user is not undone by an update."""
+    if mode is not None and mode not in GUARD_MODES:
+        raise RuntimeError(f"--guard-mode must be one of {', '.join(GUARD_MODES)}")
+    current=read_guard_mode(ad)
+    if mode is None and current:
+        return current
+    mode=mode or "owner"
+    f=Path(ad)/"config"/POLICY_NAME
+    f.parent.mkdir(parents=True,exist_ok=True)
+    if f.is_symlink(): f.unlink()
+    f.write_text(json.dumps({"mode":mode,"version":1},indent=2)+"\n",encoding="utf-8")
+    return mode
+
+def align_permissions(data: dict, mode: str) -> dict:
+    """Owner mode: the force-push and hard-reset rules move from deny to ask, or the guard's ask could never be
+    reached. Managed mode: they stay in deny (and are added there if missing)."""
+    perms=data.setdefault("permissions",{})
+    deny=list(perms.get("deny",[])) if isinstance(perms.get("deny"),list) else []
+    ask=list(perms.get("ask",[])) if isinstance(perms.get("ask"),list) else []
+    if mode=="owner":
+        deny=[x for x in deny if x not in OWNER_ASK_RULES]
+        ask+=[x for x in OWNER_ASK_RULES if x not in ask]
+    else:
+        deny+=[x for x in OWNER_ASK_RULES if x not in deny]
+    perms["deny"]=deny; perms["ask"]=ask
+    return data
+
+def install_settings(ad: Path, mode: str="managed"):
     settings=claude_dir()/"settings.json"
     settings.parent.mkdir(parents=True,exist_ok=True)
     if settings.exists():
@@ -225,6 +270,7 @@ def install_settings(ad: Path):
     if perms_file.exists():
         # Adds our deny/ask rules; existing user rules are kept (merge appends unique entries).
         data=merge_preserving_list(data,json_load(perms_file))
+    data=align_permissions(data,mode)
     backup_path(settings) if settings.exists() else None
     settings.write_text(json.dumps(data,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     return str(settings)
@@ -312,12 +358,16 @@ def verify(ad:Path):
         "global_hook":(ad/"scripts/global_hook.py").exists(),
         "agent_guard":(ad/"scripts/agent_guard.py").exists(),
         "agent_rules":(ad/"AGENTS.md").exists(),
+        "guard_policy":read_guard_mode(ad) is not None,
     }
     return checks
 
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--verify-only",action="store_true")
+    ap.add_argument("--guard-mode",choices=GUARD_MODES,
+                    help="owner (default for a new per-user install): force push, hard reset, public repo and publish ask "
+                         "with the exact command; managed: they are denied. An existing policy is kept unless this is given.")
     args=ap.parse_args()
     cd=claude_dir(); ad=app_dir(); ad.mkdir(parents=True,exist_ok=True)
     if not args.verify_only:
@@ -336,7 +386,9 @@ def main():
         report["changes"].append({"skill":install_skill()})
         report["changes"].append({"commands":install_commands()})
         report["changes"].append({"global_CLAUDE_md":install_user_claude_md()})
-        report["changes"].append({"settings":install_settings(ad)})
+        mode=install_guard_policy(ad,args.guard_mode)
+        report["changes"].append({"guard_mode":mode})
+        report["changes"].append({"settings":install_settings(ad,mode)})
         report["changes"].append({"auto_update":register_updates(ad)})
 
     report["checks"]=verify(ad)

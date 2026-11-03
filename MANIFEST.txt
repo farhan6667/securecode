@@ -38,3 +38,11 @@ Added after review (V6.2 final)
 - docs/COMMON-FINDINGS.md (common pentest findings); library_scan and config_scan rules
 - scripts/stop_gate.py (Stop hook), scripts/updater.py (signed auto-update), scripts/release/make_release.py
 - install-managed.py (organization-enforced install), SECURITY-CONTEXT.md, docs/THIRD-PARTY-REVIEW.md
+
+7.0 guard work (not released yet)
+- config/guard-policy.json (written by the installers, not shipped): owner mode asks with the literal command
+  for force push, hard reset, force branch delete, public repo or gist and package publish; managed mode
+  denies them; missing or malformed policy means managed. Asks are logged to .security/guard-audit.jsonl.
+- scripts/adapters/cursor_hook.py and scripts/adapters/codex_hook.py; templates/cursor/hooks.json and
+  templates/codex/hooks.json.
+- scripts/stop_gate.py offers "Run Security Test" once per substantial change set (3+ code files or 40+ lines).

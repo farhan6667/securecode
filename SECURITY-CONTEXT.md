@@ -59,6 +59,50 @@ developer machines, plus CI templates. It runs with the developer's own rights a
   edit to a config template) is blocked too. Use the Edit tool for such files.
 - Heuristic rules have false positives; the self-scan suppressions cover the package's own rule tables only.
 
+**Owner mode vs managed mode (7.0).** The guard's policy file `config/guard-policy.json` lives in its own
+runtime folder, never in a project, so a cloned repo cannot choose its mode.
+- Owner mode (the per-user default) trusts the person at the keyboard: destructive actions (force, mirror or
+  delete push, `git reset --hard`, `git branch -D`) and exposure actions (public repo or gist, package publish)
+  become an "ask" that shows the literal command, with the collapsed form added when it differs, and control,
+  bidi and invisible characters spelled out. The threat it still handles is a prompt-injected agent: it cannot
+  do these without the person's yes, and the person sees exactly what will run. The accepted risk is the person
+  approving without reading. A command too long to show (over 2000 characters) is denied.
+- Managed mode (written by `install-managed.py` into the read-only runtime) trusts nobody at the keyboard: those
+  classes are denied as in 6.2. A per-user owner policy is ignored when `managed-settings.json` or the managed
+  runtime exists on the machine (Program Files on Windows, `/Library/Application Support/ClaudeCode` on macOS,
+  `/etc/claude-code` on Linux).
+- Fail closed: a missing, unreadable, oversized, linked or malformed policy (unknown keys, duplicate keys, a mode
+  other than the two names) means managed mode. The repo checkout ships no policy file, so it runs managed.
+- Never relaxed in either mode: secrets (never an "ask"), pipe-to-shell, writes to the agent's own config, the
+  runtime, update keys, the policy file and the audit log, home and root deletes, and evasion routes (git
+  aliases or config that turn a push into a force push, `gh api --input`). Each statement is checked by every
+  deny rule even when it also matches a class, so `git push -f > ~/.claude/x` stays a deny.
+- New dependencies (`npm i x`, `pip install x`, ...) ask in both modes. In owner mode the installer also moves the
+  three force-push and hard-reset Claude Code permission rules from deny to ask; otherwise they would refuse
+  before the guard could ask.
+- Audit: every "ask" appends one line to `.security/guard-audit.jsonl` in the project (UTC time, mode, tool,
+  command and reason, truncated, with token-like values, inline passwords and URL credentials removed). The
+  agent may not write that file through the guard, but it is a convenience record in a project folder, not a
+  tamper-proof log (the agent can still delete `.security/` as a whole). It does not record the person's answer.
+  The write refuses links, junctions, hard links, the home folder and drive roots.
+- Known gaps: an MCP tool that publishes or creates a public repo is not classed (only shell commands are);
+  `sudo -u user npm publish` and other wrappers with arguments may not be recognized as a publish; branch
+  deletes through other tools are not seen.
+
+**Cursor and Codex adapters.** `scripts/adapters/cursor_hook.py` maps Cursor's `beforeShellExecution`,
+`beforeMCPExecution` and `beforeReadFile` hooks to the same checks; Cursor has no hook before file edits, so
+Cursor's own edits are not checked by the guard. `beforeReadFile` cannot ask, so an ask is a deny there. The
+template sets `failClosed: true`, because Cursor otherwise lets the action through when a hook crashes.
+`scripts/adapters/codex_hook.py` covers Codex `PreToolUse` (shell, `apply_patch` file names, MCP); Codex parses
+an "ask" but runs the tool anyway, so the adapter turns every ask into a deny. Codex documents its hooks as a
+guardrail, not a complete boundary, and hosted tools such as web search bypass them.
+
+**End-of-task pentest offer.** `stop_gate.py` asks the agent once to offer "Run Security Test" when 3 or more code
+files or 40 or more changed lines (added plus deleted; all lines of a new file) changed since the last offer and no
+ci or full gate report is newer than those changes. The offer is recorded in `.security/pentest-offer.json`
+before it is shown, so it comes once per change set; if that record cannot be written or read, no offer is made
+(it never nags). It is a nudge, not a control: the agent can write that file or a fake report to silence it.
+
 **Deployment.** Per user (`%LOCALAPPDATA%\OrgAISecureAppSec`), managed (`%ProgramFiles%\OrgAISecureAppSec`),
 CI (pinned, hash-verified scanners). Updates from the public GitHub repo `farhan6667/nexaforge-securecode`
 (or an organization's own fork), signed with an offline ed25519 key.

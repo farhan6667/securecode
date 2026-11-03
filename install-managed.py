@@ -59,6 +59,9 @@ def main() -> int:
             shutil.copytree(PKG / folder, app / folder, dirs_exist_ok=True)
     if kept_brand is not None:
         brand.write_bytes(kept_brand)
+    # Managed policy: destructive and exposure actions are denied, never "ask". Always rewritten, and the
+    # runtime is read-only for users below, so neither a user nor the agent can switch it to owner mode.
+    G.install_guard_policy(app, "managed")
     shutil.copy2(PKG / "AGENTS.md", app / "AGENTS.md")
     managed.mkdir(parents=True, exist_ok=True)
 
@@ -75,6 +78,7 @@ def main() -> int:
     G.put_hook(hooks, "PostToolUse", "Read|WebFetch|mcp__.*", cmd("injection_watch.py"), "org-ai-injection-watch", 20)
     G.put_hook(hooks, "Stop", "", cmd("stop_gate.py"), "org-ai-stop-gate", 90)
     data = G.merge_preserving_list(data, json.loads((PKG / "config" / "agent-permissions.json").read_text(encoding="utf-8")))
+    data = G.align_permissions(data, "managed")
     data.setdefault("permissions", {})["disableBypassPermissionsMode"] = "disable"
     data["enableAllProjectMcpServers"] = False
     if a.lock:
@@ -99,7 +103,8 @@ def main() -> int:
                             "/grant:r", "*S-1-5-18:(OI)(CI)F", "/grant:r", "*S-1-5-32-545:(OI)(CI)RX", "/T", "/Q"],
                            capture_output=True, text=True)
         acl = "read-only for users" if p.returncode == 0 else f"FAILED: {p.stderr.strip()[:200]}"
-    report = {"product_name": G.read_product_name(app), "version": G.VERSION, "runtime": str(app), "managed_settings": str(sf), "managed_claude_md": str(cm),
+    report = {"product_name": G.read_product_name(app), "version": G.VERSION, "runtime": str(app), "guard_mode": G.read_guard_mode(app),
+              "managed_settings": str(sf), "managed_claude_md": str(cm),
               "locked_hooks": a.lock, "runtime_acl": acl}
     print(json.dumps(report, indent=2))
     return 0 if not acl.startswith("FAILED") else 1

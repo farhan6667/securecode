@@ -26,4 +26,7 @@ OrgAISecureAppSec app folder). Short version, always on:
    the classes it touches and fix what you find. The most frequent pentest findings are in
    `docs/COMMON-FINDINGS.md` (or `docs/ORG-FINDINGS.md` if your organization added one): outdated jQuery/Bootstrap and other libraries come first. Upgrade, never suppress.
 9. Report residual risk; never claim "100% secure".
+10. When you finish substantial work (3+ code files or 40+ changed lines since your last offer) and no
+   "Run Security Test" has run since, offer it in one short question. Run it only on a yes; a no stands
+   for those changes. The stop hook reminds you once.
 <!-- ORG-AI-APPSEC-GATE-END -->

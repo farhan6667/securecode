@@ -13,10 +13,16 @@ Exit 2 blocks the call and shows stderr to the agent. "ask" is returned as PreTo
 Fails closed: malformed input, internal errors and over-long commands exit 2. All checks are
 linear-time (no backtracking-heavy regexes) so the hook cannot be pushed past its timeout.
 Rules are documented in docs/AI-AGENT-SECURITY.md.
+
+Policy modes (config/guard-policy.json next to this runtime, see load_policy): "owner" turns the
+destructive and exposure classes (force push, hard reset, force branch delete, public repo or gist,
+package publish) into an "ask" that shows the literal command; "managed" denies them. A missing,
+unreadable or malformed policy, or a managed install on the machine, means "managed". Secrets,
+pipe-to-shell and writes to the agent's own config never become an "ask".
 """
 from __future__ import annotations
-import fnmatch, json, os, re, sys
-from pathlib import PurePath
+import fnmatch, json, os, re, stat, sys, time
+from pathlib import Path, PurePath
 from urllib.parse import unquote
 
 MAX_COMMAND = 20_000
@@ -59,7 +65,7 @@ USER_HOME = (r"(?:~[\w.-]{0,64}|\$home|\$\{home[^}]{0,40}\}|\$env:userprofile|\$
 CLAUDE_DIR = r"(?:\.claude(?![\w-])|claude~\d)"
 PROTECTED = re.compile(USER_HOME + r"[/\\]+" + CLAUDE_DIR + r"|managed-settings\.json|allowed_signers|orgaisecureappsec"
                        r"|orgais~\d|orgai[*?]|site-packages[/\\]+[^\s\"']*\.pth\b|(?<![\w-])sitecustomize\.py|(?<![\w-])usercustomize\.py"
-                       r"|\bpy\.ini\b", re.I)
+                       r"|\bpy\.ini\b|(?<![\w-])guard-policy\.json|(?<![\w-])guard-audit\.jsonl", re.I)
 # The same without a repo's own allowed_signers file, which git may add and commit like any other file.
 HOME_PROTECTED = re.compile(USER_HOME + r"[/\\]+" + CLAUDE_DIR + r"|managed-settings\.json|orgaisecureappsec|orgais~\d|orgai[*?]", re.I)
 # A relative .claude folder, which only matters when the shell is already in the home folder.
@@ -355,14 +361,20 @@ def git_rule(words: list[str], text: str, ctx: dict):
         sub = r
         break
     after = rest[j + 1:]
+    # Writes into protected places come first: a reset --hard inside ~/.claude must stay a deny even in owner
+    # mode, where the destructive class below would only ask.
+    writes_file = any(a.startswith("--output") or a == "-o" for a in after)    # git diff --output=x, git archive -o x
+    if (sub not in GIT_READ_ONLY or writes_file) and (ctx.get("protected") or HOME_PROTECTED.search(text) or HOME_PROTECTED.search(collapse(text))
+                                     or ((home_opt or ctx.get("home")) and REL_CLAUDE.search(" ".join(after)))):
+        return no_write
     if any(w.startswith("alias.") and re.search(r"\b(push|reset)\b|!", " ".join(rest)) for w in rest):
         return "deny", "git aliases for push or reset (or shell aliases) are not allowed from the agent; ask the user."
     if sub == "push" and any(long_opt(a, "--force", "--force-with-lease", "--force-if-includes", "--mirror", "--delete", "--prune")
                              or (re.fullmatch(r"-[a-z]+", a) and set(a[1:]) & {"f", "d"})
                              or (a[:1] in "+:" and len(a) > 1) for a in after):
-        return "deny", "force, mirror or delete pushes are not allowed; ask the user to do it themselves."
+        return "destructive", "a force, mirror or delete push rewrites or removes history on the remote."
     if sub == "send-pack" and any(long_opt(a, "--force", "--mirror") or (a[:1] in "+:" and len(a) > 1) for a in after):
-        return "deny", "force or mirror pushes are not allowed; ask the user to do it themselves."
+        return "destructive", "a force or mirror push rewrites history on the remote."
     if sub == "config":
         pos = [a for a in after if not a.startswith("-")]
         if len(pos) >= 2 and config_forces_push(pos[0], pos[1]):
@@ -370,12 +382,23 @@ def git_rule(words: list[str], text: str, ctx: dict):
     if sub == "remote" and any(a == "--mirror" or a.startswith("--mirror=") for a in after):
         return force_cfg
     if sub == "reset" and any(long_opt(a, "--hard") for a in after):
-        return "deny", "git reset --hard discards work; ask the user first."
-    writes_file = any(a.startswith("--output") or a == "-o" for a in after)    # git diff --output=x, git archive -o x
-    if (sub not in GIT_READ_ONLY or writes_file) and (ctx.get("protected") or HOME_PROTECTED.search(text) or HOME_PROTECTED.search(collapse(text))
-                                     or ((home_opt or ctx.get("home")) and REL_CLAUDE.search(" ".join(after)))):
-        return no_write
+        return "destructive", "git reset --hard discards uncommitted work."
+    if sub == "branch" and branch_force_delete(text):
+        return "destructive", "force-deleting a branch can lose commits that are not merged anywhere."
     return None
+
+
+def branch_force_delete(text: str) -> bool:
+    """git branch -D x, -df, --delete --force (case matters here: -d only deletes merged branches)."""
+    toks = re.findall(r"\S+", text)
+    k = next((n for n, t in enumerate(toks) if t.lower() == "branch"), None)
+    if k is None:
+        return False
+    args = toks[k + 1:]
+    short = [a[1:] for a in args if re.fullmatch(r"-[A-Za-z]+", a)]
+    delete = any(long_opt(a.lower(), "--delete") for a in args) or any("d" in s.lower() for s in short)
+    force = any("D" in s or "f" in s for s in short) or any(long_opt(a.lower(), "--force") for a in args)
+    return delete and force
 
 
 def gh_rule(words: list[str]):
@@ -389,9 +412,9 @@ def gh_rule(words: list[str]):
         body = re.sub(r"[\s\"'\\]", "", " ".join(rest))
         if ("repo" in rest and "create" in rest and public) or ("repo" in rest and "edit" in rest and vis) or \
            ("api" in rest and any(x in body for x in ("private=false", "private:false", "visibility=public", "visibility:public"))):
-            return "deny", "creating or opening a public repo is not allowed from the agent; ask the user (known exfiltration route)."
+            return "exposure", "creating or opening a public repo publishes code (also a known exfiltration route)."
         if "gist" in rest and "create" in rest and any(a in ("-p", "--public") or a.startswith("--public=") for a in rest):
-            return "deny", "public gists are not allowed from the agent; ask the user (known exfiltration route)."
+            return "exposure", "a public gist publishes files (also a known exfiltration route)."
         # gh api --input file.json sends a body the guard cannot read; refuse it for repo, gist and GraphQL calls.
         if "api" in rest and any(a == "--input" or a.startswith("--input=") for a in rest) and \
                 any(re.search(r"(^|/)(graphql|repos|gists)(/|$)", a) for a in rest):
@@ -471,8 +494,15 @@ def check_statement(stmt: str, ctx: dict | None = None):
     if re.search(r"\b(powershell|pwsh)(\.exe)?\b[^|;]*\s-(e|ec|en|enc|enco\w*|encodedcommand)\s+[a-z0-9+/=]{16,}", low):
         return "deny", "encoded PowerShell commands cannot be checked; run the plain command instead."
     r = git_rule(pwords, plain, ctx) or gh_rule(pwords)
-    if r:
+    if r and r[0] == "deny":
         return r
+    # A class result (destructive, exposure, install) is only the floor: every deny check below still runs on the
+    # same statement, so "git push -f > ~/.claude/x" or "npm i x --prefix ~/.claude" never shrinks to an ask.
+    cls = r or publish_rule(pipe_parts) or install_rule(pipe_parts)
+    return stronger(_statement_tail(stmt, ctx, pipe_parts, plain, unesc, norm, words, pwords, fw, heads, low), cls)
+
+
+def _statement_tail(stmt, ctx, pipe_parts, plain, unesc, norm, words, pwords, fw, heads, low):
     # Links and drive letters that point at the home folder make every later path check blind.
     if (fw in ("ln", "mklink", "subst", "junction") or (fw in ("new-item", "ni") and re.search(r"symboliclink|junction|hardlink", low))) \
             and (re.search(USER_HOME + r"(?:[/\\]+|[\s\"']|$)", plain, re.I) or HOME_PROTECTED.search(norm)):
@@ -560,6 +590,261 @@ def follow_cd(ctx: dict, target: str) -> None:
     ctx["protected"] = bool(path and PROTECTED.search(path.replace(os.sep, "/") + "/"))
 
 
+# ---------------------------------------------------------------------------------------------------
+# Rule classes and policy modes (owner vs managed). Rules return a class instead of a final decision
+# for the actions the owner may legitimately want: "destructive" (force, mirror or delete push, hard
+# reset, force branch delete) and "exposure" (public repo, public gist, package publish). "install"
+# (a new named dependency) is "ask" in both modes. Everything else that is refused (secrets,
+# pipe-to-shell, the agent's own config, home and root deletes, evasion routes) stays "deny".
+# ---------------------------------------------------------------------------------------------------
+CLASSES = ("destructive", "exposure", "install")
+MODES = ("owner", "managed")
+POLICY_TABLE = {"owner": {"destructive": "ask", "exposure": "ask", "install": "ask"},
+                "managed": {"destructive": "deny", "exposure": "deny", "install": "ask"}}
+POLICY_NAME = "guard-policy.json"
+POLICY_MAX = 4096
+POLICY_KEYS = {"mode", "version", "note"}
+RANK = {"deny": 4, "destructive": 3, "exposure": 3, "install": 2, "ask": 1}
+SHOW_MAX = 2000                     # longest command shown for approval; longer ones are denied
+AUDIT_NAME = "guard-audit.jsonl"
+AUDIT_MAX_BYTES = 5_000_000
+AUDIT_TEXT = 300
+
+
+def policy_path() -> Path:
+    """The policy belongs to the runtime this guard runs from (<app>/scripts/agent_guard.py ->
+    <app>/config/guard-policy.json), never to the project, so a repo cannot pick its own mode."""
+    return Path(os.path.abspath(__file__)).parent.parent / "config" / POLICY_NAME
+
+
+def managed_markers() -> list[str]:
+    """Files whose presence means an organization manages this machine. Then a per-user policy is ignored."""
+    if os.name == "nt":
+        roots = {os.environ.get("ProgramFiles") or "", os.environ.get("ProgramW6432") or "", r"C:\Program Files"}
+        out = []
+        for r in sorted(x for x in roots if x):
+            out += [os.path.join(r, "ClaudeCode", "managed-settings.json"),
+                    os.path.join(r, "OrgAISecureAppSec", "scripts", "agent_guard.py")]
+        return out
+    if sys.platform == "darwin":
+        return ["/Library/Application Support/ClaudeCode/managed-settings.json"]
+    return ["/etc/claude-code/managed-settings.json"]
+
+
+def _no_dupes(pairs):
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate key")
+    return dict(pairs)
+
+
+def _plain_file(st) -> bool:
+    reparse = getattr(st, "st_file_attributes", 0) & 0x400          # FILE_ATTRIBUTE_REPARSE_POINT
+    return stat.S_ISREG(st.st_mode) and not reparse
+
+
+def load_policy(path: Path | None = None, markers: list[str] | None = None) -> tuple[str, str]:
+    """(mode, why). Fails closed: anything other than a small plain JSON file with exactly
+    {"mode": "owner"|"managed"} (plus optional version and note) is "managed"."""
+    p = Path(path) if path is not None else policy_path()
+    try:
+        st = os.lstat(p)
+        if not _plain_file(st) or st.st_size > POLICY_MAX:
+            return "managed", "policy file is not a small plain file"
+        data = json.loads(p.read_bytes().decode("utf-8-sig"), object_pairs_hook=_no_dupes)
+    except FileNotFoundError:
+        return "managed", "no policy file"
+    except Exception:
+        return "managed", "policy file unreadable or malformed"
+    if not isinstance(data, dict) or set(data) - POLICY_KEYS or data.get("mode") not in MODES:
+        return "managed", "policy file malformed"
+    mode = data["mode"]
+    if mode == "owner":
+        for m in (markers if markers is not None else managed_markers()):
+            try:
+                if os.path.lexists(m):
+                    return "managed", "a managed install is present, so the per-user policy is ignored"
+            except Exception:
+                return "managed", "managed install check failed"
+    return mode, "policy file"
+
+
+_SHOW_ESCAPE = re.compile(r"[\x00-\x1f\x7f-\x9f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]")
+
+
+def show_command(cmd: str) -> str | None:
+    """The command as the person will approve it: the literal text with control, bidi and invisible characters
+    spelled out, so nothing hides inside it, plus the collapsed form (dir/../ removed) when that differs.
+    The literal text comes first because collapse() is a checking aid, not a shell: it reads ./a/../../x as x.
+    None when too long to read."""
+    def esc(s):
+        return _SHOW_ESCAPE.sub(lambda m: "\\u%04x" % ord(m.group(0)), s)
+    raw = cmd.strip()
+    shown = esc(raw)
+    col = collapse(raw)
+    if col != raw:
+        shown += f" (paths collapsed: {esc(col)})"
+    return shown if len(shown) <= SHOW_MAX else None
+
+
+def stronger(a, b):
+    """The stricter of two statement results (deny > destructive/exposure > install > ask > none)."""
+    if not a:
+        return b
+    if not b:
+        return a
+    return a if RANK.get(a[0], 4) >= RANK.get(b[0], 4) else b
+
+
+def apply_policy(result, mode: str, cmd: str):
+    """Turn a rule class into the final decision for this mode. Unknown classes are denied."""
+    if not result or result[0] not in CLASSES:
+        return result
+    cls, why = result
+    final = POLICY_TABLE.get(mode, POLICY_TABLE["managed"]).get(cls, "deny")
+    if final == "ask":
+        shown = show_command(cmd)
+        if shown is None:
+            return "deny", f"{why} The command is too long to show for approval; split it into shorter commands."
+        return "ask", f"({mode} mode, {cls}) {why} Approve only if you asked for exactly this command: {shown}"
+    return "deny", f"{why} Not allowed from the agent under the managed policy; run it yourself if it is intended."
+
+
+CMD_PREFIX = WRAPPERS | {"sudo", "-c", "/c", "/k", "-command", "-lc", "-ic", "-m"}
+
+
+def command_starts(pipe_parts: list[str]):
+    """(command name, its arguments) for every word in a command position: the stage head and anything
+    started through a wrapper or an inline script (sudo x, timeout 60 x, env A=1 x, sh -c "x", python -m x).
+    Statements that only print or record text (git commit -m "...", echo, cat) start nothing."""
+    for part in pipe_parts:
+        ws = words_of(re.sub(r"[\"'`^]", "", part))
+        fw = first_word(ws)
+        if not ws or fw == "git" or (fw in READ_ONLY and fw):
+            continue
+        for k, w in enumerate(ws):
+            prev = ws[k - 1] if k else ""
+            if k == 0 or prev in CMD_PREFIX or re.fullmatch(r"[a-z_]\w*=\S*|\d+[smhd]?", prev):
+                yield cmd_name(re.split(r"[()]", w)[0] or w), ws[k + 1:]
+
+
+def publish_rule(pipe_parts: list[str]):
+    """Package publishing (exposure): npm/pnpm/yarn/bun publish, yarn npm publish, cargo publish, gem push,
+    twine upload (also python -m twine), poetry/flit/uv/hatch/pdm publish, dotnet nuget push, nuget push.
+    A commit message or an echo that mentions it is not a publish (see command_starts)."""
+    for h, rest in command_starts(pipe_parts):
+        if "--dry-run" in rest:
+            continue
+        args = [a for a in rest if not a.startswith("-")]
+        sub = args[0] if args else ""
+        if (h in ("npm", "pnpm", "bun", "cargo", "poetry", "flit", "uv", "hatch", "pdm") and sub == "publish") or \
+                (h == "yarn" and (sub == "publish" or args[:2] == ["npm", "publish"])) or \
+                (h == "gem" and sub == "push") or (h == "twine" and sub == "upload") or \
+                (h == "dotnet" and args[:2] == ["nuget", "push"]) or (h == "nuget" and sub == "push"):
+            return "exposure", "publishing a package makes this code public."
+    return None
+
+
+PIP_VALUE_OPTS = {"-r", "--requirement", "-c", "--constraint", "-e", "--editable", "-i", "--index-url", "--extra-index-url",
+                  "-f", "--find-links", "-t", "--target", "--prefix", "--root", "--python", "-p"}
+INSTALL_SUBS = {"npm": {"install", "i", "add"}, "pnpm": {"add", "install", "i"}, "yarn": {"add"}, "bun": {"add", "install", "i"},
+                "pip": {"install"}, "poetry": {"add"}, "uv": {"add"}, "pdm": {"add"}, "composer": {"require"},
+                "go": {"get", "install"}, "cargo": {"add", "install"}, "gem": {"install"}, "bundle": {"add"}}
+
+
+def install_rule(pipe_parts: list[str]):
+    """A new named dependency (install class, "ask" in both modes): npm i x, pip install x, composer require x,
+    go get x, cargo add x, dotnet add package x ... Installing from the lockfile or the project itself
+    (npm install, npm ci, pip install -r requirements.txt, pip install -e .) is not a new dependency."""
+    for h, rest in command_starts(pipe_parts):
+        if h == "pip3":
+            h = "pip"
+        elif h == "uv" and rest[:1] == ["pip"]:
+            h, rest = "pip", rest[1:]
+        if h == "dotnet" and rest[:2] == ["add", "package"] or (h == "dotnet" and rest[:1] == ["add"] and "package" in rest[:3]):
+            return "install", "adding a new dependency; check the package name is real and spelled right."
+        subs = INSTALL_SUBS.get(h)
+        if not subs or not rest:
+            continue
+        pos = [a for a in rest if not a.startswith("-")]
+        if not pos or pos[0] not in subs:
+            continue
+        args, skip, names = rest[rest.index(pos[0]) + 1:], False, []
+        for a in args:
+            if skip:
+                skip = False
+                continue
+            if a.startswith("-"):
+                skip = h == "pip" and a in PIP_VALUE_OPTS
+                continue
+            if a in (".", "..") or a.startswith(("./", "../", ".\\", "..\\", "/")):
+                continue
+            names.append(a)
+        if names:
+            return "install", f"adding a new dependency ({names[0][:80]}); check the package name is real and spelled right."
+    return None
+
+
+_REDACT_KV = re.compile(r"(?i)((?:token|secret|password|passwd|pwd|api[_-]?key|auth[_-]?token|_authtoken|authorization|"
+                        r"bearer|private[_-]?key|client[_-]?secret)[\"']?\s*[=: ]\s*)(\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+)")
+_REDACT_TOKEN = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_\w{16,}|npm_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|"
+                           r"xox[abposr]-[\w-]{10,}|sk-[A-Za-z0-9_-]{16,}|glpat-[\w-]{16,}|pypi-[\w-]{16,})")
+_REDACT_URL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}://)[^/\s:@]+:[^/\s@]+@")
+_REDACT_BEARER = re.compile(r"(?i)\b(bearer|basic|token)\s+[^\s\"']+")
+_REDACT_LONG = re.compile(r"[A-Za-z0-9+=_-]{40,}")
+
+
+def redact(text: str, limit: int = AUDIT_TEXT) -> str:
+    """Audit text: no token-looking values, no inline passwords, no control characters, at most `limit` characters."""
+    t = str(text)[:4 * limit]
+    t = _REDACT_URL.sub(r"\1***@", t)
+    t = _REDACT_BEARER.sub(lambda m: m.group(1) + " ***", t)
+    t = _REDACT_KV.sub(lambda m: m.group(1) + "***", t)
+    t = _REDACT_TOKEN.sub("***", t)
+    t = _REDACT_LONG.sub("***", t)
+    t = _SHOW_ESCAPE.sub(" ", t)
+    return t[:limit] + ("..." if len(t) > limit else "")
+
+
+def audit_ask(event: dict, reason: str, mode: str) -> bool:
+    """Append one line to <project>/.security/guard-audit.jsonl for every "ask". Best effort: a failure here
+    never changes the decision. Refuses links, junctions and hard links, the home folder, a drive root and
+    protected places, so a hostile repo cannot point the write somewhere else."""
+    try:
+        project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or ""
+        if not isinstance(project, str) or not project or len(project) > 4096:
+            return False
+        root = os.path.realpath(project)
+        home = os.path.realpath(os.path.expanduser("~"))
+        if not os.path.isdir(root) or os.path.normcase(root) == os.path.normcase(home) or os.path.dirname(root) == root \
+                or PROTECTED.search(root.replace(os.sep, "/") + "/"):
+            return False
+        d = os.path.join(root, ".security")
+        if os.path.lexists(d):
+            st = os.lstat(d)
+            if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
+                return False
+        else:
+            os.mkdir(d)
+        f = os.path.join(d, AUDIT_NAME)
+        if os.path.lexists(f):
+            st = os.lstat(f)
+            if not _plain_file(st) or st.st_nlink > 1 or st.st_size > AUDIT_MAX_BYTES:
+                return False
+        ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+        what = ti.get("command") if isinstance(ti.get("command"), str) else \
+            next((v for k, v in ti.items() if isinstance(v, str) and re.search(r"path|file", str(k), re.I)), "")
+        line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "mode": mode, "decision": "ask",
+                "tool": redact(event.get("tool_name") or "", 80), "command": redact(what), "reason": redact(reason.split(" Approve only")[0], 200)}
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        fd = os.open(f, flags, 0o600)
+        with os.fdopen(fd, "ab") as fh:
+            fh.write((json.dumps(line, ensure_ascii=True) + "\n").encode("ascii"))
+        return True
+    except Exception:
+        return False
+
+
 def dangerous_target(w: str) -> bool:
     t = w.strip("'\"").lower().replace("\\", "/")
     t = t[:-1] if t.endswith("*") else t
@@ -570,7 +855,9 @@ def dangerous_target(w: str) -> bool:
                  "/mnt/c", "*", ".") and w not in (".", "./") or bool(re.fullmatch(r"[a-z]:|/[a-z]|/mnt/[a-z]", t))
 
 
-def check(event: dict):
+def check(event: dict, mode: str | None = None):
+    """The decision for one tool event, or None to allow. mode is "owner" or "managed"; None reads the policy
+    file (and only when a shell command needs it)."""
     tool = event.get("tool_name") or ""
     ti = event.get("tool_input") or {}
     if not isinstance(ti, dict):
@@ -623,14 +910,15 @@ def check(event: dict):
         start = os.path.normcase(os.path.abspath(str(event.get("cwd") or os.getcwd())))
         home = os.path.normcase(os.path.expanduser("~"))
         ctx = {"home": start == home, "path": start, "protected": bool(PROTECTED.search(start.replace(os.sep, "/") + "/"))}
-        asked = None
+        worst = None
         for stmt in SPLIT_STMT.split(cmd):
             r = check_statement(stmt, ctx)
             if r and r[0] == "deny":
                 return r
-            asked = asked or r
-        if asked:
-            return asked
+            worst = stronger(worst, r)
+        worst = apply_policy(worst, mode if mode is not None else load_policy()[0], cmd)
+        if worst:
+            return worst
 
     # Strict instruction-source mode, only for projects that opted in with a claude_docs/ folder.
     if tool in ("Read", "Edit", "Write", "MultiEdit") and os.path.isdir(os.path.join(project, "claude_docs")):
@@ -643,12 +931,23 @@ def check(event: dict):
     return None
 
 
+def decide(event: dict, mode: str | None = None):
+    """check() under the active policy, plus the audit line for every "ask". Used by main() and the
+    Cursor and Codex adapters, so all three agents get the same decisions."""
+    if mode is None:
+        mode = load_policy()[0]
+    result = check(event, mode)
+    if result and result[0] == "ask":
+        audit_ask(event, result[1], mode)
+    return result
+
+
 def main() -> int:
     try:
         event = json.loads(sys.stdin.read())
         if not isinstance(event, dict):
             raise ValueError("hook input is not an object")
-        result = check(event)
+        result = decide(event)
     except Exception as e:
         sys.stderr.write(f"Blocked by Org AI agent guard: could not check this action safely ({type(e).__name__}).\n")
         return 2

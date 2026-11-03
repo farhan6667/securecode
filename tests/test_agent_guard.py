@@ -133,7 +133,8 @@ ALLOW = [
     tool("Bash", command="echo .env >> .gitignore"),
     tool("Bash", command="git rm --cached .env"),
     tool("Bash", command="node -e \"console.log(process.env.NODE_ENV)\""),
-    tool("Bash", command="npm i dotenv && node -r dotenv/config app.js"),
+    # 7.0: "npm i <name>" is the install class (ask), so the dotenv false-positive check uses a lockfile install.
+    tool("Bash", command="npm ci && node -r dotenv/config app.js"),
     tool("Bash", command="git push origin feature/login"),
     tool("Bash", command="git push --set-upstream origin feature/x"),
     tool("Bash", command="git reset --soft HEAD~1"),

@@ -216,7 +216,13 @@ ship the package under its own internal name and still receive the signed update
 - The guard matches patterns. It reduces risk, it is not a sandbox, and native Windows has no Claude Code OS sandbox.
 - The deep review is done by the AI and can miss things, especially business logic. Keep the human pentest.
 - Server settings (TLS ciphers, open ports, admin panels on the host) are outside the code and are listed for the server team.
-- Cursor and Codex get the rules and the gate, but not the Claude Code hooks.
+- Cursor and Codex get the rules, the gate and guard adapters with gaps: Cursor has no hook before file edits, and
+  Codex hooks cannot ask yet, so an "ask" is a deny there. Details in [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
+
+**Owner mode.** On your own machine the guard asks instead of refusing when you may really want the action: a force
+push, `git reset --hard`, a public repo or gist, `npm publish`. The prompt shows the exact command, and every ask is
+logged to `.security/guard-audit.jsonl`. Secrets and pipe-to-shell are still refused. Managed installs keep refusing
+all of it. When you finish a bigger change, the agent also offers to run "Run Security Test" once.
 - No tool proves software is free of vulnerabilities. Known gaps are in [SECURITY-CONTEXT.md](SECURITY-CONTEXT.md).
 
 ## Frequently asked questions
@@ -226,9 +232,9 @@ A set of rules, a code review method, a scanner gate and Claude Code hooks that 
 more secure code and protect the developer's machine from the agent. It is free and MIT licensed.
 
 **Does it work with Cursor and Codex, or only Claude Code?**
-The rules, the deep review and the gate work with all three. The hooks (agent guard, per-edit check, stop gate)
-are Claude Code features, so Cursor and Codex get their own settings instead, described in
-[docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
+The rules, the deep review and the gate work with all three. The agent guard also runs in Cursor and Codex through
+small adapters (Cursor: shell, MCP and file reads; Codex: shell, patches and MCP, plus the stop gate). The per-edit
+check and the injection watch are Claude Code only. Setup is in [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
 
 **Will it make my app pass a pentest?**
 It removes the findings pentests report most often and makes the agent test access control route by route, so
