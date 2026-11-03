@@ -76,12 +76,30 @@ def test_reads_all_five_clients_project_and_user(tmp_path, monkeypatch):
     proj, home, _ = five_clients(tmp_path)
     servers, problems = M.read_configs(proj, home, include_user=True)
     got = {(s["client"], s["name"]) for s in servers}
-    assert got == {("claude-project", "fs"), ("claude-project", "gh"), ("cursor-project", "cur"), ("codex-project", "codexsrv"),
-                   ("gemini-project", "gem"), ("claude-user", "userwide"), ("claude-user", "projlocal"),
-                   ("cursor-user", "curuser"), ("codex-user", "codexuser"), ("gemini-user", "gemuser")}, got
+    want = {("claude-project", "fs"), ("claude-project", "gh"), ("cursor-project", "cur"), ("codex-project", "codexsrv"),
+            ("gemini-project", "gem"), ("claude-user", "userwide"), ("claude-user", "projlocal"),
+            ("cursor-user", "curuser"), ("codex-user", "codexuser"), ("gemini-user", "gemuser")}
+    if sys.version_info < (3, 11):
+        # No TOML reader on 3.10: the two Codex configs are reported as not checked, never silently dropped.
+        want -= {("codex-project", "codexsrv"), ("codex-user", "codexuser")}
+        assert got == want, got
+        assert len(problems) == 2 and all("Python 3.11" in p["message"] for p in problems), problems
+        return
+    assert got == want, got
     assert not problems
     only_proj, _ = M.read_configs(proj, home, include_user=False)
     assert {s["client"] for s in only_proj} <= {"claude-project", "cursor-project", "codex-project", "gemini-project"}
+
+
+def test_codex_config_without_a_toml_reader_is_reported_not_dropped(tmp_path, monkeypatch):
+    # Python 3.10 has no tomllib; simulate that on every version and check the scan says so plainly.
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.setitem(sys.modules, "tomllib", None)
+    proj, home, _ = five_clients(tmp_path)
+    servers, problems = M.read_configs(proj, home, include_user=True)
+    assert not {s["client"] for s in servers} & {"codex-project", "codex-user"}
+    codex = [p for p in problems if "codex" in p["message"]]
+    assert len(codex) == 2 and all("Python 3.11" in p["message"] for p in codex), problems
 
 
 def test_risky_patterns_are_flagged(tmp_path, monkeypatch):
@@ -94,11 +112,12 @@ def test_risky_patterns_are_flagged(tmp_path, monkeypatch):
     assert by["fs"] == set()                                                      # pinned, scoped, project folder
     assert ("MCP_UNPINNED_PACKAGE", "MEDIUM") in by["gh"] and ("MCP_INLINE_SECRET", "HIGH") in by["gh"]
     assert by["cur"] == set()                                                     # uvx name==version
-    assert ("MCP_UNPINNED_PACKAGE", "MEDIUM") in by["codexsrv"] and ("MCP_UNSCOPED_PACKAGE", "LOW") in by["codexsrv"]
+    if sys.version_info >= (3, 11):                                               # Codex TOML needs tomllib
+        assert ("MCP_UNPINNED_PACKAGE", "MEDIUM") in by["codexsrv"] and ("MCP_UNSCOPED_PACKAGE", "LOW") in by["codexsrv"]
+        assert ("MCP_PIPE_TO_SHELL", "HIGH") in by["codexuser"]
     assert ("MCP_INSECURE_REMOTE", "HIGH") in by["gem"] and ("MCP_TRUSTED_SERVER", "MEDIUM") in by["gem"]
     assert by["userwide"] == set()                                                # https, header is a reference
     assert ("MCP_UNPINNED_PACKAGE", "MEDIUM") in by["curuser"]                    # docker tag, no digest
-    assert ("MCP_PIPE_TO_SHELL", "HIGH") in by["codexuser"]
     assert ("MCP_FILESYSTEM_ROOT", "HIGH") in by["gemuser"]
 
 

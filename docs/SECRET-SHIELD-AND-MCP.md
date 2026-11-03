@@ -164,6 +164,8 @@ its tools) and stays HIGH until you review and `--approve`. A new tool is MEDIUM
 
 ### Limits
 
+- Codex keeps its MCP servers in a TOML file, and Python 3.10 has no TOML reader. On 3.10 those configs are
+  reported as "not checked" (MCP_CONFIG_UNREADABLE) instead of being read; use Python 3.11 or newer to cover them.
 - Regex checks find common poisoning shapes, not every one. A careful attacker can phrase an instruction that
   none of them catch; read new tool descriptions yourself.
 - Connect mode sees what the server says today. A server can behave differently for other clients or later

@@ -74,8 +74,15 @@ def _read_toml(fp: Path):
     st = os.lstat(fp)
     if not stat.S_ISREG(st.st_mode) or st.st_size > CONFIG_MAX:
         raise ValueError("not a small plain file")
-    import tomllib          # Python 3.11+
+    try:
+        import tomllib          # Python 3.11+
+    except ImportError:
+        raise TomlUnavailable("reading a TOML config needs Python 3.11 or newer") from None
     return tomllib.loads(fp.read_bytes().decode("utf-8-sig"))
+
+
+class TomlUnavailable(Exception):
+    """This Python has no TOML reader (3.10), so Codex configs cannot be checked."""
 
 
 def _servers_from(obj, key: str) -> dict:
@@ -141,6 +148,10 @@ def read_configs(project: Path, home: Path | None = None, include_user: bool = T
                 findings.append(_f("MCP_CONFIG_LINK", "LOW", fp, 0, f"{client}: config is a link; not followed"))
                 continue
             data = _read_toml(fp) if fmt == "toml" else _read_json(fp)
+        except TomlUnavailable as e:
+            findings.append(_f("MCP_CONFIG_UNREADABLE", "LOW", fp, 0,
+                               f"{client}: not checked, {e}; run the scan with Python 3.11+ to cover it"))
+            continue
         except Exception as e:
             findings.append(_f("MCP_CONFIG_UNREADABLE", "LOW", fp, 0, f"{client}: config could not be read ({type(e).__name__})"))
             continue
