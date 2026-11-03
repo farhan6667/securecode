@@ -262,7 +262,8 @@ def install_settings(ad: Path, mode: str="managed"):
     data.setdefault("$schema","https://json.schemastore.org/claude-code-settings.json")
     hooks=data.setdefault("hooks",{})
     put_hook(hooks,"PostToolUse","Edit|Write|MultiEdit",hook_command(ad),"org-ai-appsec-v5",120)
-    put_hook(hooks,"PreToolUse","Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Bash|PowerShell|Monitor|mcp__.*",
+    # Every tool goes through the guard (7.0): an allowlist matcher let new tools (Artifact and others) skip it.
+    put_hook(hooks,"PreToolUse",".*",
              hook_command(ad,"agent_guard.py"),"org-ai-agent-guard",20)
     put_hook(hooks,"PostToolUse","Read|WebFetch|mcp__.*",hook_command(ad,"injection_watch.py"),"org-ai-injection-watch",20)
     put_hook(hooks,"Stop","",hook_command(ad,"stop_gate.py"),"org-ai-stop-gate",90)

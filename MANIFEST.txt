@@ -37,6 +37,8 @@ Added after review (V6.2 final)
 - Deep source review modes: "Run Security Test", "Run Advisory QA" (/advisory-qa); docs/SOURCE-CODE-REVIEW.md
 - docs/COMMON-FINDINGS.md (common pentest findings); library_scan and config_scan rules
 - scripts/stop_gate.py (Stop hook), scripts/updater.py (signed auto-update), scripts/release/make_release.py
+- scripts/safe_git.py (7.0): git for the stop gate and the scanners without the repo's fsmonitor, hooks or drivers
+- scripts/agent_guard.py (7.0): positive model; tests/test_guard_positive_model.py and tests/test_fuzz_guard.py
 - install-managed.py (organization-enforced install), SECURITY-CONTEXT.md, docs/THIRD-PARTY-REVIEW.md
 
 7.0 guard work (not released yet)

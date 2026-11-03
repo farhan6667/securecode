@@ -213,7 +213,12 @@ ship the package under its own internal name and still receive the signed update
 
 ## Honest limits
 
-- The guard matches patterns. It reduces risk, it is not a sandbox, and native Windows has no Claude Code OS sandbox.
+- The guard (7.0) allows only what it understands: everyday development commands whose every path stays inside your
+  project or a temp folder. Anything else is shown to you for approval in owner mode and refused in managed mode;
+  secrets, your agent's own config, startup files and the scanner tools folder are always refused. In our
+  everyday-commands test, under 1 in 100 commands prompts. It still is not a sandbox: a script your agent wrote in an
+  earlier step can do anything once it runs, and native Windows has no Claude Code OS sandbox. Use the native
+  sandbox where you have it.
 - The deep review is done by the AI and can miss things, especially business logic. Keep the human pentest.
 - Server settings (TLS ciphers, open ports, admin panels on the host) are outside the code and are listed for the server team.
 - Cursor and Codex get the rules, the gate and guard adapters with gaps: Cursor has no hook before file edits, and

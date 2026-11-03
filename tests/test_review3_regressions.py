@@ -164,12 +164,12 @@ def test_edit_hook_scans_only_the_changed_file():
 
 
 def test_hook_matchers_are_identical_and_include_monitor():
+    # 7.0: the guard matcher is ".*" (every tool, Monitor and Artifact included) in all three places; the old
+    # allowlist matcher must be gone everywhere. The exact check is in test_guard_positive_model.py.
     import re as _re
-    found = []
     for f in ("install-global.py", "install-managed.py", "enterprise-managed-settings.example.json"):
-        found += _re.findall(r"Read\|Edit\|Write\|[A-Za-z|]*\|mcp__\.\*", (ROOT / f).read_text(encoding="utf-8"))
-    assert len(found) == 3 and len(set(found)) == 1, found
-    assert "|Monitor|" in found[0]
+        text = (ROOT / f).read_text(encoding="utf-8")
+        assert not _re.search(r"Read\|Edit\|Write\|[A-Za-z|]*\|mcp__\.\*", text), f
 
 
 def test_updater_storage_hop_never_follows_a_second_redirect():

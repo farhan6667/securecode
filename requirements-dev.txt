@@ -1,0 +1,6 @@
+# Test dependencies, exact versions (CI installs exactly these). Runtime needs are in requirements.txt.
+pytest==8.4.2
+PyYAML==6.0.3
+# The guard fuzzer (tests/test_fuzz_guard.py). Hypothesis 6.170 needs Python 3.11 or newer; on 3.10 that test is skipped.
+hypothesis==6.170.14; python_version >= "3.11"
+sortedcontainers==2.4.0; python_version >= "3.11"

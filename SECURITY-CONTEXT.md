@@ -19,22 +19,47 @@ developer machines, plus CI templates. It runs with the developer's own rights a
 - Be modifiable by the agent: the guard blocks edits to its own runtime folder; managed installs are read-only.
 
 **Accepted risks (documented, not bugs).**
-- The agent guard is a pattern-based, best-effort layer. It is not a sandbox and not a security boundary.
-  It reads command text, so an attacker who already has arbitrary code execution (a script that opens files
-  itself, paths built at run time from variables, unusual encodings, interpreters and tools the guard has
-  never heard of) can still find gaps. Each review round has found new ones, and more will exist. Native
-  Windows has no Claude Code OS sandbox; 7.0 plans a real sandbox (OS-level file and network confinement for
-  the agent) so the guard becomes a second line instead of the only one.
-  What it does today: any shell command that names the agent's own config folder or the runtime is refused
-  unless every stage only reads (no method calls, script blocks, `$(...)` or write options such as `sort -o`);
-  wildcards are judged by what they could expand to (`.cl*`, `OrgAIS*`, `id*`, `*env`); a command other than a
-  plain reader may not target the home folder itself or a folder above a protected one (tree copies and
-  archive extraction into `~`); macOS `/Users/x`, root-relative `\Users\x`, `~user`, `%SystemDrive%` and
-  `Documents and Settings` count as home.
-  Known gaps that remain: paths built at run time, links created outside the agent, MCP tools that hide a
-  path deep inside nested arguments, plain shell aliases defined earlier in the session, a downloader
-  hidden inside a script file, and secret gists (only public gists are refused). Six independent review
-  rounds and their regression tests are in `tests/test_review*_regressions.py`.
+- The agent guard (7.0) is a positive model, not a sandbox and not a security boundary. Two outside review
+  rounds showed that listing dangerous shapes can never be complete (round 2 found 432 bypass shapes), so the
+  guard now allows only what it understands:
+  - One normalizer runs first. It lexes the command like bash or PowerShell would (quotes, `$'..'`, escapes,
+    line continuations, bounded brace expansion, `[^x]` classes), expands `~`, `~user`, `$HOME`, `$env:X`,
+    `${X:-y}`, `%X%`, `$PWD`, `[Environment]::GetFolderPath(...)`, follows `cd`, `pushd`, `Set-Location`, `git -C`
+    and `--work-tree`, and resolves every path to an absolute, collapsed path, including where links inside the
+    project really point.
+  - A shell command is allowed only when every statement is a known everyday development command (git, ls, cat,
+    grep, sed print and substitute, find without `-exec`, python, node, npm, pip and build tools on project files),
+    every path resolves inside the project or a temp folder, and no unmodelled feature is present (functions,
+    aliases, `eval`, `$(...)`, process substitution, inline `-c` code, an interpreter fed from a pipe or here-doc,
+    a file written and run in the same command, encoded PowerShell).
+  - Everything else is the "unknown" class: owner mode asks and shows the literal command, managed mode denies.
+    A file or folder below home that is not protected (for example `~/Downloads/x.pdf`) is simply "outside the
+    project": ask or deny by mode, never the home-folder hard deny.
+  - Hard denies in both modes: reading secrets (also whole folders such as `~/.ssh`), writing the agent's config
+    (`~/.claude`, `~/.claude.json`, `CLAUDE_CONFIG_DIR`, other agents' config folders), the org runtime and update
+    keys, the 7.0 scanner tools folder (`%LOCALAPPDATA%\NexaForgeTools`, `~/.local/share/nexaforge-tools`,
+    `NEXAFORGE_TOOLS_DIR`), the guard policy and audit log, shell, login and Python startup files (`.pth` in
+    site folders or outside the project, `sitecustomize`, `usercustomize`, `pyvenv.cfg` outside the project),
+    `.git/config` and `.git/hooks`, writes into the home folder itself or a folder above a protected one, and a
+    download or decoded data piped into an interpreter.
+  - File, MCP and every other tool: the hook matcher is `.*`, and every string argument that looks like a path
+    or file URL is judged, whatever its key or nesting.
+  - The guard keeps its own 2 second deadline and answers "unknown" when it runs out; every regex is linear.
+  The measured ask rate on a corpus of 256 everyday commands is under 1 percent
+  (`tests/test_guard_positive_model.py`), and the round-2 Hypothesis fuzzer runs in CI (`tests/test_fuzz_guard.py`).
+  **Out of scope, by design:** code execution inside allowed commands. A project script or test the agent wrote
+  in an earlier tool call (`python build.py`, `npm test`) can itself open any file; the guard only reads command
+  text and cannot see what a program does once it runs. A fully malicious agent with that ability is not stopped
+  by any hook. Use Claude Code's native sandbox (OS-level file and network confinement) where it is available;
+  native Windows has none today. Commands that only mention a protected place inside free text that the guard
+  cannot model (an interpreter here-doc, an unknown tool) are refused, which can be a false positive.
+  Seven review rounds and their regression tests are in `tests/test_review*_regressions.py` and
+  `tests/test_guard_positive_model.py`.
+- The stop gate and the scanners run git inside the project with a safe environment (`scripts/safe_git.py`):
+  `core.fsmonitor` off, an empty hooks folder, every filter, textconv and merge driver the repo defines replaced,
+  pager, ssh, credential and editor programs switched off, inherited `GIT_*` variables dropped, and NUL-separated,
+  unquoted file names. A repo's `diff.external` cannot be switched off this way; the stop gate passes
+  `--no-ext-diff` and `git log` only uses it with `--ext-diff`.
 - Global rules and settings: Edit, Write and MultiEdit on the user's own `~/.claude/CLAUDE.md`,
   `~/.claude/rules/**/*.md` and `settings(.local).json` return "ask", never a silent allow and never deny. The
   owner may legitimately ask for a rule change; a prompt-injected agent still needs the owner's yes in the
@@ -77,6 +102,8 @@ runtime folder, never in a project, so a cloned repo cannot choose its mode.
   runtime, update keys, the policy file and the audit log, home and root deletes, and evasion routes (git
   aliases or config that turn a push into a force push, `gh api --input`). Each statement is checked by every
   deny rule even when it also matches a class, so `git push -f > ~/.claude/x` stays a deny.
+- Anything outside the positive model (the "unknown" class: an unknown command, a path outside the project,
+  inline interpreter code, an unmodelled shell feature) asks in owner mode and is denied in managed mode.
 - New dependencies (`npm i x`, `pip install x`, ...) ask in both modes. In owner mode the installer also moves the
   three force-push and hard-reset Claude Code permission rules from deny to ask; otherwise they would refuse
   before the guard could ask.

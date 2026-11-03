@@ -20,6 +20,7 @@ import hashlib, json, os, stat, subprocess, sys, time
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # hooks run with python -I
 from secgate import local_scan, agent_scan, library_scan, config_scan, SEV, find_tool
+from safe_git import SafeGit
 
 MAX_FILES = 300
 MAX_FILE_BYTES = 2_000_000      # skip generated/minified giants
@@ -38,26 +39,36 @@ CODE_EXT = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelt
 
 
 def _git(root: Path):
+    """git in the project without honouring programs named in the repo's config (core.fsmonitor, hooks, filter and
+    textconv drivers, external diff, pager): see safe_git.py. Names come NUL-separated and unquoted, so non-ASCII
+    and quoted file names are scanned too."""
     exe = find_tool("git")              # never a git.exe planted in the project folder
     if not exe:
         return None
 
     def git(*args):
-        p = subprocess.run([exe, *args], cwd=str(root), capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=20)
-        return p.stdout.splitlines() if p.returncode == 0 else []
+        with SafeGit(exe, root) as g:
+            rc, out = g.run(*args)
+        if rc != 0:
+            return []
+        if "-z" in args:
+            return [x for x in out.split("\0") if x]
+        return out.splitlines()
     return git
+
+
+DIFF_SAFE = ("--no-ext-diff", "--no-textconv")
 
 
 def changed_files(root: Path):
     git = _git(root)
     if not git or not git("rev-parse", "--is-inside-work-tree"):
         return []
-    untracked = set(git("ls-files", "--others", "--exclude-standard"))
+    untracked = set(git("ls-files", "-z", "--others", "--exclude-standard"))
     if git("rev-parse", "--verify", "--quiet", "HEAD"):
-        names = set(git("diff", "--name-only", "HEAD")) | untracked
+        names = set(git("diff", *DIFF_SAFE, "-z", "--name-only", "HEAD")) | untracked
     else:                               # a new repo with no commit yet: staged plus untracked files
-        names = set(git("diff", "--cached", "--name-only")) | untracked
+        names = set(git("diff", *DIFF_SAFE, "-z", "--cached", "--name-only")) | untracked
     out = []
     for n in sorted(names)[:MAX_FILES]:
         fp = (root / n)
@@ -72,14 +83,15 @@ def line_counts(root: Path) -> dict:
     git = _git(root)
     if not git:
         return {}
-    base = ["diff", "--numstat", "HEAD"] if git("rev-parse", "--verify", "--quiet", "HEAD") else ["diff", "--numstat", "--cached"]
+    base = ["diff", *DIFF_SAFE, "--numstat", "--no-renames"]   # core.quotePath=false comes from the safe environment
+    base += ["HEAD"] if git("rev-parse", "--verify", "--quiet", "HEAD") else ["--cached"]
     out = {}
     for row in git(*base):
         parts = row.split("\t")
         if len(parts) == 3:
             a, d, name = parts
             out[name] = (int(a) if a.isdigit() else 0) + (int(d) if d.isdigit() else 0)
-    for name in git("ls-files", "--others", "--exclude-standard"):
+    for name in git("ls-files", "-z", "--others", "--exclude-standard"):
         fp = root / name
         try:
             if fp.is_file() and fp.stat().st_size <= MAX_FILE_BYTES:

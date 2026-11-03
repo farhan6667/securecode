@@ -18,7 +18,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Bash|PowerShell|Monitor|mcp__.*",
+        "matcher": ".*",
         "hooks": [{ "type": "command", "command": "\"C:\\Program Files\\Python313\\python.exe\" -I \"C:\\Program Files\\OrgAISecureAppSec\\scripts\\agent_guard.py\"", "timeout": 20 }]
       }
     ],

@@ -52,7 +52,15 @@ INSTALLS = ["npm i lodash", "npm install -D jest", "pnpm add zod", "yarn add rea
 NOT_CLASSED = ["npm install", "npm ci", "pip install -r requirements.txt", "pip install -e .", "pip install .",
                "git branch -d merged", "git branch -m new", "npm publish --dry-run", "git commit -m 'npm publish later'",
                "echo npm publish", "git push origin feature/x", "git reset --soft HEAD~1", "gh repo create demo --private",
-               "gh gist create notes.txt", "yarn install", "composer install", "go build ./...", "cargo build"]
+               "yarn install", "composer install", "go build ./...", "cargo build"]
+# 7.0: a secret gist still uploads files, and sudo runs with other rights: the unknown class, not "allowed"
+UNKNOWN_NOW = ["gh gist create notes.txt", "sudo pip install x"]
+
+
+@pytest.mark.parametrize("cmd", UNKNOWN_NOW)
+def test_gist_and_sudo_are_unknown_class(cmd):
+    assert decision(G.check(sh(cmd), "owner")) == "ask"
+    assert decision(G.check(sh(cmd), "managed")) == "deny"
 
 
 @pytest.mark.parametrize("cmd", DESTRUCTIVE + EXPOSURE)
@@ -136,7 +144,7 @@ def test_publish_through_wrappers_is_still_exposure(cmd):
     assert decision(G.check(sh(cmd), "owner")) == "ask", cmd
 
 
-@pytest.mark.parametrize("cmd", ["bash -c 'pip install requests'", "timeout 30 npm i left-pad", "sudo pip install x"])
+@pytest.mark.parametrize("cmd", ["bash -c 'pip install requests'", "timeout 30 npm i left-pad"])
 def test_install_through_wrappers_still_asks(cmd):
     assert decision(G.check(sh(cmd), "managed")) == "ask", cmd
 
