@@ -824,6 +824,22 @@
       "what": "Not covered: output of the Monitor tool (notifications, not a tool result), secrets in the tool input, and secrets with no recognisable shape (short passwords in oddly named fields)",
       "check": "documented in docs/SECRET-SHIELD-AND-MCP.md (What it does not do)",
       "status": "open"
+    },
+    {
+      "id": "V7P-01",
+      "severity": "high",
+      "where": "scripts/agent_guard.py git read pathspec handling",
+      "what": "The agent guard allowed git read pathspecs of the form <rev>:<path>, :<path> and :<n>:<path> (git show / cat-file / log) to read a committed secret file straight from the object store. clean_name() split off the path after the first colon (keeping the rev) and path_shaped() missed a slash-less spec, so a bare secret pathspec was never judged against the secret-read hard deny. A prompt-injected agent could exfiltrate committed secrets in both owner and managed mode.",
+      "check": "pytest tests/test_v7_guard.py -k revpath (test_git_revpath_pathspec_cannot_read_secret_files)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7P-02",
+      "severity": "medium",
+      "where": "scripts/secret_shield.py secret-assignment pattern",
+      "what": "The PostToolUse secret shield missed common framework secret variables whose key holds a secret word followed by more name characters (the canonical high-entropy app secret). The secret-assignment regex required the secret word to sit immediately before the separator, so a trailing name segment broke the match and the value leaked through the redactor unmasked. Fixed by allowing bounded trailing name segments after the secret word; a 2 MB flood stays ~0.5 s (no ReDoS).",
+      "check": "pytest tests/test_secret_shield.py -k v7p (test_v7p_secret_word_before_more_key_chars_is_redacted, test_v7p_secret_word_key_redos_budget)",
+      "status": "fixed"
     }
   ]
 }

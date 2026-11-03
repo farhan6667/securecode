@@ -64,8 +64,8 @@ _P = [
                         r"cockroachdb|jdbc:[a-z]{2,20})://[^\s:/@\"'<>]{1,128}:([^\s@/\"'<>]{1,256})@", 1),
     ("url-password", r"(?i)\b(?:https?|ftps?|smtps?|ldaps?)://[^\s:/@\"'<>]{1,128}:([^\s@/\"'<>]{1,256})@", 1),
     ("secret-assignment", r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:secret|passw(?:or)?d|pwd|token|api[_-]?key|apikey|"
-                          r"access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?key|credential)s?)(?:\\?[\"'])?\s{0,5}"
-                          r"(?:=>|:=|=|:)\s{0,5}(?:\\?[\"'])?([^\s\"'`\\,;<>(){}\[\]]{12,256})", 2),
+                          r"access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?key|credential)s?(?:[_.-]?[A-Za-z0-9]{1,20}){0,3})"
+                          r"(?:\\?[\"'])?\s{0,5}(?:=>|:=|=|:)\s{0,5}(?:\\?[\"'])?([^\s\"'`\\,;<>(){}\[\]]{12,256})", 2),
 ]
 PATTERNS = [(t, re.compile(rx), g) for t, rx, g in _P]
 PRIVATE_KEY_BEGIN = re.compile(r"-----BEGIN[ A-Z0-9]{0,40}PRIVATE KEY(?: BLOCK)?-----")

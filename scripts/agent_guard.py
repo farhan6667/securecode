@@ -2555,6 +2555,13 @@ class Shell:
                     continue
                 if URL_RE.match(c) or re.match(r"^[\w.-]+@[\w.-]+:", c):
                     continue
+                # git read pathspec `<rev>:<path>`, `:<path>` or `:<n>:<path>` (git show/cat-file/log/diff/grep):
+                # the path after the colon is read from the object store, so a secret there must be judged too.
+                # clean_name()/path_shaped() drop or miss a bare `HEAD:.env`, so extract the suffix explicitly.
+                if role == "read" and ":" in c and not re.match(r"^[A-Za-z]:[\\/]", c):
+                    suffix = c.split(":")[-1]
+                    if suffix and (is_secret_path(suffix) or path_shaped(suffix)):
+                        self.path(suffix, "read", gcwd, git=True)
                 if path_shaped(c) or c in (".", "..") or is_secret_path(c):
                     if sub == "rm" and is_secret_path(c):
                         continue

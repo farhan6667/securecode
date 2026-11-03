@@ -889,3 +889,23 @@ def test_managed_install_writes_managed_policy(tmp_path):
     s = json.loads((tmp_path / "ClaudeCode" / "managed-settings.json").read_text(encoding="utf-8"))
     assert set(INSTALL.OWNER_ASK_RULES) <= set(s["permissions"]["deny"])
     assert json.loads(p.stdout)["guard_mode"] == "managed"
+
+
+# --- V7P pentest round (Fable) regression tests ---
+
+@pytest.mark.parametrize("cmd", [
+    "git show HEAD:.env", "git show :.env", "git show main:.env", "git show @:.env",
+    "git show HEAD:.env.local", "git cat-file -p HEAD:.env", "git show HEAD:id_rsa",
+    "git show HEAD:server.key", "git show :0:.env",
+])
+def test_git_revpath_pathspec_cannot_read_secret_files(cmd):
+    """V7P-01: `git show <rev>:<path>` reads a committed secret straight from the object store.
+    clean_name() split off the path after the colon and path_shaped() missed a slash-less spec, so a
+    bare HEAD:.env slipped past the secret-read deny. The suffix after the colon must be judged."""
+    assert decision(G.decide(sh(cmd), "managed")) == "deny", cmd
+    assert decision(G.decide(sh(cmd), "owner")) == "deny", cmd
+
+
+def test_git_revpath_does_not_overblock_ordinary_files():
+    assert decision(G.decide(sh("git show HEAD:README.md"), "managed")) == "allow"
+    assert decision(G.decide(sh("git show HEAD:src/app.py"), "managed")) == "allow"
