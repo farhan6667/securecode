@@ -1,4 +1,4 @@
-<h1 align="center"><img src="docs/img/securecode-logo.webp" width="440" alt="SecureCode logo: a gold and blue shield with a code symbol and an AI chip, above the words SecureCode, Virtual Pentester for AI Coding Agents"></h1>
+<h1 align="center"><img src="docs/img/securecode-hero.webp" width="100%" alt="SecureCode emblem: a gold shield with a code symbol and an AI chip, the SecureCode wordmark and the tagline Virtual Pentester for AI Coding Agents"></h1>
 
 <p align="center">
   <a href="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml"><img src="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml/badge.svg" alt="tests"></a>

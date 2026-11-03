@@ -177,7 +177,7 @@ Added after the 6.2 review
 - docs/THIRD-PARTY-REVIEW.md
 - docs/img/brand/nexaforge-lockup-dark.webp
 - docs/img/brand/nexaforge-lockup-light.webp
-- docs/img/securecode-logo.webp
+- docs/img/securecode-hero.webp
 - docs/img/securecode-overview.webp
 - docs/img/sponsor-button-dark.webp
 - docs/img/sponsor-button-light.webp
