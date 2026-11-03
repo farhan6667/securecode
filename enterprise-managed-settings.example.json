@@ -30,6 +30,10 @@
       {
         "matcher": "Read|WebFetch|mcp__.*",
         "hooks": [{ "type": "command", "command": "\"C:\\Program Files\\Python313\\python.exe\" -I \"C:\\Program Files\\OrgAISecureAppSec\\scripts\\injection_watch.py\"", "timeout": 20 }]
+      },
+      {
+        "matcher": "Bash|BashOutput|PowerShell|Read|Grep|WebFetch|mcp__.*",
+        "hooks": [{ "type": "command", "command": "\"C:\\Program Files\\Python313\\python.exe\" -I \"C:\\Program Files\\OrgAISecureAppSec\\scripts\\secret_shield.py\"", "timeout": 20 }]
       }
     ]
   }

@@ -77,6 +77,7 @@ checks={
  "global_hook": (ad/"scripts/global_hook.py").exists(),
  "agent_guard": (ad/"scripts/agent_guard.py").exists() and hooks_with("org-ai-agent-guard"),
  "injection_watch": (ad/"scripts/injection_watch.py").exists() and hooks_with("org-ai-injection-watch"),
+ "secret_shield": (ad/"scripts/secret_shield.py").exists() and hooks_with("org-ai-secret-shield"),
  "agent_rules": (ad/"AGENTS.md").exists(),
  "guard_runs_and_blocks": guard_really_works(),
 }

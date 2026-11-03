@@ -238,6 +238,34 @@ template sets `failClosed: true`, because Cursor otherwise lets the action throu
 an "ask" but runs the tool anyway, so the adapter turns every ask into a deny. Codex documents its hooks as a
 guardrail, not a complete boundary, and hosted tools such as web search bypass them.
 
+**Secret shield (7.0, PostToolUse).** `scripts/secret_shield.py` sees the output of Bash, BashOutput,
+PowerShell, Read, Grep, WebFetch and MCP tools. When a high-confidence secret pattern matches it returns
+`updatedToolOutput` (a copy of the output in the same shape, every secret value replaced by a typed marker;
+documented for all tools) plus `decision: "block"` with a reason that names the source and type, never the
+value, and an audit line in `.security/shield-audit.jsonl` (no values).
+- Trust: the tool output is attacker-controlled text. The shield only pattern-matches it; it never runs,
+  decodes into a file or follows it. Every regex is bounded (linear per start position), the scan is capped at
+  2 million characters and a 4 second deadline, nesting deeper than 64 levels is withheld.
+- Fail-safe choice: output beyond the cap or the deadline is withheld (fail closed); malformed input and
+  internal errors fail open, the latter with a warning to the agent, because a PostToolUse hook cannot un-run
+  the tool, a crashed or timed-out hook is non-blocking in Claude Code anyway, and a broken redactor must not
+  trap every session.
+- Accepted: the tool already ran (the guard is the preventive control); telemetry keeps the original output and
+  the transcript may too (open finding V7S-05; `sweep` lists what leaked, read only, masked); the audit file is
+  in the project and not yet guard-protected (V7S-06); documentation example keys pass through unchanged.
+
+**MCP scan (7.0).** `scripts/mcp_scan.py` reads MCP configs of Claude Code, Cursor, Codex, Gemini CLI and VS
+Code, prints env and header names only, and flags risky launches. secgate full and ci run it on project
+configs only (never user files, never a connect).
+- `--connect NAME --yes` starts one named stdio server: it is code execution by design, so the command is
+  printed first, nothing starts without `--yes`, the program is looked up on PATH only (never the project
+  folder), `.bat`/`.cmd` with cmd.exe metacharacters are refused, the answer is size-capped and time-limited,
+  and the process tree is killed afterwards. Remote servers are never contacted. Tool text is untrusted:
+  findings show it redacted, cut short, with hidden characters spelled out.
+- The lock (`.security/mcp-lock.json`) pins tool, instruction and launch hashes. It is refused through links.
+  Accepted: whoever can write the project can re-pin (V7S-06); the regex checks catch common poisoning shapes,
+  not all of them.
+
 **End-of-task pentest offer.** `stop_gate.py` asks the agent once to offer "Run Security Test" when 3 or more code
 files or 40 or more changed lines (added plus deleted; all lines of a new file) changed since the last offer and no
 ci or full gate report is newer than those changes. The offer is recorded in `.security/pentest-offer.json`

@@ -680,6 +680,62 @@
       "what": "First real ZAP run on Windows crashed: zap.sh was picked from PATH and CreateProcess cannot start a shell script; an OSError became a traceback. ZAP now runs as java -jar from PATH or the tools folder, and a start failure is a clear note",
       "check": "tests/test_v7_pentest.py::test_find_zap_uses_java_jar_from_the_tools_folder_not_a_shell_script, test_zap_that_cannot_start_is_a_note_not_a_traceback; real ZAP 2.17.0 run on 2026-11-03 found 9 alerts on a throwaway local site",
       "status": "fixed"
+    },
+    {
+      "id": "V7S-01",
+      "severity": "high",
+      "where": "hooks (PostToolUse), scripts/secret_shield.py",
+      "what": "A secret that arrived through allowed tool output (cat of a config file, a test log, an env dump, an MCP answer) reached the model; the guard only blocks reads of secret files. The shield now replaces secret values in the output (updatedToolOutput) and blocks with a reason that names the source and type",
+      "check": "tests/test_secret_shield.py::test_bash_output_is_replaced_in_the_same_shape_and_audited, test_every_pattern_finds_and_redacts, test_redaction_never_leaks_in_any_context",
+      "status": "fixed"
+    },
+    {
+      "id": "V7S-02",
+      "severity": "medium",
+      "where": "scripts/secret_shield.py sweep",
+      "what": "Secrets that already leaked into Claude Code transcripts and project logs could not be found without reading them by hand. The read-only sweep lists them masked, with revocation steps",
+      "check": "tests/test_secret_shield.py::test_sweep_reports_masked_with_revocation_steps, test_sweep_default_targets_use_the_configured_folder_only",
+      "status": "fixed"
+    },
+    {
+      "id": "V7S-03",
+      "severity": "medium",
+      "where": "scripts/mcp_scan.py, scripts/secgate.py",
+      "what": "MCP server configs were only noted as present (REPO_MCP_SERVERS); unpinned packages, pipe-to-shell launches, plain http, root folder access and inline secrets were not flagged. secgate full and ci now run the offline config scan on project configs",
+      "check": "tests/test_mcp_scan.py::test_risky_patterns_are_flagged, test_gate_findings_use_project_configs_only, test_secgate_loads_mcp_scan",
+      "status": "fixed"
+    },
+    {
+      "id": "V7S-04",
+      "severity": "medium",
+      "where": "scripts/mcp_scan.py --connect",
+      "what": "No check of the tool descriptions an MCP server serves (poisoning, hidden Unicode, shadowing) and no way to notice a server that changes its tools after approval (rug pull). Connect mode scans them and pins SHA-256 hashes in .security/mcp-lock.json",
+      "check": "tests/test_mcp_scan.py::test_poisoning_fixtures, test_connect_pins_then_detects_rug_pull_until_approved, test_connect_poisoned_server_is_not_pinned",
+      "status": "fixed"
+    },
+    {
+      "id": "V7S-05",
+      "severity": "medium",
+      "where": "Claude Code transcript storage",
+      "what": "The hooks docs say telemetry captures the original output before a PostToolUse hook runs and do not say whether the transcript keeps the original or the replaced output, so a withheld secret may still sit in ~/.claude/projects. Mitigation: the sweep. Needs a live check on a real session",
+      "check": "manual: run a session that reads a fake secret, then py -I scripts/secret_shield.py sweep",
+      "status": "open"
+    },
+    {
+      "id": "V7S-06",
+      "severity": "low",
+      "where": "scripts/agent_guard.py protected names",
+      "what": "The agent guard does not protect .security/shield-audit.jsonl and .security/mcp-lock.json the way it protects guard-audit.jsonl, so the agent can rewrite them (re-pin a server or erase the audit). Fix belongs in agent_guard.py on the v7 branch",
+      "check": "add both names next to guard-audit.jsonl in agent_guard PROTECTED_NAMES and its regex, with a deny test",
+      "status": "open"
+    },
+    {
+      "id": "V7S-07",
+      "severity": "low",
+      "where": "scripts/secret_shield.py coverage",
+      "what": "Not covered: output of the Monitor tool (notifications, not a tool result), secrets in the tool input, and secrets with no recognisable shape (short passwords in oddly named fields)",
+      "check": "documented in docs/SECRET-SHIELD-AND-MCP.md (What it does not do)",
+      "status": "open"
     }
   ]
 }

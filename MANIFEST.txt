@@ -89,6 +89,17 @@ Added after review (V6.2 final)
   security, Retire.js, Dependency-Check, SpotBugs + Find Security Bugs, npm audit; Security Code Scan and CodeQL
   manual. Versions and hashes in scripts/engines/engines.lock.json
 
+7.0 secret shield and MCP scan
+- scripts/secret_shield.py: PostToolUse hook for Bash, PowerShell, Read, Grep, WebFetch and MCP output. Secret
+  values are replaced in the output (updatedToolOutput) before the model sees them, with a block reason that
+  names the source and type, never the value; .security/shield-audit.jsonl records it. `sweep` lists secrets
+  already in Claude Code transcripts and project logs, masked, with revocation steps (read only).
+- scripts/mcp_scan.py: offline scan of MCP configs (Claude Code, Cursor, Codex, Gemini CLI, VS Code): unpinned
+  packages, pipe-to-shell, plain http, root or home folder access, inline secrets. Optional --connect NAME --yes
+  lists a stdio server's tools, flags poisoning, and pins hashes in .security/mcp-lock.json (rug-pull check).
+  secgate full and ci run the config mode on project configs.
+- docs/SECRET-SHIELD-AND-MCP.md; tests/test_secret_shield.py and tests/test_mcp_scan.py
+
 7.0 update mechanism and CI
 - install-global.py: Task Scheduler task from an XML definition (catch-up, logon trigger, network, time limit,
   restart on failure); --update-timer for a systemd user timer (Persistent=true) or a launchd agent (RunAtLoad)
