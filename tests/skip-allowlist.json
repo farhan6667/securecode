@@ -11,6 +11,8 @@
      "reason": "Optional per-language engine (needs Go too), not installed in the test job; covered with fakes in the same file."},
     {"test": "tests/test_update_mechanism.py::test_task_scheduler_accepts_the_generated_xml", "os": ["linux", "macos"],
      "reason": "Creates a real (disabled) Windows scheduled task, so it runs on the Windows CI jobs only; on a developer machine it skips and this check reports it."},
+    {"test": "tests/test_v7_pentest2.py::test_fuzz_no_git_route_reads_a_committed_secret", "python": ["3.10"],
+     "reason": "Hypothesis needs Python 3.11+; a fixed slice of the same routes runs on 3.10 in test_every_git_route_denies_a_plain_secret_without_hypothesis."},
     {"test": "tests/test_v7_gapfix_install.py::test_installer_filled_windows_lines_really_deny_in_every_shell", "os": ["linux", "macos"],
      "reason": "Runs the Windows hook lines through pwsh, Windows PowerShell and cmd; it runs on the Windows jobs."},
     {"test": "tests/test_v7_guard.py::test_hook_ignores_owner_policy_when_managed_settings_exist", "os": ["linux", "macos"],

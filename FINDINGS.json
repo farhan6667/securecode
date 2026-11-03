@@ -1072,6 +1072,22 @@
       "what": "Pentest round 2, not fixed on purpose: everyday history dumps (git log -p, git grep \"\" HEAD, git stash show -p without a path, git log -p -S password) and a blob read by object id (git ls-tree -r HEAD, then git cat-file -p <id> or git show <id>) still print a committed secret. The guard cannot tell a blob id from a commit id without running git, and blocking git log -p would break everyday use. The output secret shield is the control; a repo should not hold secrets at all (gitleaks in the gate finds them)",
       "check": "SECURITY-CONTEXT.md (Owner mode vs managed mode, committed secrets)",
       "status": "open"
+    },
+    {
+      "id": "V7P3-L1",
+      "severity": "low",
+      "where": "scripts/secret_shield.py",
+      "what": "Secrets separated by a space instead of = or : are not masked: .netrc 'password X', '--password X' on a command line, Dockerfile 'ENV KEY X', Windows 'setx KEY X'",
+      "check": "round 3 pentest report; add patterns with the same random-value filter and a linear-time test",
+      "status": "open"
+    },
+    {
+      "id": "V7P3-L2",
+      "severity": "low",
+      "where": "scripts/secret_shield.py",
+      "what": "Cookie and Set-Cookie values, keys whose name has no secret word (SIGNING_KEY, ENCRYPTION_KEY, Laravel APP_KEY) and double-escaped JSON are not masked",
+      "check": "round 3 pentest report; documented in docs/SECRET-SHIELD-AND-MCP.md (What it does not do)",
+      "status": "open"
     }
   ]
 }
