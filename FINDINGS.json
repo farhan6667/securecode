@@ -1034,6 +1034,38 @@
       "status": "fixed"
     },
     {
+      "id": "V7P3-01",
+      "severity": "high",
+      "where": "scripts/agent_guard.py Shell.run (lexer input), ps_normalize()",
+      "what": "Pentest round 3: the guard's lexer did not read a command the way the shell does. PowerShell treats a lone CR as a line break, the curly quotes (U+2018-201E) as quotes and every Unicode space separator as a space; Git Bash (Cygwin bash, the Bash tool on Windows) drops every CR while reading, inside quotes too. So 'echo x<CR>Get-Content .env' and 'cat <curly-quoted .env>' (PowerShell) and 'cat .e<CR>nv' or 'git show HEAD:.e<CR>nv' (Bash) read a secret, and 'echo x<CR>Set-Content ~/.claude/settings.json' wrote the agent's own settings, all allowed in owner and managed mode. Fix: PowerShell text has lone CRs turned into line breaks and curly quotes and Unicode spaces into their ASCII form before lexing (same length); bash text has every CR removed before lexing (right on Windows, only stricter elsewhere). CRLF scripts, `CRLF continuations and an escaped backtick before a line break keep their meaning.",
+      "check": "tests/test_v7_pentest3.py::test_v7p3_powershell_carriage_return_starts_a_new_statement, ::test_v7p3_powershell_here_string_closed_by_a_carriage_return, ::test_v7p3_powershell_curly_quotes_and_unicode_spaces, ::test_v7p3_bash_carriage_returns_are_dropped_like_git_bash_does, ::test_v7p3_everyday_powershell_with_crlf_and_curly_quotes_stays_allowed, ::test_v7p3_bash_crlf_everyday_stays_allowed; pwsh 7 and Git Bash 5.3 behaviour checked by hand with harmless Write-Output/echo scripts; failing-first shown by running the file with NFSC_SCRIPTS pointed at the 9b7ec11 scripts",
+      "status": "fixed"
+    },
+    {
+      "id": "V7P3-02",
+      "severity": "high",
+      "where": "scripts/agent_guard.py _strings(), check_tool_paths()",
+      "what": "Pentest round 3: the walk over a tool's input stopped silently after 1000 strings, the first 500 items of a list, or depth 8, and everything past the cap was never judged. mcp__filesystem__read_multiple_files with 500 harmless paths and the project .env as the 501st, or mcp__filesystem__write_file with a junk array before path=~/.claude/settings.json (servers that strip unknown keys accept it), were allowed in managed mode. Fix: the walk has no silent cap; past 20000 strings, 100000 list items or depth 32 it raises and the call is the unknown class (ask in owner, deny in managed).",
+      "check": "tests/test_v7_pentest3.py::test_v7p3_mcp_read_multiple_files_501st_path_is_judged, ::test_v7p3_mcp_path_after_a_junk_array_is_judged, ::test_v7p3_mcp_path_nested_deeper_than_the_old_cap_is_judged, ::test_v7p3_mcp_input_too_large_to_walk_is_never_allowed, ::test_v7p3_everyday_mcp_calls_with_many_values_stay_allowed; failing-first shown by running the file with NFSC_SCRIPTS pointed at the 9b7ec11 scripts",
+      "status": "fixed"
+    },
+    {
+      "id": "V7P3-03",
+      "severity": "medium",
+      "where": "scripts/secret_shield.py find_secrets(), _strip_invisible()",
+      "what": "Pentest round 3: every known-format pattern starts with a lookbehind that refuses a letter or digit before the token, so a token straight after a terminal colour code ('\\x1b[31mghp_...', rg/grep --color always, git with color.ui=always, pytest --color=yes) passed the shield unredacted; so did any secret printed as UTF-16 by a UTF-8 tool (NUL between the characters, e.g. a file written by Windows PowerShell 5.1). Fix: CSI escape sequences and NUL bytes are removed from a scan copy, matches are mapped back to the original offsets and the original span (codes included) is replaced. OSC sequences are kept and scanned.",
+      "check": "tests/test_v7_pentest3.py::test_v7p3_shield_sees_through_colour_codes_and_nul_padding, ::test_v7p3_shield_hook_redacts_coloured_token_end_to_end, ::test_v7p3_shield_new_shapes_stay_linear[ansi], [ansi-only], [nul]; failing-first shown by running the file with NFSC_SCRIPTS pointed at the 9b7ec11 scripts",
+      "status": "fixed"
+    },
+    {
+      "id": "V7P3-04",
+      "severity": "medium",
+      "where": "scripts/secret_shield.py patterns (auth-header, xml-secret, url user part)",
+      "what": "Pentest round 3: the shield is the control OPEN-10 relies on, but it missed common secret shapes in output the guard allows: HTTP Authorization headers with an opaque Bearer/Basic/token value (curl -v, request logs), XML elements and key/value attribute pairs (<password>..</password> in Maven settings.xml, <add key=\"DbPassword\" value=\"..\"/> in web.config and NuGet.config, Spring and Tomcat XML), and URLs with an empty user part (redis://:password@host). Fix: two new pattern kinds with the same random-value filter and placeholder rules as secret-assignment, and the URL user part may be empty. Each new pattern is bounded and measured linear up to 2 MB.",
+      "check": "tests/test_v7_pentest3.py::test_v7p3_shield_catches_common_secret_shapes, ::test_v7p3_shield_leaves_placeholders_and_plain_text_alone, ::test_v7p3_shield_new_shapes_stay_linear; failing-first shown by running the file with NFSC_SCRIPTS pointed at the 9b7ec11 scripts",
+      "status": "fixed"
+    },
+    {
       "id": "OPEN-10",
       "severity": "low",
       "where": "scripts/agent_guard.py git reads (accepted scope)",

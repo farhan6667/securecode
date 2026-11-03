@@ -1299,6 +1299,19 @@ def decode_ansi(body: str) -> str:
     return re.sub(r"\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|.)", one, body)
 
 
+# PowerShell's tokenizer reads a lone CR as a line break, the curly quotes as quotes, and every Unicode space
+# separator (Zs, Zl, Zp, NEL) as a space (V7P3-01). Rewrite them to the ASCII form before lexing; every replacement
+# keeps the length, so spans still index the same text. A CRLF stays as it is: the lexer already reads it as one line
+# break (and `CRLF as one continuation).
+PS_CHARS = {0x2018: "'", 0x2019: "'", 0x201A: "'", 0x201B: "'", 0x201C: '"', 0x201D: '"', 0x201E: '"',
+            0x0085: " ", 0x1680: " ", 0x2028: " ", 0x2029: " ", 0x202F: " ", 0x205F: " ", 0x3000: " ",
+            **{c: " " for c in range(0x2000, 0x200B)}}
+
+
+def ps_normalize(text: str) -> str:
+    return re.sub(r"\r(?!\n)", "\n", text).translate(PS_CHARS)
+
+
 def text_variants(text: str) -> list[str]:
     t = text.translate(DASHES)
     plain = re.sub(r"[\"'`^]", "", t)
@@ -1632,6 +1645,13 @@ class Shell:
         if self.depth > MAX_DEPTH:
             self.unk("commands nested too deeply")
             return self
+        if self.d == "ps":
+            text = ps_normalize(text)
+        elif "\r" in text:
+            # Git Bash (the Cygwin/MSYS bash Claude Code runs on Windows) drops every CR while reading, inside quotes
+            # too: "cat .e<CR>nv" reads .env there. Elsewhere bash keeps the CR, so the file cannot match; judging the
+            # text without CRs is right on Windows and only stricter on Linux and macOS (V7P3-01).
+            text = text.replace("\r", "")
         r = download_run_text(text)
         if r:
             self.res(r)
@@ -3410,11 +3430,23 @@ CONTENT_KEYS = {"content", "new_string", "old_string", "new_source", "text", "bo
 PATHISH_KEY = re.compile(r"path|file|dir|dest|target|output|source|uri|url|href|^to$|^from$|location|folder|filename|^name$|cwd|root", re.I)
 
 
+MAX_INPUT_STRINGS = 20_000
+MAX_INPUT_DEPTH = 32
+
+
+class InputTooLarge(Exception):
+    """The tool input holds more values, or deeper nesting, than the guard walks (V7P3-02)."""
+
+
 def _strings(obj, key="", depth=0, out=None):
+    """Every (key, string) in the tool input outside the content keys. Never stops early without saying so: an
+    argument past a silent cap was never judged (V7P3-02), so a cap raises InputTooLarge instead."""
     out = [] if out is None else out
-    if len(out) > 1000 or depth > 8:
-        return out
+    if depth > MAX_INPUT_DEPTH:
+        raise InputTooLarge()
     if isinstance(obj, str):
+        if len(out) >= MAX_INPUT_STRINGS:
+            raise InputTooLarge()
         out.append((key, obj))
     elif isinstance(obj, dict):
         for k, v in obj.items():
@@ -3422,7 +3454,9 @@ def _strings(obj, key="", depth=0, out=None):
                 continue
             _strings(v, str(k), depth + 1, out)
     elif isinstance(obj, list):
-        for v in obj[:500]:
+        if len(obj) > MAX_INPUT_STRINGS * 5:          # numbers and nulls too: bound the walk, not only the strings
+            raise InputTooLarge()
+        for v in obj:
             _strings(v, key, depth + 1, out)
     return out
 
@@ -3432,7 +3466,11 @@ def check_tool_paths(tool: str, ti: dict, env: GuardEnv):
     is_mcp = tool.startswith("mcp__")
     writes = tool in FILE_WRITE_TOOLS
     reads = tool in FILE_READ_TOOLS
-    for key, s in _strings(ti):
+    try:
+        strings = _strings(ti)
+    except (InputTooLarge, RecursionError):
+        return "unknown", "the tool input holds more values or deeper nesting than the guard can check."
+    for key, s in strings:
         tick()
         if tool in ("Bash", "PowerShell", "Monitor") or (key == "pattern" and tool not in ("Glob",)):
             continue
