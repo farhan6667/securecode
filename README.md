@@ -274,8 +274,8 @@ scanner (Semgrep, Trivy, Gitleaks) is missing or failed to run; a pass exits wit
 
 The gate looks at which languages your project uses and runs the matching scanners in `full` and `ci` mode.
 It never copies a scanner into this package: each one runs as its own program, and a missing one shows up as
-`NOTE: not run: <name> (install with: py -I "C:\Users\<you>\AppData\Local\OrgAISecureAppSec\scripts\securecode.py" setup)`
-(the note always names the real installed path, on macOS and Linux too, so it can be pasted into any shell), never as a pass and never as a failure.
+`NOTE: not run: <name> (install with: py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\securecode.py" setup)`
+(the PowerShell form on Windows; the macOS and Linux note names the installed path there), never as a pass and never as a failure.
 
 ```powershell
 py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\securecode.py" doctor        # what this project needs, what is installed, which version

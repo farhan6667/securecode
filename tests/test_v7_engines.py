@@ -615,17 +615,17 @@ def test_gate_prints_not_run_notes_and_still_passes(tmp_path, monkeypatch, capsy
 
 
 def test_setup_command_is_the_full_installed_path_per_platform(monkeypatch, tmp_path):
-    # V7GAP-D: a resolved path, because PowerShell does not expand %LOCALAPPDATA% and cmd does not expand $env:...
-    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Some One\AppData\Local")
-    assert _base.setup_command("Windows") == 'py -I "C:\\Users\\Some One\\AppData\\Local\\OrgAISecureAppSec\\scripts\\securecode.py" setup'
-    assert _base.setup_command("Darwin").endswith('/Library/Application Support/OrgAISecureAppSec/scripts/securecode.py" setup')
-    monkeypatch.setenv("XDG_DATA_HOME", "/home/u/.local/share")
-    assert _base.setup_command("Linux") == 'python3 -I "/home/u/.local/share/OrgAISecureAppSec/scripts/securecode.py" setup'
+    # V7GAP-D: the Windows hint is the PowerShell form (%LOCALAPPDATA% is not expanded there), and no hint carries
+    # the user's real home folder (gate output and reports must not).
+    assert _base.setup_command("Windows") == 'py -I "$env:LOCALAPPDATA\\OrgAISecureAppSec\\scripts\\securecode.py" setup'
+    assert _base.setup_command("Darwin") == 'python3 -I "$HOME/Library/Application Support/OrgAISecureAppSec/scripts/securecode.py" setup'
+    assert "OrgAISecureAppSec/scripts/securecode.py\" setup" in _base.setup_command("Linux")
+    home = str(Path.home())
     for system in ("Windows", "Darwin", "Linux"):
         cmd = _base.setup_command(system)
-        assert "%" not in cmd and "$" not in cmd, cmd
+        assert "%" not in cmd and home not in cmd, cmd
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "install with securecode setup" not in readme
+    assert _base.setup_command("Windows") in readme and "install with securecode setup" not in readme
 
 
 def test_gate_retire_ignores_repo_ignore_file_in_ci(tmp_path, monkeypatch):

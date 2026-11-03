@@ -917,8 +917,8 @@
       "id": "V7GAP-4",
       "severity": "medium",
       "where": "install-global.py --agent, verify-global.py adapters, docs/AI-AGENT-SECURITY.md, README Works with",
-      "what": "Guard hooks for Cursor, Codex, Gemini CLI and Antigravity needed hand edits of <PYTHON> and <APP>; install-global.py --agent now fills the template, backs up and merges into the existing config (refuses invalid JSON and links), is idempotent, refreshes on later runs, and verify-global.py reports which adapters are installed",
-      "check": "tests/test_v7_gapfix_install.py::test_agent_writes_a_filled_config_to_the_documented_place; tests/test_v7_gapfix_install.py::test_agent_is_idempotent; tests/test_v7_gapfix_install.py::test_agent_merges_into_existing_settings_and_backs_them_up; tests/test_v7_gapfix_install.py::test_agent_refuses_a_file_it_cannot_merge_and_leaves_it_untouched; tests/test_v7_gapfix_install.py::test_agent_refuses_to_write_through_a_link; tests/test_v7_gapfix_install.py::test_agent_replaces_its_old_entry_instead_of_adding_a_second; tests/test_v7_gapfix_install.py::test_later_runs_refresh_recorded_agents_but_respect_a_removed_hook; tests/test_v7_gapfix_install.py::test_verify_global_lists_installed_adapters",
+      "what": "Guard hooks for Cursor, Codex, Gemini CLI and Antigravity needed hand edits of <PYTHON> and <APP>; install-global.py --agent now fills the template, backs up and merges into the existing config (refuses invalid JSON and links), is idempotent, refreshes on later runs, and verify-global.py reports which adapters are installed. On Windows the installer uses a <name>.windows.json template when present (Gemini CLI runs hooks in PowerShell, V7L-01) and fills commandWindows fields too",
+      "check": "tests/test_v7_gapfix_install.py::test_agent_writes_a_filled_config_to_the_documented_place; tests/test_v7_gapfix_install.py::test_agent_is_idempotent; tests/test_v7_gapfix_install.py::test_agent_merges_into_existing_settings_and_backs_them_up; tests/test_v7_gapfix_install.py::test_agent_refuses_a_file_it_cannot_merge_and_leaves_it_untouched; tests/test_v7_gapfix_install.py::test_agent_refuses_to_write_through_a_link; tests/test_v7_gapfix_install.py::test_agent_replaces_its_old_entry_instead_of_adding_a_second; tests/test_v7_gapfix_install.py::test_later_runs_refresh_recorded_agents_but_respect_a_removed_hook; tests/test_v7_gapfix_install.py::test_verify_global_lists_installed_adapters; tests/test_v7_gapfix_install.py::test_windows_templates_are_chosen_on_windows_and_fill_command_windows; tests/test_v7_gapfix_install.py::test_windows_gemini_command_parses_in_powershell",
       "status": "fixed"
     },
     {
@@ -941,7 +941,7 @@
       "id": "V7GAP-D",
       "severity": "low",
       "where": "README PowerShell blocks, scripts/engines/_base.py setup_command",
-      "what": "%LOCALAPPDATA% does not expand in PowerShell; the README blocks now use $env:LOCALAPPDATA and the printed setup hint uses the resolved absolute path",
+      "what": "%LOCALAPPDATA% does not expand in PowerShell; the README PowerShell blocks now use $env:LOCALAPPDATA and the printed setup hint (doctor, the gate's not-run note) uses the PowerShell form on Windows. A variable, not the resolved folder, so gate output never carries the home path",
       "check": "tests/test_v7_gapfix_install.py::test_readme_powershell_and_bash_blocks_do_not_use_cmd_variables; tests/test_v7_engines.py::test_setup_command_is_the_full_installed_path_per_platform",
       "status": "fixed"
     },
