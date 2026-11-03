@@ -1008,6 +1008,38 @@
       "what": "After an auto-update where only schtasks failed, the updater logged install-failed although the files were updated. The installer now exits 4 for a schedule-only failure and the updater reports updated (schedule warning)",
       "check": "tests/test_v7_gapfix_install.py::test_exit_code_is_4_only_when_the_schedule_alone_failed; tests/test_v7_gapfix_install.py::test_updater_reports_a_schedule_only_failure_as_updated_with_a_warning",
       "status": "fixed"
+    },
+    {
+      "id": "V7P2-01",
+      "severity": "high",
+      "where": "scripts/secret_shield.py secret-assignment pattern (the V7P-02 change)",
+      "what": "Pentest round 2: the trailing key part added by V7P-02, (?:[_.-]?[A-Za-z0-9]{1,20}){0,3}, can be split thousands of ways per start position, and the lookbehind let every '-' or '.' before the secret word be a start. Measured 170 us per character: a 120 KB tool output shaped '-.-.-...secretAAAA...' took about 20 s, the PostToolUse hook timeout, after which Claude Code passes the original output through unredacted. A hostile file holding that text plus a real token therefore bypassed the shield. The round-1 ReDoS test only used floods that do not hit this shape. Fix: one bounded character class on each side of the secret word and a lookbehind that starts the key only where a name run starts; 2 MB of the hostile text now scans in under 0.4 s",
+      "check": "tests/test_v7_pentest2.py::test_v7p2_shield_hostile_key_runs_stay_fast, ::test_v7p2_shield_hostile_output_does_not_hide_a_real_token, ::test_v7p2_secret_word_keys_with_more_name_characters_are_still_redacted",
+      "status": "fixed"
+    },
+    {
+      "id": "V7P2-02",
+      "severity": "high",
+      "where": "scripts/agent_guard.py git(), git_object_dump()",
+      "what": "Pentest round 2: committed secrets were still readable by routes the V7P-01 argv check does not see: the object name fed on standard input (echo HEAD:.env | git cat-file --batch, --batch < specs.txt, --batch-command, --batch-all-objects --batch, rev-list --objects | cat-file --batch, PowerShell \"HEAD:.env\" | git cat-file --batch), paths from a file or stdin (git log -p --pathspec-from-file=-), pathspec magic with a non-suffix name (:(literal).envrc), and a secret pathspec on commands judged as writes so they only asked (git archive HEAD .env, git format-patch --stdout -- .env, git stash show -p -- .env). All allowed in owner and managed mode. Fix: cat-file --batch* (not --batch-check) and --pathspec-from-file on content-printing subcommands are the unknown class (ask in owner, deny in managed); archive, format-patch and stash show judge pathspecs as reads (deny on a secret name); pathspec magic is stripped before the name is judged",
+      "check": "tests/test_v7_pentest2.py::test_stdin_fed_and_whole_tree_git_reads_are_never_allowed, ::test_powershell_stdin_fed_cat_file_is_never_allowed, ::test_secret_pathspec_in_archive_format_patch_and_stash_show_is_denied, ::test_fuzz_no_git_route_reads_a_committed_secret (Hypothesis, 11 revs x 24 names x 40 routes, 600 examples); failing-first shown by running the file with NFSC_SCRIPTS pointed at the 185c4c0 scripts",
+      "status": "fixed"
+    },
+    {
+      "id": "V7P2-03",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py git_object_dump()",
+      "what": "Pentest round 2: whole-tree dumps to standard output were allowed in both modes and print every tracked file, secrets included, without naming one: git archive HEAD | tar -xO (or | base64, or bare), git format-patch --root --stdout, git diff 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD (the empty tree, SHA-1 and SHA-256 forms, any 7+ character prefix), git diff-tree -p <empty tree> HEAD. Now the unknown class (ask in owner, deny in managed). Kept allowed: git archive -o release.zip HEAD, --output=, a single-stage '> file' redirect, format-patch -1 or --root -o patches, git log -p, git show HEAD, git diff. Everyday corpus ask rate test still passes",
+      "check": "tests/test_v7_pentest2.py::test_stdin_fed_and_whole_tree_git_reads_are_never_allowed, ::test_everyday_git_forms_are_still_allowed; tests/test_guard_positive_model.py::test_everyday_corpus_prompt_rate_is_under_one_percent",
+      "status": "fixed"
+    },
+    {
+      "id": "OPEN-10",
+      "severity": "low",
+      "where": "scripts/agent_guard.py git reads (accepted scope)",
+      "what": "Pentest round 2, not fixed on purpose: everyday history dumps (git log -p, git grep \"\" HEAD, git stash show -p without a path, git log -p -S password) and a blob read by object id (git ls-tree -r HEAD, then git cat-file -p <id> or git show <id>) still print a committed secret. The guard cannot tell a blob id from a commit id without running git, and blocking git log -p would break everyday use. The output secret shield is the control; a repo should not hold secrets at all (gitleaks in the gate finds them)",
+      "check": "SECURITY-CONTEXT.md (Owner mode vs managed mode, committed secrets)",
+      "status": "open"
     }
   ]
 }

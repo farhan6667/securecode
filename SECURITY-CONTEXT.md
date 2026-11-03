@@ -230,6 +230,14 @@ runtime folder, never in a project, so a cloned repo cannot choose its mode.
 - Known gaps: an MCP tool that publishes or creates a public repo is not classed (only shell commands are);
   `sudo -u user npm publish` and other wrappers with arguments may not be recognized as a publish; branch
   deletes through other tools are not seen.
+- Committed secrets (pentest rounds 1 and 2): a secret file named anywhere on the git command line is a deny
+  in both modes (`<rev>:<path>`, `-- path`, pathspec magic, case and separator variants, archive, format-patch
+  and stash show), and routes where the guard cannot see what is read (`cat-file --batch` fed on standard
+  input, `--pathspec-from-file`, `git archive` to standard output, `format-patch --root --stdout`, a diff
+  against the empty tree, `git bundle`, `fast-export`) are the unknown class. Accepted: everyday history dumps
+  (`git log -p`, `git grep "" HEAD`, `git stash show -p` without a path) and a blob read by object id
+  (`git cat-file -p <id>`, `git show <id>` after `git ls-tree -r HEAD`) still print a committed secret; the
+  output secret shield (PostToolUse) is the control for those, and the repo should not hold secrets at all.
 
 **Cursor and Codex adapters.** `scripts/adapters/cursor_hook.py` maps Cursor's `beforeShellExecution`,
 `beforeMCPExecution` and `beforeReadFile` hooks to the same checks; Cursor has no hook before file edits, so

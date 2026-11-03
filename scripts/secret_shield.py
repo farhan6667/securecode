@@ -63,8 +63,12 @@ _P = [
     ("db-url-password", r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|mssql|sqlserver|clickhouse|"
                         r"cockroachdb|jdbc:[a-z]{2,20})://[^\s:/@\"'<>]{1,128}:([^\s@/\"'<>]{1,256})@", 1),
     ("url-password", r"(?i)\b(?:https?|ftps?|smtps?|ldaps?)://[^\s:/@\"'<>]{1,128}:([^\s@/\"'<>]{1,256})@", 1),
-    ("secret-assignment", r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.-]{0,40}?(?:secret|passw(?:or)?d|pwd|token|api[_-]?key|apikey|"
-                          r"access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?key|credential)s?(?:[_.-]?[A-Za-z0-9]{1,20}){0,3})"
+    # The key is one run of name characters that starts where such a run starts (the lookbehind), holds a secret
+    # word, and may go on with more name characters (SECRET_KEY, apiKeyProd). One bounded class on each side, never
+    # a repeated group: the V7P-02 form (?:[_.-]?[A-Za-z0-9]{1,20}){0,3} could be split thousands of ways per start
+    # and a 120 KB output took the shield past the hook timeout, which lets the output through unredacted (V7P2-01).
+    ("secret-assignment", r"(?i)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{0,80}?(?:secret|passw(?:or)?d|pwd|token|api[_-]?key|apikey|"
+                          r"access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?key|credential)s?[A-Za-z0-9_.-]{0,60})"
                           r"(?:\\?[\"'])?\s{0,5}(?:=>|:=|=|:)\s{0,5}(?:\\?[\"'])?([^\s\"'`\\,;<>(){}\[\]]{12,256})", 2),
 ]
 PATTERNS = [(t, re.compile(rx), g) for t, rx, g in _P]
