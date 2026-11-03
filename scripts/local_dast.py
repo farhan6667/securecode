@@ -255,8 +255,15 @@ def version_key(p) -> tuple:
     return (1, tuple(int(x) for x in m.group(1).split(".")), name)
 
 
-DOCKER_DOWN_NOTE = ("Docker is installed but not running; start Docker Desktop or run: "
-                    "py -I scripts/securecode.py setup --engine zap")
+def docker_down_note() -> str:
+    """Names the installed-path setup command (works from any project folder, as in V7F-D)."""
+    cmd = "py -I scripts/securecode.py setup"
+    try:
+        from engines._base import setup_command
+        cmd = setup_command()
+    except Exception:
+        pass
+    return f"Docker is installed but not running; start Docker Desktop or run: {cmd} --engine zap"
 
 
 def docker_running(docker: str, runner=None) -> bool:
@@ -403,8 +410,9 @@ def main(argv=None, resolver=default_resolver, runner=subprocess.run, popen=subp
         return 0
     kind, exe = zap
     if kind == "docker_down":
-        print(f"NOTE: {DOCKER_DOWN_NOTE}. Nothing was scanned.")
-        write_result(out, {**base, "tool": "docker", "status": "failed", "note": DOCKER_DOWN_NOTE})
+        note = docker_down_note()
+        print(f"NOTE: {note}. Nothing was scanned.")
+        write_result(out, {**base, "tool": "docker", "status": "failed", "note": note})
         return 5
     work = out.parent / "dast"
     work.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,4 @@
-import json, os, subprocess, sys, tempfile, time
+import json, os, re, subprocess, sys, tempfile, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -293,6 +293,40 @@ def test_ci_blocks_when_a_scanner_errors():
         env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""))
         rc, out = scan(d, "--mode", "ci", env=env)
         assert rc == 3 and "did not complete" in out and "RESULT: PASS" not in out, out
+
+
+def test_ci_crashing_semgrep_still_shows_built_in_findings_and_a_readable_error():
+    """V7GAP-9: a semgrep that crashed with a traceback hid every built-in finding behind one '?'-joined line."""
+    home = str(Path.home())
+    token = "api" + "_key" + "=" + "Zx9q" * 6
+    trace = ["Traceback (most recent call last):",
+             f'  File "{home}\\semgrep\\main.py", line 12, in main',
+             "    run()",
+             f"  File \"{home}\\semgrep\\core.py\", line 40, in run {token}",
+             "ModuleNotFoundError: No module named 'semgrep_core'"]
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as bindir:
+        Path(d, "index.html").write_text('<script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>\n',
+                                         encoding="utf-8")
+        for name in ("semgrep", "trivy", "gitleaks"):
+            lines = trace if name == "semgrep" else ["config error"]
+            if os.name == "nt":
+                body = "".join(f"@echo {l} 1>&2\r\n" for l in lines) + "@exit /b 1\r\n"
+                Path(bindir, name + ".bat").write_text(body)
+            else:
+                f = Path(bindir, name)
+                f.write_text("#!/bin/sh\ncat >&2 <<'EOF'\n" + "\n".join(lines) + "\nEOF\nexit 1\n")
+                f.chmod(0o755)
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""))
+        rc, out = scan(d, "--mode", "ci", env=env)
+    assert rc == 3, out                                              # ci still fails closed
+    assert "jquery 1.12.4" in out and "Counts:" in out, out          # built-in findings are not hidden
+    assert "ModuleNotFoundError" in out and "Traceback (most recent call last):" in out, out
+    err_block = out.split("ERROR: semgrep did not complete:", 1)[1].split("ERROR:", 1)[0].split("NOTE:", 1)[0]
+    assert "?  File" not in err_block and "??" not in err_block, err_block   # no newline mangling
+    assert home not in out and "Zx9qZx9q" not in out, out           # no local path, no secret value
+    assert re.search(r"FIX: semgrep is installed but failed to run; reinstall it or run: \S.*securecode\.py\"? setup "
+                     r"--engine semgrep", out), out
+    assert "RESULT: PASS" not in out and "RESULT: BLOCKED (ci)" in out, out
 
 
 def test_run_tests_without_npm_is_a_note_not_a_failure():

@@ -840,6 +840,22 @@
       "what": "The README claims under 1 in 100 everyday commands prompt, but the corpus test only asserted an ask rate under 5 percent, so the claim could regress fivefold with CI still green. The assertion is now under 1 percent and the test is renamed to match",
       "check": "tests/test_guard_positive_model.py::test_everyday_corpus_prompt_rate_is_under_one_percent",
       "status": "fixed"
+    },
+    {
+      "id": "V7GAP-9",
+      "severity": "medium",
+      "where": "scripts/secgate.py main, scanner_error_lines, scanner_fix_hint",
+      "what": "In ci mode a crashing required scanner (a semgrep traceback) made the gate print only that traceback, newlines turned into '?', and 'BLOCKED (ci) ... Fix the error above', hiding every built-in finding and the other scanners' results. The gate now still prints counts and all findings, shows each scanner error as a few readable lines (first two and last two, home folder as ~, secret-looking values redacted, control characters still neutralised per line), names the fix ('<name> is installed but failed to run; reinstall it or run: <installed securecode.py> setup --engine <name>') and keeps ci failing closed with exit 3. findings.json stores the same compact error text",
+      "check": "tests/test_agent_guard.py::test_ci_crashing_semgrep_still_shows_built_in_findings_and_a_readable_error, ::test_ci_blocks_when_a_scanner_errors",
+      "status": "fixed"
+    },
+    {
+      "id": "V7GAP-10",
+      "severity": "low",
+      "where": "scripts/securecode.py setup, scripts/release/make_release.py docstring, README.md (Check a project without the AI)",
+      "what": "setup --engine gitleaks with gitleaks present said 'every engine this project needs is already present'; an explicit --engine request now says '<name> is already installed'. The make_release.py docstring named 6.2.1 and RELEASE-NOTES-V6.2.md; it is now version neutral. The README now explains RESULT: BLOCKED and the exit codes (0 pass, 2 a finding at or above --fail-on, 3 ci with a required scanner missing or failed), checked against secgate.main",
+      "check": "tests/test_v7_engines.py::test_setup_for_an_engine_already_installed_names_that_engine; README and docstring by reading",
+      "status": "fixed"
     }
   ]
 }

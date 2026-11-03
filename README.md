@@ -255,6 +255,8 @@ py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on h
 ```
 
 `RESULT: PASS` means no High or Critical finding. Reports go to `.security/findings.json` and `.security/findings.sarif`.
+`RESULT: BLOCKED` exits with 2 when a finding is at or above `--fail-on`, and with 3 in `ci` mode when a required
+scanner (Semgrep, Trivy, Gitleaks) is missing or failed to run; a pass exits with 0.
 
 ## Scanners it sets up for you
 
