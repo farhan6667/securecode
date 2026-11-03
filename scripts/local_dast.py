@@ -24,6 +24,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # run with python -I
 from secgate import find_tool  # noqa: E402
 from report import clean  # noqa: E402
+# Host parsing is shared with the staging wrappers (run-nuclei-authorized.py, run-zap-authorized.py).
+from dast_target import (Refused, _ipv4_part, default_resolver, is_loopback, parse_ipv4_loose,  # noqa: E402,F401
+                         parse_target)
 
 # zaproxy/zap-stable 2.17.0, multi-arch index digest (Docker Hub, pushed 2026-10-26).
 ZAP_IMAGE = "zaproxy/zap-stable:2.17.0@sha256:030d3df57735dacbb83464854758e674dd9ad01d79d12a129a8e58b1fd384238"
@@ -33,99 +36,11 @@ RISK = {"3": "HIGH", "2": "MEDIUM", "1": "LOW", "0": "INFO"}
 MAX_REPORT_BYTES = 50_000_000
 
 
-class Refused(Exception):
-    pass
-
-
 def _load_check_url():
     spec = importlib.util.spec_from_file_location("run_nuclei_authorized", HERE / "run-nuclei-authorized.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.check_url
-
-
-# --- host parsing ------------------------------------------------------------------------------------------
-
-def _ipv4_part(p: str) -> int | None:
-    """One part of an IPv4 address the way browsers and inet_aton read it: 0x hex, leading 0 octal, else decimal."""
-    if not p:
-        return None
-    try:
-        if re.fullmatch(r"0[xX][0-9a-fA-F]*", p):
-            return int(p[2:] or "0", 16)
-        if re.fullmatch(r"0[0-7]+", p):
-            return int(p, 8)
-        if re.fullmatch(r"[0-9]+", p):
-            if len(p) > 1 and p.startswith("0"):
-                return None            # 08, 09: not valid octal, refuse instead of guessing
-            return int(p, 10)
-    except ValueError:
-        return None
-    return None
-
-
-def parse_ipv4_loose(host: str) -> ipaddress.IPv4Address | None:
-    """WHATWG URL IPv4 parser: 1 to 4 dot-separated parts, the last part fills the remaining bytes.
-    127.1, 2130706433, 0177.0.0.1 and 0x7f.1 are all 127.0.0.1. Returns None if the host is not numeric."""
-    parts = host.split(".")
-    if parts and parts[-1] == "":
-        parts = parts[:-1]
-    if not parts or not re.fullmatch(r"(0[xX][0-9a-fA-F]*|[0-9]+)", parts[-1]):
-        return None                     # last label is not a number: a DNS name
-    if len(parts) > 4:
-        raise Refused(f"'{host}' has a numeric last label but more than four parts")
-    nums = [_ipv4_part(p) for p in parts]
-    if any(n is None for n in nums):
-        raise Refused(f"'{host}' looks like a numeric address but cannot be parsed safely")
-    *head, last = nums
-    if any(n > 255 for n in head) or last >= 256 ** (5 - len(nums)):
-        raise Refused(f"'{host}' is out of range for an IPv4 address")
-    value = last
-    for i, n in enumerate(head):
-        value += n << (8 * (3 - i))
-    return ipaddress.IPv4Address(value)
-
-
-def is_loopback(ip: ipaddress._BaseAddress) -> bool:
-    if isinstance(ip, ipaddress.IPv6Address):
-        if ip.ipv4_mapped is not None:
-            return ip.ipv4_mapped.is_loopback
-        return ip == ipaddress.IPv6Address("::1")
-    return ip.is_loopback
-
-
-def default_resolver(host: str) -> list[str]:
-    infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-    return [i[4][0] for i in infos]
-
-
-def parse_target(url: str) -> dict:
-    """Strict URL parsing. Returns scheme, host (as typed), port, path+query. Raises Refused."""
-    if not isinstance(url, str) or not url or len(url) > 2000:
-        raise Refused("a target URL is required")
-    if re.search(r"[\x00-\x20\x7f\\]", url):
-        raise Refused("the URL contains spaces, control characters or backslashes")
-    try:
-        u = urlsplit(url)
-    except ValueError as e:
-        raise Refused(f"the URL cannot be parsed ({e})")
-    if u.scheme.lower() not in ("http", "https"):
-        raise Refused("only http:// and https:// targets are allowed")
-    if "@" in u.netloc:
-        raise Refused("user names or passwords in the URL are refused (http://127.0.0.1@other.host tricks)")
-    try:
-        port = u.port
-    except ValueError:
-        raise Refused("the port is not a number between 0 and 65535")
-    host = u.hostname or ""
-    if not host:
-        raise Refused("the URL has no host")
-    if "%" in host:
-        raise Refused("IPv6 zone ids are refused")
-    if port == 0:
-        raise Refused("port 0 is not a valid target")
-    return {"scheme": u.scheme.lower(), "host": host.lower(), "port": port or (443 if u.scheme.lower() == "https" else 80),
-            "bracketed": u.netloc.startswith("["), "rest": urlunsplit(("", "", u.path or "/", u.query, ""))}
 
 
 def resolve_loopback(host: str, resolver=default_resolver) -> ipaddress._BaseAddress:
@@ -177,7 +92,7 @@ def authorize(url: str, resolver=default_resolver, env=None) -> dict:
         return {"url": pinned_url(t, ip), "ip": ip, "port": t["port"], "mode": "loopback", "scheme": t["scheme"]}
     except Refused as local_err:
         if env.get("SECURITY_DAST_ALLOW", "").lower() == "true" and env.get("SECURITY_DAST_URL", "") == url:
-            err = _load_check_url()(url)
+            err = _load_check_url()(url, resolver=resolver, env=env)
             if err:
                 raise Refused(err)
             return {"url": url, "ip": None, "port": t["port"], "mode": "authorized-staging", "scheme": t["scheme"]}

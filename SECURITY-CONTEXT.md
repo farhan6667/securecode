@@ -4,7 +4,8 @@
 developer machines, plus CI templates. It runs with the developer's own rights and sees their code.
 
 **Who or what can reach it.**
-- The AI agent (Claude Code, Cursor, Codex): sends tool events to the hooks; reads the rules. It may be
+- The AI agent (Claude Code, Cursor, Codex, Gemini CLI, Antigravity): reads the rules; Claude Code also sends
+  tool events to the hooks. It may be
   prompt-injected by repo files, web pages or MCP output, so the hooks treat its input as untrusted.
 - Project repositories: their files are scanned; their `.claude/`, `.mcp.json`, `.cursor/`, `.codex/` configs are checked.
 - The updater: reads public release data from GitHub (it sends the developer's GitHub login only when one
@@ -33,8 +34,9 @@ developer machines, plus CI templates. It runs with the developer's own rights a
   `Documents and Settings` count as home.
   Known gaps that remain: paths built at run time, links created outside the agent, MCP tools that hide a
   path deep inside nested arguments, plain shell aliases defined earlier in the session, a downloader
-  hidden inside a script file, and secret gists (only public gists are refused). Six independent review
-  rounds and their regression tests are in `tests/test_review*_regressions.py`.
+  hidden inside a script file, and secret gists (only public gists are refused). Up to 6.2.2 the package had
+  five internal review rounds and two outside-style attack rounds (the second with fuzzing); their regression
+  tests are in `tests/test_review*_regressions.py`. None of these was a third-party audit.
 - Global rules and settings: Edit, Write and MultiEdit on the user's own `~/.claude/CLAUDE.md`,
   `~/.claude/rules/**/*.md` and `settings(.local).json` return "ask", never a silent allow and never deny. The
   owner may legitimately ask for a rule change; a prompt-injected agent still needs the owner's yes in the
@@ -117,6 +119,10 @@ scanners into a tools folder outside every project (`%LOCALAPPDATA%\NexaForgeToo
   (a repo can leave out compiled classes); a `.gitignore` can hide files from osv-scanner (but such files are
   not committed, so CI does not see them either). Engine failures are NOTE lines, not blocks, so a repo that
   makes an optional engine crash loses that engine's findings; Semgrep, Trivy and Gitleaks still fail closed.
+  A Semgrep, Trivy or Gitleaks report that cannot be read (wrong types, deep nesting, huge numbers, oversized)
+  is a NOTE "scanner output unreadable" and counts as a failed required scanner, so ci mode blocks.
+- Suppression expiry dates must be plain `YYYY-MM-DD`; any other form (`20260115`, `2026-W01`) counts as
+  expired, with a NOTE naming the entry.
 - Data that leaves the machine: osv-scanner (api.osv.dev), govulncheck (vuln.go.dev), npm audit (the npm
   registry) and pip-audit (PyPI) send package names and versions; Dependency-Check downloads NVD data. No
   source code is sent by any engine.
@@ -136,7 +142,16 @@ scanners into a tools folder outside every project (`%LOCALAPPDATA%\NexaForgeToo
   and hex IPv4 forms, IPv4-mapped IPv6) and must be loopback; a DNS name is resolved once, every answer must be
   loopback, and ZAP gets the pinned IP literal, so DNS rebinding cannot move the scan. Anything else needs the
   existing person-set `SECURITY_DAST_ALLOW=true` plus an exact `SECURITY_DAST_URL` and the staging checks of
-  `run-nuclei-authorized.py`. With Docker on Windows or macOS the container reaches the host through Docker
+  `run-nuclei-authorized.py`.
+- Staging scans (`run-nuclei-authorized.py`, `run-zap-authorized.py`, and local_dast's staging mode) share
+  `scripts/dast_target.py`: the same browser-style host parsing, the name resolved once and every answer checked
+  (IPv4 inside IPv6 too: mapped, compatible, NAT64, 6to4, Teredo). Cloud metadata names and addresses
+  (`metadata`, `metadata.goog`, `metadata.google.internal`, `metadata.azure.com`, `instance-data`,
+  169.254.169.254, 169.254.170.2, fd00:ec2::254, 100.100.100.200), link-local, multicast and reserved addresses
+  are always refused; private and loopback ones only pass when a person names the exact host in
+  `SECURITY_DAST_PRIVATE_HOSTS`. ZAP gets the checked answer pinned with `docker --add-host`, and docker is
+  taken from an absolute PATH entry. Accepted: nuclei resolves the name again itself, so a host whose DNS
+  answer changes between the check and the scan can still move a nuclei scan; the URL is set by a person. With Docker on Windows or macOS the container reaches the host through Docker
   Desktop's fixed `host.docker.internal` name (not attacker DNS); on Linux it uses host networking. The ZAP
   image is pinned by digest. The ZAP plan is written as JSON, so no value can change its structure.
   `--start` is the only way it starts a program: the command typed by the person, split into an argument list

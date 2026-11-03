@@ -28,7 +28,8 @@ RULES=[
  r"(?=.{0,2000}(?:[\"'`]\s*\+\s*\w|\w\s*\+\s*[\"'`]|\.format\(|\bf[\"']|\$\{|[\"']\s*\.\s*\$|\$[A-Za-z_]\w*[^\"']{0,80}[\"']|\{\$))"),
 ("XSS_SINK","HIGH",r"(?i)\b(?:innerHTML|outerHTML|document\.write)\s*="),
 ("REACT_RAW_HTML","HIGH",r"dangerouslySetInnerHTML"),
-("XSS_RAW_TEMPLATE","HIGH",r"\{!!\s*\$|<%-\s*[\w.]|\|\s*(?:safe|raw)\s*\}\}|v-html\s*="),
+# Vue v-html has its own rule (VUE_RAW_HTML), so this one does not report the same line twice.
+("XSS_RAW_TEMPLATE","HIGH",r"\{!!\s*\$|<%-\s*[\w.]|\|\s*(?:safe|raw)\s*\}\}"),
 ("VUE_RAW_HTML","HIGH",r"\bv-html\s*="),
 ("PATH_TRAVERSAL_SINK","HIGH",r"(?i)\b(?:readFile|readFileSync|writeFile|writeFileSync|open|fopen|file_get_contents)\s*\([^\n]{0,250}(?:req\.|request\.|query|params|body|_GET|_POST)"),
 ("INSECURE_CRYPTO","HIGH",r"(?i)\b(?:md5|sha1)\s*\(|hashlib\.(?:md5|sha1)\b|\b(?:DES|RC4)\b"),
@@ -61,6 +62,31 @@ def is_test_path(fp,base=None):
     return any(x in ("test","tests","__tests__","spec","specs","fixtures","fixture","testdata") for x in parts[:-1]) or \
         bool(re.search(r"(?i)(^test_|_test\.|\.test\.|\.spec\.|tests?\.php$)",parts[-1] if parts else ""))
 
+# Arguments of parameter-binding calls are bound values, not SQL text: setParameter("n", "%" + note + "%") is safe.
+_BIND_CALL=re.compile(r"(?i)(?:\.|->|::)\s*(?:setParameter(?:List)?|setNamedParameter|bindParam|bindValue|bind_param|bind|"
+                      r"setString|setNString|setObject|setLong|setInt|addValue|addParameter|withParameter)\s*\(")
+
+def strip_bound_args(line):
+    """The line with the arguments of binding calls removed (quote-aware, parentheses balanced). An unbalanced
+    call is left as it is, so a broken line is still checked, never silently cleared."""
+    out=[]; i=0
+    while True:
+        m=_BIND_CALL.search(line,i)
+        if not m: out.append(line[i:]); break
+        out.append(line[i:m.end()]); j=m.end(); depth=1; q=None
+        while j<len(line) and depth:
+            c=line[j]
+            if q:
+                if c=="\\": j+=1
+                elif c==q: q=None
+            elif c in "\"'`": q=c
+            elif c=="(": depth+=1
+            elif c==")": depth-=1
+            j+=1
+        if depth: out.append(line[m.end():]); break        # unbalanced: keep the rest for checking
+        out.append(")"); i=j
+    return "".join(out)
+
 def local_scan(target):
     findings=[]
     base=Path(target) if Path(target).is_dir() else Path.cwd()
@@ -71,7 +97,7 @@ def local_scan(target):
         for n,line in enumerate(lines,1):
             if not line.strip() or line.lstrip().startswith(("#","//","/*","*","--")): continue
             for rid,sev,rx in RULES:
-                if re.search(rx,line):
+                if re.search(rx,strip_bound_args(line) if rid=="SQL_CONCAT" else line):
                     # Weak hashes, Math.random and sample keys in tests and fixtures are usually test data,
                     # unless the line is about passwords, tokens, OTPs or resets.
                     if test_file and rid in ("INSECURE_CRYPTO","INSECURE_RANDOM","HARDCODED_SECRET") and \
@@ -616,7 +642,7 @@ _ATTACK_LITERAL=re.compile(r"""(?i)(['"])(?:'|\\'|"|<script>?|</script>|union(?:
 _PY_IN_CHECK=re.compile(r"""(?i)(['"])(?:'|"|<script>?|union(?:\s+select)?|select|drop|\.\./|--|or\s+1\s*=\s*1|;|\|)\1\s+(?:not\s+)?in\s+\w""")
 # Sinks still built from strings. SQL is stricter than SQL_CONCAT here: a quote directly followed by a
 # concatenation operator, ${...}, {$...} or an f-string, so a bound parameter list ("?', [$q]") is not a sink.
-_DENY_SINKS=[re.compile(r) for k,_,r in RULES if k in ("XSS_SINK","XSS_RAW_TEMPLATE","COMMAND_INJECTION")]+[
+_DENY_SINKS=[re.compile(r) for k,_,r in RULES if k in ("XSS_SINK","XSS_RAW_TEMPLATE","VUE_RAW_HTML","COMMAND_INJECTION")]+[
     re.compile(r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^\n]{0,300}?(?:[\"'`]\s*(?:\.|\+)\s*[$\w(]|\$\{|\{\$|\bf[\"'])")]
 _DENY_SINK_EXTRA=re.compile(r"(?i)\b(?:echo|print)\s+[^\n;]{0,200}?\$\w|\b(?:system|exec|passthru|shell_exec|popen)\s*\([^\n)]{0,200}?\$|\.query\s*\(\s*[`'\"][^\n]{0,300}?(?:\+|\$\{)|\bres\.send\s*\([^\n]{0,200}?\+")
 
@@ -1324,6 +1350,52 @@ def semgrep_override(rid,sev,confidence=""):
     if SEMGREP_HIGH.search(rid) and audit_ok and SEV.get(sev,9)>SEV["HIGH"]: return "HIGH"
     return sev
 
+# Scanner output is untrusted input: a hostile repo can make a scanner echo odd text, and a broken or replaced
+# scanner can print anything. Wrong types, deep nesting, huge numbers or oversized output make the whole report
+# "unreadable", which the caller treats as a failed scanner (ci mode blocks). Never a traceback, never a pass.
+MAX_SCANNER_OUTPUT=200_000_000
+
+class ScannerOutputError(Exception):
+    pass
+
+def scanner_json(text,want):
+    """Parse one scanner report. want is dict or list; anything else raises ScannerOutputError."""
+    if not isinstance(text,str) or not text.strip(): raise ScannerOutputError("no JSON output")
+    if len(text)>MAX_SCANNER_OUTPUT: raise ScannerOutputError("output too large")
+    try: data=json.loads(text)
+    except (ValueError,RecursionError,MemoryError,TypeError) as e: raise ScannerOutputError(type(e).__name__)
+    if not isinstance(data,want):
+        names="/".join(t.__name__ for t in (want if isinstance(want,tuple) else (want,)))
+        raise ScannerOutputError(f"top level is {type(data).__name__}, not {names}")
+    return data
+
+def _obj(x,what):
+    if not isinstance(x,dict): raise ScannerOutputError(f"{what} is {type(x).__name__}, not an object")
+    return x
+
+def _arr(x,what):
+    if x is None: return []
+    if not isinstance(x,list): raise ScannerOutputError(f"{what} is {type(x).__name__}, not a list")
+    return x
+
+def _txt(x,n=400,default=""):
+    """A plain string field: strings as they are, numbers as text, anything else (objects, lists) refused."""
+    if x is None: return default
+    if isinstance(x,bool) or not isinstance(x,(str,int,float)): raise ScannerOutputError(f"a text field is {type(x).__name__}")
+    s=x if isinstance(x,str) else (str(x) if not isinstance(x,int) or abs(x)<10**18 else "0")
+    return s[:n]
+
+def _lineno(x):
+    if x is None or x=="": return 0
+    if isinstance(x,bool) or not isinstance(x,(int,str)): raise ScannerOutputError(f"a line number is {type(x).__name__}")
+    if isinstance(x,str):
+        if not re.fullmatch(r"\d{1,9}",x.strip()): raise ScannerOutputError("a line number is not a number")
+        x=int(x)
+    return x if 0<=x<10**9 else 0
+
+def _unreadable(name,e):
+    return f"scanner output unreadable ({safe_text(str(e))[:200]}); {name} counts as failed and its findings are missing"
+
 def collect_semgrep(root, findings, mode="full"):
     if not find_tool("semgrep"): return False,"semgrep missing"
     cmd=["semgrep","scan","--metrics","off"]
@@ -1334,21 +1406,25 @@ def collect_semgrep(root, findings, mode="full"):
         for x in SEMGREP_CI_EXCLUDES: cmd += ["--exclude",x]
     cmd += ["--json","--quiet","."]
     rc,out,err=run(cmd,root,900)
-    try:
-        data=json.loads(out)
-    except json.JSONDecodeError:
+    if not (out or "").strip():
         return False,(err or "semgrep returned no JSON").strip()[-400:]
-    for r in (data.get("results") or [] if isinstance(data,dict) else []):
-        ex=r.get("extra",{}); sev=(ex.get("severity") or "WARNING").upper()
-        sev={"ERROR":"HIGH","WARNING":"MEDIUM","INFO":"LOW"}.get(sev,sev if sev in SEV else "MEDIUM")
-        rid=str(r.get("check_id","SEMGREP"))
-        meta=ex.get("metadata") or {}
-        sev=semgrep_override(rid,sev,meta.get("confidence","") if isinstance(meta,dict) else "")
-        findings.append({"rule":rid,"severity":sev,
-            "file":r.get("path",""),"line":(r.get("start") or {}).get("line",0),
-            "message":ex.get("message","Semgrep finding"),"code":(ex.get("lines") or "")[:180],
-            "confidence":str(meta.get("confidence","")) if isinstance(meta,dict) else "",
-            "engine":"semgrep"})
+    try:
+        data=scanner_json(out,dict); new=[]
+        for r in _arr(data.get("results"),"results"):
+            r=_obj(r,"a result"); ex=_obj(r.get("extra") or {},"extra")
+            sev=_txt(ex.get("severity"),20,"WARNING").upper()
+            sev={"ERROR":"HIGH","WARNING":"MEDIUM","INFO":"LOW"}.get(sev,sev if sev in SEV else "MEDIUM")
+            rid=_txt(r.get("check_id"),300,"SEMGREP")
+            meta=ex.get("metadata") or {}
+            conf=_txt(meta.get("confidence"),20) if isinstance(meta,dict) else ""
+            sev=semgrep_override(rid,sev,conf)
+            new.append({"rule":rid,"severity":sev,
+                "file":_txt(r.get("path"),1000),"line":_lineno(_obj(r.get("start") or {},"start").get("line")),
+                "message":_txt(ex.get("message"),2000,"Semgrep finding"),"code":_txt(ex.get("lines"),180),
+                "confidence":conf,"engine":"semgrep"})
+    except ScannerOutputError as e:
+        return False,_unreadable("semgrep",e)
+    findings.extend(new)
     # rc 0 = clean, 1 = findings; anything else (config or network error) is a failed scan.
     return rc in (0,1), "semgrep completed" if rc in (0,1) else f"semgrep exited {rc}: {(err or '').strip()[-300:]}"
 
@@ -1360,23 +1436,31 @@ def collect_trivy(root,findings,mode="full"):
         # an empty string disables trivy.yaml and trivy-secret.yaml; the ignore file is the package's empty one
         cmd += ["--config","","--secret-config","","--ignorefile",str(CI_EMPTY_IGNORE)]
     rc,out,err=run(cmd+["."],root,1200)
+    if not (out or "").strip():
+        return False,(err or "trivy returned no JSON").strip()[-400:]
     try:
-        data=json.loads(out)
-    except Exception:
-        return False,err or "trivy returned invalid JSON"
-    for res in (data.get("Results") or [] if isinstance(data,dict) else []):
-        for v in res.get("Vulnerabilities",[]) or []:
-            sev=v.get("Severity","UNKNOWN").upper(); sev=sev if sev in SEV else "MEDIUM"
-            findings.append({"rule":v.get("VulnerabilityID","TRIVY"),"severity":sev,"file":res.get("Target",""),
-                "line":0,"message":f"{v.get('PkgName','dependency')} {v.get('InstalledVersion','')} -> {v.get('FixedVersion') or 'no fixed version'}: {v.get('Title','Known vulnerability')}",
-                "code":"","engine":"trivy"})
-        for m in res.get("Misconfigurations",[]) or []:
-            sev=m.get("Severity","UNKNOWN").upper(); sev=sev if sev in SEV else "MEDIUM"
-            findings.append({"rule":m.get("ID","TRIVY-MISCONFIG"),"severity":sev,"file":res.get("Target",""),
-                "line":0,"message":m.get("Message","Misconfiguration"),"code":"","engine":"trivy"})
-        for s in res.get("Secrets",[]) or []:
-            findings.append({"rule":s.get("RuleID","TRIVY-SECRET"),"severity":"CRITICAL","file":res.get("Target",""),
-                "line":s.get("StartLine",0),"message":s.get("Title","Secret detected"),"code":"","engine":"trivy"})
+        data=scanner_json(out,dict); new=[]
+        for res in _arr(data.get("Results"),"Results"):
+            res=_obj(res,"a result"); target=_txt(res.get("Target"),1000)
+            for v in _arr(res.get("Vulnerabilities"),"Vulnerabilities"):
+                v=_obj(v,"a vulnerability")
+                sev=_txt(v.get("Severity"),20,"UNKNOWN").upper(); sev=sev if sev in SEV else "MEDIUM"
+                new.append({"rule":_txt(v.get("VulnerabilityID"),200,"TRIVY"),"severity":sev,"file":target,
+                    "line":0,"message":f"{_txt(v.get('PkgName'),200,'dependency')} {_txt(v.get('InstalledVersion'),100)} -> "
+                                      f"{_txt(v.get('FixedVersion'),200) or 'no fixed version'}: {_txt(v.get('Title'),500,'Known vulnerability')}",
+                    "code":"","engine":"trivy"})
+            for m in _arr(res.get("Misconfigurations"),"Misconfigurations"):
+                m=_obj(m,"a misconfiguration")
+                sev=_txt(m.get("Severity"),20,"UNKNOWN").upper(); sev=sev if sev in SEV else "MEDIUM"
+                new.append({"rule":_txt(m.get("ID"),200,"TRIVY-MISCONFIG"),"severity":sev,"file":target,
+                    "line":0,"message":_txt(m.get("Message"),2000,"Misconfiguration"),"code":"","engine":"trivy"})
+            for s in _arr(res.get("Secrets"),"Secrets"):
+                s=_obj(s,"a secret")
+                new.append({"rule":_txt(s.get("RuleID"),200,"TRIVY-SECRET"),"severity":"CRITICAL","file":target,
+                    "line":_lineno(s.get("StartLine")),"message":_txt(s.get("Title"),500,"Secret detected"),"code":"","engine":"trivy"})
+    except ScannerOutputError as e:
+        return False,_unreadable("trivy",e)
+    findings.extend(new)
     return rc in (0,1), "trivy completed"
 
 def collect_gitleaks(root,findings,mode="full"):
@@ -1401,13 +1485,22 @@ def collect_gitleaks(root,findings,mode="full"):
     rc,out,err=run(cmd,root,900)
     # Gitleaks exits 1 both for "leaks found" and for errors, so success means a readable report.
     try:
-        data=json.loads(rp.read_text(encoding="utf-8",errors="ignore") or "[]")
-    except Exception:
+        if rp.is_symlink() or not rp.is_file(): raise OSError("no report file")
+        if rp.stat().st_size>MAX_SCANNER_OUTPUT: raise ScannerOutputError("report too large")
+        text=rp.read_text(encoding="utf-8",errors="replace")
+    except OSError:
         return False,f"gitleaks exited {rc} without a readable report: {(err or out).strip()[-300:]}"
-    for x in (data if isinstance(data,list) else []):
-        if not isinstance(x,dict): continue
-        findings.append({"rule":x.get("RuleID","GITLEAKS"),"severity":"CRITICAL","file":x.get("File",""),
-            "line":x.get("StartLine",0),"message":x.get("Description","Secret detected"),"code":"","engine":"gitleaks"})
+    except ScannerOutputError as e:
+        return False,_unreadable("gitleaks",e)
+    try:
+        new=[]
+        for x in scanner_json(text if text.strip() else "[]",list):
+            x=_obj(x,"a leak")
+            new.append({"rule":_txt(x.get("RuleID"),200,"GITLEAKS"),"severity":"CRITICAL","file":_txt(x.get("File"),1000),
+                "line":_lineno(x.get("StartLine")),"message":_txt(x.get("Description"),500,"Secret detected"),"code":"","engine":"gitleaks"})
+    except ScannerOutputError as e:
+        return False,_unreadable("gitleaks",e)
+    findings.extend(new)
     return rc in (0,1), "gitleaks completed"
 
 RETIRE_SEV={"critical":"CRITICAL","high":"HIGH","medium":"MEDIUM","low":"LOW"}
@@ -1421,8 +1514,9 @@ def collect_retire(root,findings,mode="full"):
         # ci: the package's empty ignore file replaces the repo's .retireignore / .retireignore.json
         ci_args=["--ignorefile",str(CI_EMPTY_IGNORE)] if mode=="ci" and CI_EMPTY_IGNORE.is_file() else []
         rc,out,err=run(["retire","--outputformat","json","--outputpath",str(rp),"--path",".",*ci_args],root,900)
-        try: data=json.loads(rp.read_text(encoding="utf-8",errors="ignore") or "{}")
-        except (OSError,json.JSONDecodeError): return False,f"retire exited {rc} without a readable report"
+        try: data=scanner_json(rp.read_text(encoding="utf-8",errors="ignore") or "{}",(dict,list))
+        except OSError: return False,f"retire exited {rc} without a readable report"
+        except ScannerOutputError as e: return False,_unreadable("retire",e)
     finally:
         shutil.rmtree(out_dir,ignore_errors=True)
     items=data.get("data") if isinstance(data,dict) else data
@@ -1449,8 +1543,8 @@ def collect_psalm(root,findings):
     php=find_tool("php")
     if not (php and psalm.is_file() and (root/"composer.json").exists()): return None,""
     rc,out,err=run([php,str(psalm),"--taint-analysis","--output-format=json","--no-progress","--no-cache"],root,1200)
-    try: issues=json.loads(out or "[]")
-    except json.JSONDecodeError: return False,f"psalm exited {rc} without JSON output"
+    try: issues=scanner_json(out or "[]",list)
+    except ScannerOutputError as e: return False,f"psalm exited {rc}: "+_unreadable("psalm",e)
     count=0
     for i in (issues if isinstance(issues,list) else []):
         if not isinstance(i,dict) or not str(i.get("type","")).startswith("Tainted"): continue
@@ -1471,12 +1565,21 @@ def suppression_file(root,mode,notes):
         return None
     return own
 
+def parse_expiry(v):
+    """The expiry as a date, or None. Only YYYY-MM-DD is accepted (a YAML date object too). Python 3.11+
+    fromisoformat also reads 20260115 and 2026-W01, and comparing those as strings never expired them."""
+    import datetime
+    if isinstance(v,datetime.datetime): return None
+    if isinstance(v,datetime.date): return v
+    if not isinstance(v,str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}",v): return None
+    try: return datetime.date.fromisoformat(v)
+    except ValueError: return None
+
 def valid_expiry(v):
     # A real calendar date at most about 12 months ahead: exceptions must come back for review.
     import datetime
-    try: d=datetime.date.fromisoformat(str(v))
-    except ValueError: return False
-    return d<=datetime.date.today()+datetime.timedelta(days=366)
+    d=parse_expiry(v)
+    return d is not None and d<=datetime.date.today()+datetime.timedelta(days=366)
 
 def load_suppressions(path,notes):
     if not path or not path.exists(): return []
@@ -1490,6 +1593,10 @@ def load_suppressions(path,notes):
     valid=[]
     for s in d.get("suppressions",[]) or []:
         # Every entry must name an exact repo-relative file, a rule or "*" for that file only, an owner and an expiry date.
+        if isinstance(s,dict) and s.get("expires") is not None and parse_expiry(s.get("expires")) is None:
+            # Fail closed: an expiry that is not a plain YYYY-MM-DD date counts as already expired.
+            notes.append(f"suppression treated as expired: expiry {str(s.get('expires'))[:40]!r} is not YYYY-MM-DD "
+                         f"(rule {str(s.get('rule'))[:60]}, file {str(s.get('file'))[:120]})"); continue
         if not (isinstance(s,dict) and s.get("rule") and s.get("file") and s.get("owner") and s.get("reason") and
                 valid_expiry(s.get("expires"))) or str(s["file"]).startswith(("/","\\")) or ".." in str(s["file"]):
             notes.append(f"ignored an incomplete suppression entry: {str(s)[:120]}"); continue
@@ -1498,7 +1605,8 @@ def load_suppressions(path,notes):
 
 def apply_suppressions(findings,root,mode="quick",notes=None):
     notes=[] if notes is None else notes
-    sups=load_suppressions(suppression_file(root,mode,notes),notes); today=time.strftime("%Y-%m-%d"); out=[]
+    import datetime
+    sups=load_suppressions(suppression_file(root,mode,notes),notes); today=datetime.date.today(); out=[]
     for f in findings:
         try: rel=Path(f["file"]).resolve().relative_to(root).as_posix()
         except Exception: rel=str(f["file"]).replace("\\","/")
@@ -1507,7 +1615,8 @@ def apply_suppressions(findings,root,mode="quick",notes=None):
             sf=str(s["file"]).replace("\\","/")
             if (sf[2:] if sf.startswith("./") else sf)!=rel: continue
             if s.get("rule","*")!="*" and s.get("rule")!=f["rule"]: continue
-            if str(s["expires"])<today: continue
+            exp=parse_expiry(s.get("expires"))
+            if exp is None or exp<today: continue          # unparseable = expired (fail closed)
             suppressed=True; f["suppressed"]=True; f["suppression_reason"]=s.get("reason","")
             break
         if not suppressed: out.append(f)
@@ -1593,9 +1702,13 @@ def main():
                           "full mode honours the repo's own scanner settings (ci mode will not): ")+", ".join(own))
         for name,fn in (("semgrep",collect_semgrep),("trivy",collect_trivy),("gitleaks",collect_gitleaks)):
             if not status[name]: continue
-            ok,msg=fn(root,findings,mode=args.mode)
+            try:
+                ok,msg=fn(root,findings,mode=args.mode)
+            except Exception as e:      # a required scanner that cannot be read is a failed scanner, never a pass
+                ok,msg=False,_unreadable(name,type(e).__name__)
             if not ok:
                 errors[name]=msg; status[name]=False
+                if "output unreadable" in msg: notes.append(f"{name}: {msg}")
         # Optional extra scanners: used when installed, never required. A failure is a note, not a block.
         # Psalm loads the project's own autoloader and plugins, so it runs project code: only with --run-tests,
         # like the project's test suite. Retire.js only reads files.

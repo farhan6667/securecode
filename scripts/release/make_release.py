@@ -48,7 +48,7 @@ def main() -> int:
         sys.exit("bump VERSION in install-global.py and Version in MANIFEST.txt to the release version first")
     cfg = json.loads((PKG / "config" / "update.json").read_text(encoding="utf-8-sig"))
     signers = (PKG / "config" / "allowed_signers").read_text(encoding="utf-8")
-    if signers.startswith("﻿"):
+    if signers.startswith("\ufeff"):
         sys.exit("config/allowed_signers starts with a byte order mark (Notepad's 'UTF-8 with BOM'); ssh-keygen then "
                  "misreads the signer name and manual verification fails. Save it as plain UTF-8 and run again.")
     if not cfg.get("repo") or "ssh-ed25519" not in signers:

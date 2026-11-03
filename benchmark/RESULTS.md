@@ -51,13 +51,14 @@ Full table from the full-mode run:
 
 ## 7.0 labs: Spring Boot, legacy audit, pentest findings
 
-Run on 2026-11-03 with the same tools. Each lab also lists "clean" files: safe code that must not be
+Run on 2026-11-03 with the same tools (re-run after the 7.0 integration fixes, same numbers except the clean
+Spring file). Each lab also lists "clean" files: safe code that must not be
 reported (for the legacy lab, no malware rule may fire on normal Laravel, Spring, Express and WordPress
 files). A finding on a clean file is counted as a false positive.
 
 | Lab | Planted | Quick mode | Full mode | Clean files reported |
 |---|---|---|---|---|
-| `spring-lab.json` (Java and Spring Boot rules, database config, default values) | 20 | 6 | 20 | 1 of 1 (see below) |
+| `spring-lab.json` (Java and Spring Boot rules, database config, default values) | 20 | 6 | 20 | 0 of 1 (see below) |
 | `legacy-lab.json` (webshells, backdoors, obfuscation, PHP upgrade blockers, default passwords, admin tools) | 17 | 17 | 17 | 0 of 7 |
 | `web-lab.json` (input validation, owner pentest-skill items, database checks, default secrets) | 22 | 22 | 22 | 0 of 4 |
 
@@ -65,11 +66,11 @@ Commands: `py -I benchmark/run_lab.py --mode quick` and `py -I benchmark/run_lab
 labs; add `--lab spring` for one). The Java rules are Semgrep rules, so the Spring lab needs full mode;
 quick mode only sees `SQL_CONCAT`, the database checks and the default-value checks there.
 
-The one false positive is known: the clean Spring controller has
-`setParameter("n", "%" + note + "%")` on the same line as a parameterized JPQL query, and the older
-line-based `SQL_CONCAT` heuristic cannot tell that the concatenation goes into a bound parameter. The
-Semgrep rule `java-sqli-string-concat` does not report it. The floor test allows this one and fails if
-the number grows.
+The clean Spring controller has `setParameter("n", "%" + note + "%")` on the same line as a parameterized
+JPQL query. The line-based `SQL_CONCAT` heuristic used to report it; since 7.0 (V7I-05) it ignores
+concatenation inside the arguments of binding calls (`setParameter`, `bind`, `bindValue`, `addValue` and
+similar), so no clean file is reported. Concatenation outside those arguments is still reported (S4).
+The floor test now requires 0 clean files reported.
 
 The legacy lab samples are short, synthetic and inert (the encoded strings decode to words like
 INERT). None is copied from a real webshell. The web lab's W9 to W11 reproduce the retest lesson from
@@ -154,7 +155,7 @@ In full mode some rows also list Semgrep registry rules (for example `spring-csr
 | W22 | Express session secret 'keyboard cat' | found | DEFAULT_SECRET_KEY |
 
 `tests/test_benchmark_lab.py` keeps these floors: Laravel 11+ in quick mode, Spring 6+ in quick and
-20 of 20 in full mode when Semgrep is installed, legacy and web all found with no clean file reported.
+20 of 20 in full mode when Semgrep is installed, legacy and web all found, and no clean file reported in any lab.
 
 ## Not run yet
 

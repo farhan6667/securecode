@@ -119,11 +119,12 @@ def test_package_age_refuses_other_hosts():
 
 def test_nuclei_wrapper_refuses_without_permission_and_bad_targets():
     m = load("scripts/run-nuclei-authorized.py", "nuclei_wrap")
-    assert m.check_url("https://staging.example.com/app") is None
+    public = lambda host: ["203.0.113.10"]          # the check resolves the name once; no real DNS in tests
+    assert m.check_url("https://staging.example.com/app", resolver=public, env={}) is None
     for bad in ("http://169.254.169.254/latest", "https://metadata.google.internal/", "ftp://x", "https://a b",
                 "https://shop.prod.example.com", "-u http://x", "http://[fe80::1]/", "http://metadata.google.internal./",
                 "http://169.254.169.254.nip.io/", "http://instance-data/latest", "https://api-prod.example.com"):
-        assert m.check_url(bad), bad
+        assert m.check_url(bad, resolver=public, env={}), bad
     env = {k: v for k, v in os.environ.items() if not k.startswith("SECURITY_DAST")}
     p = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "run-nuclei-authorized.py")], env=env,
                        capture_output=True, text=True, timeout=60)

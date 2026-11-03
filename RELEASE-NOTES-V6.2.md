@@ -1,6 +1,7 @@
 # NexaForge SecureCode 6.2.2 (security fixes)
 
-We attacked our own tool the way an outside tester would. This release fixes what the first round found,
+We attacked our own tool the way an outside tester would. This release fixes what the first of those
+outside-style attack rounds found,
 each with a regression test (274 tests now, CI green on Windows and Linux):
 
 - Agent guard: writes to the agent's settings or this tool's runtime through wildcards, macOS and other home
@@ -11,9 +12,12 @@ each with a regression test (274 tests now, CI green on Windows and Linux):
 - Agent guard: force or mirror pushes set through git config, more download-and-run variants, public gists,
   shell startup-file writes, and file URLs passed to browser tools.
 
-A second round with fuzzing found more ways around the pattern-based guard. Version 7.0 changes the guard's
-design from "block what looks dangerous" to "allow what is clearly safe, ask about the rest". Until then,
-treat the guard as a strong tripwire, not a sandbox (see SECURITY-CONTEXT.md).
+A second outside-style attack round, this time with fuzzing, found more ways around the pattern-based guard.
+Version 7.0 changes the guard's design from "block what looks dangerous" to "allow what is clearly safe, ask
+about the rest". Until then, treat the guard as a strong tripwire, not a sandbox (see SECURITY-CONTEXT.md).
+
+Review history up to 6.2.2: five internal review rounds and two outside-style attack rounds (the second with
+fuzzing). None of them was a third-party audit.
 
 # NexaForge SecureCode 6.2.1
 
@@ -50,7 +54,7 @@ Windows with Claude Code, and reports from other setups are very welcome.
 - **Templates**: Laravel security middleware and settings, and example security tests.
 - **Benchmark**: an own Laravel lab with 18 planted issues; results and their limits in `benchmark/RESULTS.md`.
 
-## Fixed before this release (independent review rounds 3 and 4)
+## Fixed before this release (internal review rounds 3 and 4)
 - The gate could run a `semgrep.bat`, `trivy.bat` or `gitleaks.bat` planted in the scanned repo on Windows
   and report a fake clean scan. Scanners are now taken from absolute PATH entries only.
 - The guard let git and many other programs (curl -o, tar -C, mkdir, npm --prefix, .NET file APIs) write into

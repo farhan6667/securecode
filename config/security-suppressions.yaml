@@ -34,6 +34,7 @@ suppressions:
   - {rule: "*", file: benchmark/legacy-lab.json, reason: "Inert, synthetic webshell and backdoor samples for the legacy audit lab; only written to a temp folder by run_lab.py.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   - {rule: "*", file: benchmark/web-lab.json, reason: "Deliberately vulnerable benchmark lab for the 7.0 code and database checks; only written to a temp folder by run_lab.py.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   - {rule: "*", file: tests/test_v7_rules.py, reason: "Inline positive samples for the 7.0 secgate rules, written to tmp_path by the tests.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: "*", file: tests/test_v7_integration_fixes.py, reason: "Inline SQL, v-html and Blade samples for the 7.0 integration fixes, written to tmp_path by the tests.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   - {rule: SQL_CONCAT, file: tests/fixtures/java-spring/src/main/java/demo/InjectionController.java, reason: "Positive fixtures for java-sqli-string-concat.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   - {rule: INSECURE_RANDOM, file: tests/fixtures/java-spring/src/main/java/demo/CryptoSamples.java, reason: "Positive fixture for java-insecure-random-token.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   - {rule: INSECURE_RANDOM, file: semgrep/java-spring.yml, reason: "Semgrep rule pattern that describes the sink (Math.random).", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}

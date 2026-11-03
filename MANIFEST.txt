@@ -62,3 +62,10 @@ Automated pentest (7.0 branch, not yet released)
   DB_NO_AUTH
 - benchmark/spring-lab.json, legacy-lab.json, web-lab.json; run_lab.py scores every lab and its clean files
 - docs/STANDARDS-COVERAGE.md; Legacy Audit step in the security-review skill
+
+7.0 integration fixes
+- scripts/dast_target.py: shared staging-target checks for run-nuclei-authorized.py, run-zap-authorized.py and
+  local_dast.py (browser-style host parsing, resolve once, metadata, link-local and private refused)
+- templates/gemini/: Gemini CLI settings and GEMINI.md, plus Antigravity notes (rules and gate; no hooks yet)
+- tests/test_v7_integration_fixes.py: suppression expiry, unreadable scanner output, hidden characters,
+  staging targets, SQL_CONCAT on bound parameters

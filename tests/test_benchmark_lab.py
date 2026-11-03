@@ -52,16 +52,16 @@ def test_spring_lab_quick_floor():
     # Without Semgrep only the built-in checks run: SQL_CONCAT, the database config and default-value checks.
     found, _, noisy, out = run("spring")
     assert found >= 6, out
-    # Known false positive of the line-based SQL_CONCAT heuristic on the clean controller (a "%" + x
-    # parameter on the same line as a parameterized query). Documented in RESULTS.md; it must not grow.
-    assert noisy <= 1, out
+    # The clean controller binds "%" + note + "%" through setParameter on the same line as a parameterized
+    # query. That is safe, and since V7I-05 SQL_CONCAT no longer reports it: no clean file may be reported.
+    assert noisy == 0, out
 
 
 @pytest.mark.skipif(find_semgrep() is None, reason="semgrep is not on PATH")
 def test_spring_lab_full_floor():
     found, total, noisy, out = run("spring", "full")
     assert found == total == 20, out
-    assert noisy <= 1, out
+    assert noisy == 0, out
 
 
 def test_lab_paths_cannot_escape(tmp_path):

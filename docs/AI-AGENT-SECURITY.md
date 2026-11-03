@@ -23,15 +23,15 @@ Sources: see `docs/SOURCES.md`.
 
 ## What runs where
 
-| Control | Claude Code | Cursor | Codex |
-|---|---|---|---|
-| Org rules (`AGENTS.md` / global CLAUDE.md block) | yes, auto | User Rules (paste) | `~/.codex/AGENTS.md` |
-| PreToolUse agent guard (secrets, pipe-to-shell, force push, startup files) | yes | not yet (different hook format) | use `templates/codex/rules/org.rules` |
-| Deny/ask permissions | yes (`config/agent-permissions.json`) | `.cursorignore` for `.env*`, approval prompts | `approval_policy`, execpolicy rules |
-| Per-edit heuristic scan | yes | no | no |
-| Injection watch on Read/WebFetch/MCP output | yes (advisory) | no | no |
-| Full gate `secgate.py --mode ci` | yes | yes (agent runs it) | yes (agent runs it) |
-| OS sandbox | macOS, Linux, WSL2 only (not native Windows) | tool-dependent | `sandbox_mode = "workspace-write"` |
+| Control | Claude Code | Cursor | Codex | Gemini CLI | Antigravity |
+|---|---|---|---|---|---|
+| Org rules (`AGENTS.md` / global CLAUDE.md block) | yes, auto | User Rules (paste) | `~/.codex/AGENTS.md` | `~/.gemini/AGENTS.md` + `context.fileName` | `~/.gemini/AGENTS.md` (read natively) |
+| PreToolUse agent guard (secrets, pipe-to-shell, force push, startup files) | yes | not yet (different hook format) | use `templates/codex/rules/org.rules` | not yet (`BeforeTool` hooks exist; future work) | not yet (`PreToolUse` hooks exist; future work) |
+| Deny/ask permissions | yes (`config/agent-permissions.json`) | `.cursorignore` for `.env*`, approval prompts | `approval_policy`, execpolicy rules | tool approval prompts | permission settings |
+| Per-edit heuristic scan | yes | no | no | no | no |
+| Injection watch on Read/WebFetch/MCP output | yes (advisory) | no | no | no | no |
+| Full gate `secgate.py --mode ci` | yes | yes (agent runs it) | yes (agent runs it) | yes (agent runs it) | yes (agent runs it) |
+| OS sandbox | macOS, Linux, WSL2 only (not native Windows) | tool-dependent | `sandbox_mode = "workspace-write"` | tool-dependent | tool-dependent |
 
 ## Setup per tool
 
@@ -44,6 +44,16 @@ Sources: see `docs/SOURCES.md`.
   approve MCP servers one at a time. `.cursorignore` does not cover terminal or MCP tools.
 - **Codex**: copy `AGENTS.md` to `~/.codex/AGENTS.md`, merge `templates/codex/config.toml` into
   `~/.codex/config.toml`, copy `templates/codex/rules/org.rules` to `~/.codex/rules/`.
+- **Gemini CLI**: copy `AGENTS.md` to `~/.gemini/AGENTS.md` and merge `templates/gemini/settings.json`
+  (`"context": {"fileName": ["AGENTS.md", "GEMINI.md"]}`) into `~/.gemini/settings.json`; or copy
+  `templates/gemini/GEMINI.md` (it imports `AGENTS.md` with `@./AGENTS.md`). Check with `/memory show`.
+  Docs: https://geminicli.com/docs/cli/gemini-md/ and https://geminicli.com/docs/reference/memport/
+- **Antigravity**: copy `AGENTS.md` to `~/.gemini/AGENTS.md`; Antigravity reads it (and project
+  `AGENTS.md`, `GEMINI.md`, `.agents/rules/*.md`) without a setting. Docs: https://antigravity.google/docs/rules/
+- Gemini CLI (`BeforeTool`, https://geminicli.com/docs/hooks/) and Antigravity (`PreToolUse` in
+  `.agents/hooks.json`, https://antigravity.google/docs/hooks/) both have pre-tool hooks today. Porting the
+  agent guard to them is future work; Antigravity's docs do not say whether a failing hook blocks the call,
+  so that has to be tested first. Details: `templates/gemini/README.md`.
 
 ## Strict instruction-source mode
 

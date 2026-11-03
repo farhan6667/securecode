@@ -41,7 +41,7 @@
           "riskdesc": "Low (Medium)",
           "desc": "<p>The response appeared to contain common error messages returned by platforms such as ASP.NET, and Web-servers such as IIS and Apache.</p>",
           "instances": [
-            {"id": "2", "uri": "http://127.0.0.1:8000/orders/7?debug=1", "method": "GET", "param": "", "attack": "", "evidence": "<script>alert('x')</script> Stack trace ‮", "otherinfo": ""}
+            {"id": "2", "uri": "http://127.0.0.1:8000/orders/7?debug=1", "method": "GET", "param": "", "attack": "", "evidence": "<script>alert('x')</script> Stack trace \u202e", "otherinfo": ""}
           ],
           "count": "1",
           "solution": "<p>Disable debugging messages before pushing to production.</p>",

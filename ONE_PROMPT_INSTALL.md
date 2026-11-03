@@ -1,4 +1,4 @@
-# One-prompt install (Claude Code, Cursor, Codex)
+# One-prompt install (Claude Code, Cursor, Codex, Gemini CLI, Antigravity)
 
 Extract the zip, then paste this into your AI coding tool. Change the path to your folder.
 
@@ -10,8 +10,10 @@ user account.
 2. Install Semgrep, Trivy and Gitleaks if missing (Windows: winget --source winget for
    AquaSecurity.Trivy and Gitleaks.Gitleaks, pip install --user semgrep), and confirm each with --version.
 3. If you are not Claude Code, load AGENTS.md from that folder as your own global rules
-   (Codex: ~/.codex/AGENTS.md plus templates/codex; Cursor: User Rules and .cursorignore for .env files),
-   following docs/AI-AGENT-SECURITY.md.
+   (Codex: ~/.codex/AGENTS.md plus templates/codex; Cursor: User Rules and .cursorignore for .env files;
+   Gemini CLI: ~/.gemini/AGENTS.md plus the context.fileName setting from templates/gemini/settings.json;
+   Antigravity: ~/.gemini/AGENTS.md, which it reads without a setting), following docs/AI-AGENT-SECURITY.md
+   and templates/gemini/README.md.
 4. Tell me that a daily task now checks GitHub for newer signed releases and installs them, and how to
    turn it off (ENTERPRISE_DEPLOYMENT.md). The public repo needs no GitHub login; a private fork does.
 5. Back up every file before changing it and never overwrite my existing settings or rules.

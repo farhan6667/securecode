@@ -3,14 +3,14 @@
 <p align="center">
   <a href="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml"><img src="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%7C%20Cursor%20%7C%20Codex-f59e0b.svg" alt="Works with Claude Code, Cursor and Codex">
+  <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%7C%20Cursor%20%7C%20Codex%20%7C%20Gemini%20CLI%20%7C%20Antigravity-f59e0b.svg" alt="Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity">
   <img src="https://img.shields.io/badge/status-public%20preview-orange.svg" alt="Status: public preview">
 </p>
 
 **NexaForge SecureCode is a virtual pentester that sits next to every developer.** It makes AI coding agents
-(Claude Code, Cursor, Codex) write secure code, finds and fixes security holes while you work, and keeps the
-agent away from your secrets. Free and open source (MIT), for anyone who builds web apps, APIs or Android apps
-with AI.
+write secure code, finds and fixes security holes while you work, and keeps the agent away from your secrets.
+Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity (rules and gate in all five; the hooks only
+in Claude Code). Free and open source (MIT), for anyone who builds web apps, APIs or Android apps with AI.
 
 <p align="center">
   <a href="#install-with-one-prompt">Install</a> ·
@@ -54,7 +54,7 @@ SecureCode fixes both:
 
 ## Install with one prompt
 
-Open Claude Code, Cursor or Codex and paste this one line:
+Open Claude Code, Cursor, Codex, Gemini CLI or Antigravity and paste this one line:
 
 ```
 Install NexaForge SecureCode for me: download the latest release from https://github.com/farhan6667/nexaforge-securecode/releases, verify its signature as https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md explains, then follow ONE_PROMPT_INSTALL.md inside the zip.
@@ -130,7 +130,7 @@ change its own settings or push your code somewhere public.
 | Access control (IDOR) rules and tests | rarely | sometimes | no | **yes** |
 | Guards your machine from the agent | no | no | no | **yes** |
 | Signed auto-updates | varies | no | no | **yes** |
-| Works with Claude Code, Cursor and Codex | n/a | one tool | one tool | **all three** |
+| Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity | n/a | one tool | one tool | **all five (hooks: Claude Code)** |
 | Measured on a lab with planted bugs | varies | no | no | **yes, 17 of 18** |
 
 Everything runs on your machine. Your code is not sent to any NexaForge service (your AI tool still talks to its own model provider, as usual). The limits are listed
@@ -297,7 +297,9 @@ ship the package under its own internal name and still receive the signed update
 - The guard matches patterns. It reduces risk, it is not a sandbox, and native Windows has no Claude Code OS sandbox.
 - The deep review is done by the AI and can miss things, especially business logic. Keep the human pentest.
 - Server settings (TLS ciphers, open ports, admin panels on the host) are outside the code and are listed for the server team.
-- Cursor and Codex get the rules and the gate, but not the Claude Code hooks.
+- Cursor, Codex, Gemini CLI and Antigravity get the rules and the gate, but not the Claude Code hooks.
+- The review history up to 6.2.2 is five internal review rounds and two outside-style attack rounds (the second
+  with fuzzing), each fix with a regression test. That is not a third-party audit.
 - Local DAST is a passive ZAP scan by default and needs Docker or ZAP; it finds configuration and header
   issues far more often than logic bugs. Attack chains in the report are a simple heuristic for a person to confirm.
 - No tool proves software is free of vulnerabilities. Known gaps are in [SECURITY-CONTEXT.md](SECURITY-CONTEXT.md).
@@ -308,10 +310,11 @@ ship the package under its own internal name and still receive the signed update
 A set of rules, a code review method, a scanner gate and Claude Code hooks that make AI coding agents produce
 more secure code and protect the developer's machine from the agent. It is free and MIT licensed.
 
-**Does it work with Cursor and Codex, or only Claude Code?**
-The rules, the deep review and the gate work with all three. The hooks (agent guard, per-edit check, stop gate)
-are Claude Code features, so Cursor and Codex get their own settings instead, described in
-[docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
+**Does it work with Cursor, Codex, Gemini CLI and Antigravity, or only Claude Code?**
+The rules, the deep review and the gate work with all five. The hooks (agent guard, per-edit check, stop gate)
+run in Claude Code only, so the other tools get their own settings instead, described in
+[docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md) and [templates/gemini/README.md](templates/gemini/README.md).
+Gemini CLI and Antigravity both have pre-tool hooks now; porting the guard to them is planned, not done.
 
 **Will it make my app pass a pentest?**
 It removes the findings pentests report most often and makes the agent test access control route by route, so

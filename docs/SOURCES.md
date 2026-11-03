@@ -17,6 +17,8 @@ Vendor docs
 - Claude Code permissions, hooks, sandboxing, managed settings: https://code.claude.com/docs/en/permissions, /hooks, /sandboxing, /managed-settings
 - Cursor hooks, rules, ignore files, security: https://cursor.com/docs/agent/hooks, /context/rules, /context/ignore-files, /agent/security
 - Codex config and rules: https://developers.openai.com/codex/config-reference, https://developers.openai.com/codex/rules
+- Gemini CLI context files, imports and hooks (checked 2026-11-03): https://geminicli.com/docs/cli/gemini-md/, https://geminicli.com/docs/reference/memport/, https://geminicli.com/docs/hooks/
+- Antigravity rules, workflows and hooks (checked 2026-11-03): https://antigravity.google/docs/rules/, https://antigravity.google/docs/ide/workflows/, https://antigravity.google/docs/hooks/
 - OWASP GenAI (LLM Top 10 2025, Agentic Top 10): https://genai.owasp.org
 
 Related projects

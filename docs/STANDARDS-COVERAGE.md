@@ -42,7 +42,7 @@ depends on how the app is deployed or what the business rules are still needs th
 
 | Rank | CWE | Status | What catches it |
 |---|---|---|---|
-| 1 | CWE-79 Cross-site Scripting | Partial | `XSS_RAW_TEMPLATE` (L16) for raw template output (Blade `{!! !!}`, `|safe`, `<%-`, `v-html`). DOM sinks (`XSS_SINK`, `REACT_RAW_HTML`) have no dedicated test. |
+| 1 | CWE-79 Cross-site Scripting | Partial | `XSS_RAW_TEMPLATE` (L16) for raw template output (Blade `{!! !!}`, `|safe`, `<%-`) and `VUE_RAW_HTML` for Vue `v-html` (tests). DOM sinks (`XSS_SINK`, `REACT_RAW_HTML`) have no dedicated test. |
 | 2 | CWE-89 SQL Injection | Caught | `SQL_CONCAT` (L4, W10, W11), `java-sqli-string-concat` (S4). Line based: queries built over several lines in PHP or JS can be missed. |
 | 3 | CWE-352 Cross-Site Request Forgery | Caught | `STATE_CHANGE_OVER_GET` (L8), `spring-csrf-disabled-with-session` (S8). Laravel `VerifyCsrfToken::$except` lists are review only. |
 | 4 | CWE-862 Missing Authorization | Partial | `laravel-api-route-without-auth` (L7), `laravel-web-group-without-auth`, `spring-permitall-sensitive-path` (S7), `EXPOSED_ADMIN_PATH` for admin and console routes in Laravel, Express and Spring (S20, W21). Checks inside handlers are review only. |
