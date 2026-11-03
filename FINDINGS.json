@@ -276,10 +276,10 @@
     {
       "id": "OPEN-01",
       "severity": "medium",
-      "where": "semgrep/laravel-authz.yml",
-      "what": "IDOR through route model binding is not found by the static rules (benchmark L18); the skill's authz matrix and cross-user tests are the control",
-      "check": "py -I benchmark/run_lab.py --mode full (L18)",
-      "status": "open"
+      "where": "semgrep/laravel-authz.yml, scripts/secgate.py laravel_binding_context",
+      "what": "IDOR through route model binding is not found by the static rules (benchmark L18); the skill's authz matrix and cross-user tests are the control. Fixed: laravel-idor-route-model-binding reports a bound model with no policy, gate, can() or owner guard, and the gate drops it when routes/*.php (->can(), can:, admin role, scopeBindings() with a checked parent) or a FormRequest authorize() covers it. Not modelled: checks in helper methods or one branch only, run-time policies, global scopes, Route::bind(), middleware in bootstrap/app.php or Kernel.php, ->except() in controller middleware",
+      "check": "py -I benchmark/run_lab.py --mode full --lab laravel (L18 found, 0 of 4 clean files reported); tests/test_benchmark_lab.py::test_laravel_lab_full_floor; tests/test_laravel_authz.py::test_gate_route_context and ::test_gate_realistic_app_has_no_findings_left",
+      "status": "fixed"
     },
     {
       "id": "V7E-01",

@@ -4,7 +4,7 @@
     "artisan": "<?php // marker file so the gate treats this as a Laravel project\n",
     "composer.json": "{\n  \"require\": {\n    \"php\": \"^7.4\",\n    \"laravel/framework\": \"^8.75\"\n  }\n}\n",
     "bootstrap/app.php": "<?php\nreturn Application::configure(basePath: dirname(__DIR__))\n    ->withRouting(web: __DIR__.'/../routes/web.php', api: __DIR__.'/../routes/api.php')\n    ->withMiddleware(function (Middleware $middleware) {\n        // no security headers middleware registered\n    })\n    ->create();\n",
-    "routes/web.php": "<?php\nuse App\\Http\\Controllers\\OrderController;\nRoute::get('/orders/{id}/delete', [OrderController::class, 'destroy']);\nRoute::get('/', fn () => view('home'));\n",
+    "routes/web.php": "<?php\nuse App\\Http\\Controllers\\OrderController;\nuse App\\Http\\Controllers\\ReceiptController;\nuse App\\Http\\Controllers\\Admin\\ReportController;\nRoute::get('/orders/{id}/delete', [OrderController::class, 'destroy']);\nRoute::get('/', fn () => view('home'));\nRoute::middleware('auth')->group(function () {\n    Route::get('/receipts/{receipt}', [ReceiptController::class, 'show']);\n    Route::put('/receipts/{receipt}', [ReceiptController::class, 'update']);\n    Route::get('/admin/reports/{report}', [ReportController::class, 'show'])->can('view', 'report');\n});\n",
     "routes/api.php": "<?php\nuse App\\Http\\Controllers\\OrderController;\nRoute::get('/orders/{id}', [OrderController::class, 'show']);\nRoute::put('/orders/{id}', [OrderController::class, 'update']);\n",
     "app/Http/Controllers/OrderController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Models\\Order;\nuse Illuminate\\Http\\Request;\n\nclass OrderController extends Controller\n{\n    public function show(Request $request)\n    {\n        return Order::findOrFail($request->id);\n    }\n\n    public function update(Request $request)\n    {\n        $order = Order::find($request->id);\n        $order->update($request->all());\n        return $order;\n    }\n\n    public function destroy(Request $request)\n    {\n        Order::where('id', $request->id)->delete();\n        return back();\n    }\n\n    public function search(Request $request)\n    {\n        return DB::select(\"SELECT * FROM orders WHERE note LIKE '%\" . $request->q . \"%'\");\n    }\n}\n",
     "app/Http/Controllers/ProfileController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Models\\User;\nuse Illuminate\\Http\\Request;\n\nclass ProfileController extends Controller\n{\n    public function store(Request $request)\n    {\n        return User::create($request->all());\n    }\n}\n",
@@ -15,7 +15,11 @@
     "public/js/app.js.map": "{}\n",
     "public/.htaccess": "Options +Indexes\n",
     "resources/views/home.blade.php": "<html><head><script src=\"https://code.jquery.com/jquery-2.2.4.min.js\"></script></head><body>{!! $note !!}</body></html>\n",
-    "app/Http/Controllers/InvoiceController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Models\\Invoice;\n\nclass InvoiceController extends Controller\n{\n    // Route model binding: Laravel loads any invoice by id, and nothing checks the owner.\n    public function show(Invoice $invoice)\n    {\n        return $invoice;\n    }\n}\n"
+    "app/Http/Controllers/InvoiceController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Models\\Invoice;\n\nclass InvoiceController extends Controller\n{\n    // Route model binding: Laravel loads any invoice by id, and nothing checks the owner.\n    public function show(Invoice $invoice)\n    {\n        return $invoice;\n    }\n}\n",
+    "app/Http/Controllers/ReceiptController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Http\\Requests\\UpdateReceiptRequest;\nuse App\\Models\\Receipt;\n\nclass ReceiptController extends Controller\n{\n    // Route model binding with a policy check: safe.\n    public function show(Receipt $receipt)\n    {\n        $this->authorize('view', $receipt);\n        return $receipt;\n    }\n\n    // The FormRequest's authorize() checks the owner: safe.\n    public function update(UpdateReceiptRequest $request, Receipt $receipt)\n    {\n        $receipt->update($request->validated());\n        return $receipt;\n    }\n}\n",
+    "app/Http/Requests/UpdateReceiptRequest.php": "<?php\nnamespace App\\Http\\Requests;\n\nuse Illuminate\\Foundation\\Http\\FormRequest;\n\nclass UpdateReceiptRequest extends FormRequest\n{\n    public function authorize(): bool\n    {\n        return $this->route('receipt')->user_id === $this->user()->id;\n    }\n\n    public function rules(): array\n    {\n        return ['note' => ['nullable', 'string', 'max:200']];\n    }\n}\n",
+    "app/Http/Controllers/Admin/ReportController.php": "<?php\nnamespace App\\Http\\Controllers\\Admin;\n\nuse App\\Http\\Controllers\\Controller;\nuse App\\Models\\Report;\n\nclass ReportController extends Controller\n{\n    // The route carries ->can('view', 'report'): safe.\n    public function show(Report $report)\n    {\n        return $report;\n    }\n}\n",
+    "app/Http/Controllers/AccountOrderController.php": "<?php\nnamespace App\\Http\\Controllers;\n\nuse App\\Models\\Order;\nuse Illuminate\\Http\\Request;\n\nclass AccountOrderController extends Controller\n{\n    // Owner guard on the bound model: safe.\n    public function show(Request $request, Order $order)\n    {\n        abort_unless($order->user_id === $request->user()->id, 404);\n        return $order;\n    }\n}\n"
   },
   "expected": [
     {
@@ -122,9 +126,27 @@
     },
     {
       "id": "L18",
-      "what": "IDOR through route model binding (show(Invoice $invoice) without authorize). Known gap of the static rules; the authz matrix and cross-user tests in the skill are meant to catch it.",
+      "what": "IDOR through route model binding (show(Invoice $invoice) without authorize)",
       "file": "app/Http/Controllers/InvoiceController.php",
-      "rule_hint": "laravel-idor"
+      "rule_hint": "laravel-idor-route-model-binding"
+    }
+  ],
+  "clean": [
+    {
+      "file": "app/Http/Controllers/ReceiptController.php",
+      "rule_hint": ""
+    },
+    {
+      "file": "app/Http/Requests/UpdateReceiptRequest.php",
+      "rule_hint": ""
+    },
+    {
+      "file": "app/Http/Controllers/Admin/ReportController.php",
+      "rule_hint": ""
+    },
+    {
+      "file": "app/Http/Controllers/AccountOrderController.php",
+      "rule_hint": ""
     }
   ]
 }

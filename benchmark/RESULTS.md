@@ -13,16 +13,36 @@ on their own projects.
 
 Run on 2026-11-03, Windows 11, Python 3.14, Semgrep 1.183.0, Trivy 0.76.1, Gitleaks 8.30.1.
 
-| Command | Found |
-|---|---|
-| `py -I benchmark/run_lab.py --mode quick --lab laravel` (built-in checks only, no scanners) | 11 of 18 |
-| `py -I benchmark/run_lab.py --mode full --lab laravel` (adds Semgrep with the Laravel authz rules, Trivy, Gitleaks) | 17 of 18 |
+| Command | Found | Clean files reported |
+|---|---|---|
+| `py -I benchmark/run_lab.py --mode quick --lab laravel` (built-in checks only, no scanners) | 11 of 18 | 0 of 4 |
+| `py -I benchmark/run_lab.py --mode full --lab laravel` (adds Semgrep with the Laravel authz rules, Trivy, Gitleaks) | 18 of 18 | 0 of 4 |
 
-The one miss in full mode is on purpose: L18 is an IDOR through route model binding
-(`show(Invoice $invoice)` with no `authorize` call). A pattern rule cannot tell whether the binding is
-scoped to the user. The deep review in the skill handles it a different way: it maps every route in
-`.security/authz-matrix.md` and writes a cross-user test for each row ("a row without a passing test is
-open").
+L18, an IDOR through route model binding (`show(Invoice $invoice)` with no `authorize` call), used to be
+the one miss. Since OPEN-01 was closed, `laravel-idor-route-model-binding` reports a controller method
+that takes a bound model and has no policy call, gate, `can()` check or owner guard on it. The checks
+that live outside the controller are read by the gate itself (`laravel_binding_context` in
+`scripts/secgate.py`): `->can()` or `can:` middleware and admin roles on the route, `scopeBindings()`
+with a checked parent, and a FormRequest whose `authorize()` checks the user.
+
+The lab now has four clean files, and none is reported: a controller with `$this->authorize()`, a
+FormRequest with an owner check in `authorize()`, an admin controller whose route has `->can()`, and a
+controller with an `abort_unless($order->user_id === $request->user()->id, 404)` guard.
+
+False positives outside the lab, measured the same day on a small, realistic Laravel app we wrote for
+this (`tests/fixtures/laravel-authz/realistic-app`: a resource controller with `authorizeResource()`, an
+admin resource behind `can:access-admin`, an API controller with policies and owner guards, nested
+`scopeBindings()` routes, a public blog, comments with a FormRequest): Semgrep alone reports 8 bindings,
+all of them covered by a route or a FormRequest, and the gate drops all 8, so 0 are left. In a separate
+skeptical pass with 7 tricky safe and 6 tricky vulnerable controllers, one safe method was still reported
+(the owner check sits in a private helper method) and one vulnerable method was missed (the policy call
+runs in only one branch of an `if`). Both are listed as limits below.
+
+Limits of the route model binding check, all review-only: checks in helper methods or in only one
+branch, policies decided at run time, global scopes, `Route::bind()`, middleware registered in
+`bootstrap/app.php` or `Kernel.php`, `->except()` in controller middleware, two controllers with the
+same short class name, and models imported from a namespace without a `Models` segment. The
+authorization matrix and cross-user tests in the skill stay the coverage list for these.
 
 Full table from the full-mode run:
 
@@ -45,9 +65,10 @@ Full table from the full-mode run:
 | L15 | CDN script without SRI | found | CDN_WITHOUT_SRI |
 | L16 | Unescaped Blade output {!! !!} | found | XSS_RAW_TEMPLATE |
 | L17 | PHP 7.4 and Laravel 8 out of support | found | UNSUPPORTED_PLATFORM |
-| L18 | IDOR through route model binding | missed | (known gap, see above) |
+| L18 | IDOR through route model binding (show(Invoice $invoice) without authorize) | found | laravel-idor-route-model-binding |
 
-`tests/test_benchmark_lab.py` keeps the quick-mode floor at 11, so a weaker rule fails CI.
+`tests/test_benchmark_lab.py` keeps the quick-mode floor at 11 and the full-mode result at 18 of 18 when
+Semgrep is installed, with no clean file reported in either mode, so a weaker or noisier rule fails CI.
 
 ## 7.0 labs: Spring Boot, legacy audit, pentest findings
 
@@ -154,7 +175,7 @@ In full mode some rows also list Semgrep registry rules (for example `spring-csr
 | W21 | /admin route without auth middleware | found | EXPOSED_ADMIN_PATH |
 | W22 | Express session secret 'keyboard cat' | found | DEFAULT_SECRET_KEY |
 
-`tests/test_benchmark_lab.py` keeps these floors: Laravel 11+ in quick mode, Spring 6+ in quick and
+`tests/test_benchmark_lab.py` keeps these floors: Laravel 11+ in quick mode and 18 of 18 in full mode, Spring 6+ in quick and
 20 of 20 in full mode when Semgrep is installed, legacy and web all found, and no clean file reported in any lab.
 
 ## Not run yet

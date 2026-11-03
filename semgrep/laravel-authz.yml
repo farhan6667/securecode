@@ -3,8 +3,8 @@
 # "Verify:" and says what to check. The entry-point review in the security-review skill still applies.
 #
 # Opt-out for objects or routes that are public on purpose: put `// securecode: public-object` at the
-# end of the reported line, or (IDOR rule only) on its own line directly above the method, where it
-# covers that whole method. Mass assignment has no opt-out marker: use $request->validated() or an
+# end of the reported line (for route model binding: the method's signature line), or (IDOR rules only)
+# on its own line directly above the method, where it covers that whole method. Mass assignment has no opt-out marker: use $request->validated() or an
 # explicit field list instead.
 rules:
   - id: laravel-idor-unscoped-lookup
@@ -79,6 +79,11 @@ rules:
       - pattern-not-inside: Auth::user()->$REL(...)->$M(...)->$N(...)
       - pattern-not-inside: $X->whereBelongsTo(...)->$M(...)
       - pattern-not-inside: $X::whereBelongsTo(...)->$M(...)
+      # The key is the signed-in user's own id, as in $project->members()->whereKey($request->user()->id).
+      - pattern-not: $Q->$FIND($request->user()->$UID, ...)
+      - pattern-not: $Q->$FIND(auth()->user()->$UID, ...)
+      - pattern-not: $Q->$FIND(Auth::user()->$UID, ...)
+      - pattern-not: $Q->where('id', $request->user()->$UID)
       # An authorization check anywhere in the same method.
       - pattern-not-inside: |
           function $METHOD(...) { ... $this->authorize(...); ... }
@@ -101,6 +106,265 @@ rules:
       # (/**) or a method signature, so the marker never covers the method after it.
       - pattern-not-regex: (?m)^[^\n]*//[ \t]*securecode:[ \t]*public-object\b[^\n]*$
       - pattern-not-regex: (?m)^[ \t]*//[ \t]*securecode:[ \t]*public-object\b[^\n]*\n(?:[ \t]*(?:#\[|/\*|\*)[^\n]*\n)*[ \t]*(?:#\[[^\n]*?\][ \t]*)*(?:(?:public|protected|private|static|final)[ \t]+)*function\b(?s:.*?)(?=^[ \t]*(?:#\[|/\*\*|(?:(?:public|protected|private|static|final|abstract)[ \t]+)*function\b)|\z)
+
+  # IDOR through route model binding (benchmark L18). A public controller method takes a model
+  # parameter, Route::get('/orders/{order}', ...) makes Laravel load ANY row with that key, and nothing
+  # checks that the caller may see or change it. A type counts as a model when the file imports it from
+  # a namespace with a Models segment (use App\Models\Order; use Domain\Shop\Models\Cart;
+  # use App\Models\Invoice as Bill). Models from other namespaces (App\Order, App\Entities\X) are not seen.
+  # Not reported: an authorization call or an owner guard in the method, authorizeResource() for the
+  # resource methods, or authorization middleware set in the controller. Route middleware (->can(),
+  # can:, admin roles), scopeBindings() and FormRequest::authorize() live in other files: secgate.py
+  # reads those (laravel_binding_context) and drops a finding they cover. Run on its own, this rule
+  # still reports those methods.
+  - id: laravel-idor-route-model-binding
+    languages: [php]
+    severity: ERROR
+    message: >-
+      Verify: route model binding loads any $T for the key in the URL, and nothing checks that the
+      caller may use it. Add $this->authorize('view', $VAR) (or Gate::authorize, ->can middleware on the
+      route, authorizeResource in the constructor), or an owner guard such as
+      abort_unless($VAR->user_id === $request->user()->id, 403). For a child in a nested route, check
+      the parent and use ->scopeBindings(). If the record is public on purpose, add
+      `// securecode: public-object` above the method. (binding: $VAR in $M())
+    metadata:
+      category: security
+      cwe: "CWE-639: Authorization Bypass Through User-Controlled Key"
+      owasp: "A01:2021 Broken Access Control"
+      confidence: MEDIUM
+    match:
+      all:
+        - inside: |
+            class $CTRL extends $BASE { ... }
+        # A public method with a parameter whose type is an imported model.
+        - any:
+            - all:
+                - inside: |
+                    use $NS\Models\$T;
+                    ...
+                - any:
+                    - |
+                      function $M(..., $T $VAR, ...) { ... }
+                    - |
+                      function $M(..., ?$T $VAR, ...) { ... }
+            - all:
+                - inside: |
+                    use $NS1\$NS2\Models\$T;
+                    ...
+                - any:
+                    - |
+                      function $M(..., $T $VAR, ...) { ... }
+                    - |
+                      function $M(..., ?$T $VAR, ...) { ... }
+            - all:
+                - inside: |
+                    use $NS\Models\$REAL as $T;
+                    ...
+                - any:
+                    - |
+                      function $M(..., $T $VAR, ...) { ... }
+                    - |
+                      function $M(..., ?$T $VAR, ...) { ... }
+        # An authorization call in the method that checks this object ($this->authorize('view', $order),
+        # Gate::allows('update', $order), $request->user()->can('delete', $order)), or a gate with only
+        # an ability name (Gate::authorize('admin')), which is a role check. A call on the class only,
+        # such as $this->authorize('viewAny', Order::class), does not check the bound row.
+        # Calls that throw on failure count anywhere in the method, also as an expression statement.
+        - not:
+            all:
+              - any:
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... $E; ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... return $E; ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... if ($E) $S; ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... if ($E) $S; else $S2; ... }
+            where:
+              - metavariable: $E
+                any:
+                  - $this->authorize($AB, <... $VAR ...>, ...)
+                  - $this->authorize($AB)
+                  - $this->authorizeForUser($AU, $AB, <... $VAR ...>, ...)
+                  - $this->authorizeForUser($AU, $AB)
+                  - Gate::authorize($AB, <... $VAR ...>, ...)
+                  - Gate::authorize($AB)
+                  - Gate::forUser($AU)->authorize($AB, <... $VAR ...>, ...)
+                  - Gate::forUser($AU)->authorize($AB)
+                  # Loading the row again through the signed-in user's relation 404s for anyone else.
+                  - $Q->user()->$REL(...)->findOrFail(<... $VAR ...>, ...)
+                  - auth()->user()->$REL(...)->findOrFail(<... $VAR ...>, ...)
+                  - Auth::user()->$REL(...)->findOrFail(<... $VAR ...>, ...)
+        # Calls that return a boolean count only where the result decides: an if, abort_*/throw_*,
+        # return, or a && / || short circuit. $ok = Gate::allows(...) alone checks nothing.
+        - not:
+            all:
+              - any:
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... if ($E) $S; ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... if ($E) $S; else $S2; ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... abort_if($E, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... abort_unless($E, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... throw_if($E, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... throw_unless($E, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... return $E; ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... $E && $SC; ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... $E || $SC; ... }
+            where:
+              - metavariable: $E
+                any:
+                  - Gate::$G($AB, <... $VAR ...>, ...)
+                  - Gate::$G($AB)
+                  - Gate::forUser($AU)->$G($AB, <... $VAR ...>, ...)
+                  - Gate::forUser($AU)->$G($AB)
+                  - $U->can($AB, <... $VAR ...>, ...)
+                  - $U->can($AB)
+                  - $U->cannot($AB, <... $VAR ...>, ...)
+                  - $U->cannot($AB)
+                  - $U->cant($AB, <... $VAR ...>, ...)
+                  - $U->cant($AB)
+        # An owner guard on this parameter: abort_if/abort_unless/throw_if/throw_unless or an if whose
+        # condition mentions both the bound model and the signed-in user.
+        - not:
+            all:
+              - any:
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... abort_if($COND, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... abort_unless($COND, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... throw_if($COND, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... throw_unless($COND, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... if ($COND) $S; ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... if ($COND) $S; else $S2; ... }
+            where:
+              - metavariable: $COND
+                pattern: $VAR
+              - metavariable: $COND
+                any:
+                  - auth(...)
+                  - Auth::$AF(...)
+                  - $Q->user()
+                  - $user
+                  - $authUser
+                  - $currentUser
+        # A public-content guard on this parameter, such as abort_unless($post->isPublished(), 404): the
+        # record is only shown when it is public, so ownership does not apply.
+        - not:
+            all:
+              - any:
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... abort_if($COND, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... abort_unless($COND, ...); ... }
+                  - |
+                    function $M(..., $GT $VAR, ...) { ... if ($COND) $S; ... }
+            where:
+              - metavariable: $COND
+                pattern: $VAR
+              - metavariable: $COND
+                regex: (?i)^[^;]{0,500}?->[ \t]*(?:is_?)?(?:published|public|visible)\b
+        # authorizeResource() covers the resource methods only, not custom ones such as download().
+        - not:
+            all:
+              - inside: |
+                  class $CTRL extends $BASE {
+                    ...
+                    function __construct(...) { ... $this->authorizeResource(...); ... }
+                    ...
+                  }
+              - |
+                function $M(...) { ... }
+            where:
+              - metavariable: $M
+                regex: ^(index|create|store|show|edit|update|destroy)$
+        # Authorization middleware set in the controller: can:, or an admin or staff role. A call with
+        # ->only([...]) covers the listed methods. ->except([...]) is not modelled (Semgrep cannot test
+        # that a name is missing from a list), so those methods stay reported.
+        - not:
+            any:
+              - all:
+                  - any:
+                      - inside: |
+                          class $CTRL extends $BASE {
+                            ...
+                            function __construct(...) { ... $this->middleware("=~/(?i)^(can:[^,]+(,\w+)?|(role|permission|role_or_permission):.*(admin|staff|super|manage|moderat|operator|backoffice).*|(is_?)?admin|super_?admin)$/"); ... }
+                            ...
+                          }
+                      - inside: |
+                          class $CTRL extends $BASE {
+                            ...
+                            function __construct(...) { ... $this->middleware([..., "=~/(?i)^(can:[^,]+(,\w+)?|(role|permission|role_or_permission):.*(admin|staff|super|manage|moderat|operator|backoffice).*|(is_?)?admin|super_?admin)$/", ...]); ... }
+                            ...
+                          }
+                  # Semgrep also matches the start of a chain, so rule out ->only() and ->except() here.
+                  - not:
+                      inside: |
+                        class $CTRL extends $BASE {
+                          ...
+                          function __construct(...) { ... $this->middleware($MW1)->only($ONLY); ... }
+                          ...
+                        }
+                  - not:
+                      inside: |
+                        class $CTRL extends $BASE {
+                          ...
+                          function __construct(...) { ... $this->middleware($MW2)->except($EXCEPT); ... }
+                          ...
+                        }
+              - inside: |
+                  class $CTRL extends $BASE {
+                    ...
+                    function __construct(...) { ... $this->middleware("=~/(?i)^(can:[^,]+(,\w+)?|(role|permission|role_or_permission):.*(admin|staff|super|manage|moderat|operator|backoffice).*|(is_?)?admin|super_?admin)$/")->only([..., "$M", ...]); ... }
+                    ...
+                  }
+              - inside: |
+                  class $CTRL extends $BASE implements $I {
+                    ...
+                    public static function middleware(): array { return [..., "=~/(?i)^(can:[^,]+(,\w+)?|(role|permission|role_or_permission):.*(admin|staff|super|manage|moderat|operator|backoffice).*|(is_?)?admin|super_?admin)$/", ...]; }
+                    ...
+                  }
+              - inside: |
+                  class $CTRL extends $BASE implements $I {
+                    ...
+                    public static function middleware(): array { return [..., new Middleware("=~/(?i)^(can:[^,]+(,\w+)?|(role|permission|role_or_permission):.*(admin|staff|super|manage|moderat|operator|backoffice).*|(is_?)?admin|super_?admin)$/"), ...]; }
+                    ...
+                  }
+              - inside: |
+                  class $CTRL extends $BASE implements $I {
+                    ...
+                    public static function middleware(): array { return [..., new Middleware("=~/(?i)^(can:[^,]+(,\w+)?|(role|permission|role_or_permission):.*(admin|staff|super|manage|moderat|operator|backoffice).*|(is_?)?admin|super_?admin)$/", only: [..., "$M", ...]), ...]; }
+                    ...
+                  }
+        # Only public actions. Modifiers in a pattern are not enforced, so this is a regex inside the
+        # method's range. PHP methods without a modifier are public too.
+        - not:
+            regex: \b(?:protected|private)[ \t]+(?:static[ \t]+)?function[ \t]+\w+[ \t]*\(
+        # Opt-out marker, same convention as laravel-idor-unscoped-lookup: on the signature line, or on
+        # its own line directly above the method.
+        - not:
+            regex: \bfunction\b[^\n{]*\([^\n]*//[ \t]*securecode:[ \t]*public-object\b
+        - not:
+            inside:
+              regex: (?m)^[ \t]*//[ \t]*securecode:[ \t]*public-object\b[^\n]*\n(?:[ \t]*(?:#\[|/\*|\*)[^\n]*\n)*[ \t]*(?:#\[[^\n]*?\][ \t]*)*(?:(?:public|protected|private|static|final)[ \t]+)*function\b(?s:.*?)(?=^[ \t]*(?:#\[|/\*\*|(?:(?:public|protected|private|static|final|abstract)[ \t]+)*function\b)|\z)
+      where:
+        - metavariable: $CTRL
+          regex: ^\w*Controller$
+        - metavariable: $M
+          regex: ^(?!__construct$)
+        - focus: $VAR
 
   - id: laravel-mass-assignment
     languages: [php]
