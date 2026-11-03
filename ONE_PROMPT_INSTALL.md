@@ -7,9 +7,9 @@ restart.
 ```
 Install NexaForge SecureCode for me. You have my permission to set it up for my user account.
 Follow these steps in order and stop and tell me if any check fails.
-1. Download: from https://github.com/farhan6667/nexaforge-securecode/releases/latest download
+1. Download: from https://github.com/farhan6667/securecode/releases/latest download
    NexaForge_SecureCode.zip and NexaForge_SecureCode.zip.sig into a new, empty folder. Run nothing from the zip yet.
-2. Trust anchor: open https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md and note the
+2. Trust anchor: open https://github.com/farhan6667/securecode/blob/main/SECURITY.md and note the
    "Key fingerprint" (SHA256:...).
 3. Check the key: every file in the zip sits under a top folder named aisec. Read only
    aisec/config/allowed_signers from the zip. Save the part of its line that starts with

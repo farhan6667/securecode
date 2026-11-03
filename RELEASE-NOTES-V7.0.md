@@ -154,7 +154,7 @@ release key); nothing to do by hand.
 
 ## Proof from this release's runs
 
-- Tests: {{TESTRUN}} on Windows, Python 3.14; CI runs the same suite on Windows and Linux with Python 3.10, 3.12
+- Tests: 1611 passed, 13 skipped (the skips are on tests/skip-allowlist.json) on Windows, Python 3.14; CI runs the same suite on Windows and Linux with Python 3.10, 3.12
   and 3.13 and fails on any skip that is not on tests/skip-allowlist.json.
 - The gate on its own repository: `secgate.py . --mode ci --fail-on high` passes (0 critical, 0 high).
 - Labs: the numbers in "Rules and labs" above.

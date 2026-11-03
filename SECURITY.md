@@ -19,7 +19,7 @@ pattern based and is not a sandbox). A new bypass of a documented limit is still
 
 ## How to report
 
-Use a private report: [open a security advisory](https://github.com/farhan6667/nexaforge-securecode/security/advisories/new),
+Use a private report: [open a security advisory](https://github.com/farhan6667/securecode/security/advisories/new),
 or email **nexaforge.services@gmail.com**. Please include the exact input, what happened, what you
 expected and the version (`MANIFEST.txt`). Please don't open a public issue for a vulnerability.
 

@@ -25,7 +25,7 @@ def one_prompt_block():
 def test_readme_prompt_and_one_prompt_install_name_the_same_steps():
     for name, block in (("README", readme_prompt()), ("ONE_PROMPT_INSTALL", one_prompt_block())):
         low = block.lower()
-        for word in ("github.com/farhan6667/nexaforge-securecode/releases", ".sig", "fingerprint", "security.md",
+        for word in ("github.com/farhan6667/securecode/releases", ".sig", "fingerprint", "security.md",
                      "ssh-keygen", "doctor", "setup", "verify", "restart"):
             assert word in low, (name, word)
 

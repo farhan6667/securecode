@@ -57,7 +57,7 @@ It prints one line, such as `Acme SecureCode: updated to 6.3.0`, `already up to 
 `signature invalid, nothing installed` or `no network or GitHub unreachable`. Details go to `update.log`.
 
 ## Auto-update
-By default an install updates from the public repo `farhan6667/nexaforge-securecode` and accepts only
+By default an install updates from the public repo `farhan6667/securecode` and accepts only
 releases signed with the NexaForge release key (the public key ships in the package). No GitHub login is
 needed.
 

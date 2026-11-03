@@ -13,13 +13,13 @@ setups are the most useful thing you can send.
 3. **A guard bypass.** Please report it privately (see [SECURITY.md](SECURITY.md)). A fix with a
    regression test is very welcome after that.
 4. **A fix, a test or a clearer sentence in the docs.** Start with a
-   [good first issue](https://github.com/farhan6667/nexaforge-securecode/labels/good%20first%20issue).
+   [good first issue](https://github.com/farhan6667/securecode/labels/good%20first%20issue).
 
 ## Setup (two minutes)
 
 ```bash
-git clone https://github.com/farhan6667/nexaforge-securecode
-cd nexaforge-securecode
+git clone https://github.com/farhan6667/securecode
+cd securecode
 python -m pip install "pytest==8.4.2" "PyYAML==6.0.3"
 python -m pytest -q tests -p no:cacheprovider
 ```

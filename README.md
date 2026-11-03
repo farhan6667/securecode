@@ -1,7 +1,7 @@
 <h1 align="center"><img src="docs/img/securecode-hero.webp" width="100%" alt="SecureCode emblem: a gold shield with a code symbol and an AI chip, the SecureCode wordmark and the tagline Virtual Pentester for AI Coding Agents"></h1>
 
 <p align="center">
-  <a href="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml"><img src="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
+  <a href="https://github.com/farhan6667/securecode/actions/workflows/ci.yml"><img src="https://github.com/farhan6667/securecode/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%7C%20Cursor%20%7C%20Codex%20%7C%20Gemini%20CLI%20%7C%20Antigravity-f59e0b.svg" alt="Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity">
   <img src="https://img.shields.io/badge/status-public%20preview-orange.svg" alt="Status: public preview">
@@ -80,7 +80,7 @@ SecureCode fixes both:
 Open Claude Code, Cursor, Codex, Gemini CLI or Antigravity and paste this one line:
 
 ```
-Install NexaForge SecureCode for me: download the latest release zip and its .sig from https://github.com/farhan6667/nexaforge-securecode/releases, check that the key in aisec/config/allowed_signers inside the zip has the fingerprint published in https://github.com/farhan6667/nexaforge-securecode/blob/main/SECURITY.md, verify the signature with ssh-keygen (in PowerShell through cmd /c, because PowerShell rejects "<"), extract it to a folder I choose, then follow ONE_PROMPT_INSTALL.md inside its aisec folder: run the installer, securecode.py doctor and securecode.py setup --yes on my project folder after asking me once, verify-global.py, and tell me to restart.
+Install NexaForge SecureCode for me: download the latest release zip and its .sig from https://github.com/farhan6667/securecode/releases, check that the key in aisec/config/allowed_signers inside the zip has the fingerprint published in https://github.com/farhan6667/securecode/blob/main/SECURITY.md, verify the signature with ssh-keygen (in PowerShell through cmd /c, because PowerShell rejects "<"), extract it to a folder I choose, then follow ONE_PROMPT_INSTALL.md inside its aisec folder: run the installer, securecode.py doctor and securecode.py setup --yes on my project folder after asking me once, verify-global.py, and tell me to restart.
 ```
 
 The agent downloads it, checks the key fingerprint and the signature, installs it and the scanners, and tells
@@ -92,7 +92,7 @@ why the fingerprint in SECURITY.md is the trust anchor.
 <summary>Install by hand instead</summary>
 
 Download `NexaForge_SecureCode.zip` and `NexaForge_SecureCode.zip.sig` from the
-[latest release](https://github.com/farhan6667/nexaforge-securecode/releases), check the key fingerprint and the
+[latest release](https://github.com/farhan6667/securecode/releases), check the key fingerprint and the
 signature as [SECURITY.md](SECURITY.md#verifying-a-release) shows, extract it, then change into the `aisec`
 folder inside (every file in the zip sits under it) and run:
 
@@ -238,7 +238,7 @@ You can also use `/security-gate` and `/advisory-qa`, or just ask in your own wo
 - Optional webhook to send findings to your tracker.
 
 **Proof, not promises**
-- {{TESTCOUNT}} test cases (counted with pytest --collect-only, parametrized cases included), run in CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
+- 1624 test cases (counted with pytest --collect-only, parametrized cases included), run in CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
 - Four labs with planted vulnerabilities (Laravel, Spring Boot, legacy webshells, common pentest findings),
   each with clean files that must stay quiet. Scores and every miss are in
   [benchmark/RESULTS.md](benchmark/RESULTS.md).
@@ -427,8 +427,8 @@ Roman Urdu versions "Security Test Karo" and "Advisory QA Karo" also work.
 The most useful thing you can send is a **compatibility report**: install it on your own stack and tell us what
 it found, what it missed and where it was noisy. Bug fixes, new checks with a test, and clearer docs are welcome
 too. Start with the [contributing guide](CONTRIBUTING.md) or a
-[good first issue](https://github.com/farhan6667/nexaforge-securecode/labels/good%20first%20issue), or say hello in
-[Discussions](https://github.com/farhan6667/nexaforge-securecode/discussions). Please report vulnerabilities in
+[good first issue](https://github.com/farhan6667/securecode/labels/good%20first%20issue), or say hello in
+[Discussions](https://github.com/farhan6667/securecode/discussions). Please report vulnerabilities in
 SecureCode itself privately, see [SECURITY.md](SECURITY.md).
 
 ## Sponsor my work

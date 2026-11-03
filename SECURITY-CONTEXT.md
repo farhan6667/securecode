@@ -282,5 +282,5 @@ before it is shown, so it comes once per change set; if that record cannot be wr
 (it never nags). It is a nudge, not a control: the agent can write that file or a fake report to silence it.
 
 **Deployment.** Per user (`%LOCALAPPDATA%\OrgAISecureAppSec`), managed (`%ProgramFiles%\OrgAISecureAppSec`),
-CI (pinned, hash-verified scanners). Updates from the public GitHub repo `farhan6667/nexaforge-securecode`
+CI (pinned, hash-verified scanners). Updates from the public GitHub repo `farhan6667/securecode`
 (or an organization's own fork), signed with an offline ed25519 key.
