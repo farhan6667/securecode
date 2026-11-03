@@ -21,6 +21,10 @@ suppressions:
   - {rule: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args, file: scripts/run-nuclei-authorized.py, reason: "argv list; the URL is validated by check_url and needs SECURITY_DAST_ALLOW=true.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   - {rule: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected, file: scripts/notify_webhook.py, reason: "URL restricted to https:// before use.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   - {rule: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected, file: scripts/updater.py, reason: "URLs restricted to https://api.github.com and GitHub download hosts.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  # A byte-for-byte copy of the 6.2.2 updater, kept to prove a 6.2.2 install accepts the 7.0.0 release; same reasons as above.
+  - {rule: PATH_TRAVERSAL_SINK, file: tests/fixtures/updater-6.2.2.py, reason: "Copy of the 6.2.2 scripts/updater.py; same false positive as that file.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: OPEN_REDIRECT, file: tests/fixtures/updater-6.2.2.py, reason: "Copy of the 6.2.2 scripts/updater.py; GitHub's asset redirect after a scheme and host check.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
+  - {rule: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected, file: tests/fixtures/updater-6.2.2.py, reason: "Copy of the 6.2.2 scripts/updater.py; URLs restricted to GitHub hosts.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   # Test fixtures that contain vulnerable samples on purpose.
   - {rule: "*", file: tests/vulnerable_sample.py, reason: "Intentionally vulnerable test fixture.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}
   - {rule: "*", file: tests/test_heuristics.py, reason: "Vulnerable SQL samples that the rule must match.", owner: nexaforge.services@gmail.com, expires: "2027-05-01"}

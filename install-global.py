@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse, json, os, platform, shutil, sys, time
 from pathlib import Path
 
-VERSION="6.2.2"
+VERSION="7.0.0"
 PKG=Path(__file__).resolve().parent
 SYSTEM=platform.system().lower()
 HOME=Path.home()
@@ -276,9 +276,15 @@ def install_settings(ad: Path, mode: str="managed"):
     settings.write_text(json.dumps(data,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     return str(settings)
 
+def schtasks_exe() -> str:
+    # The system copy by absolute path: a bare "schtasks" is looked up in the current folder first on Windows.
+    root=os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
+    exe=os.path.join(root,"System32","schtasks.exe")
+    return exe if os.path.isabs(exe) and os.path.isfile(exe) else "schtasks"
+
 def _task_is_ours(name: str, upd: str, run) -> bool:
     # Only a task whose action runs this app folder's updater.py counts as ours.
-    p=run(["schtasks","/Query","/TN",name,"/XML"],capture_output=True)
+    p=run([schtasks_exe(),"/Query","/TN",name,"/XML"],capture_output=True)
     return p.returncode==0 and upd.lower() in _xml_text(p.stdout).lower()
 
 def _xml_text(out) -> str:
@@ -290,7 +296,7 @@ def _xml_text(out) -> str:
     else:
         try: text=out.decode("utf-8")
         except UnicodeDecodeError: text=out.decode("mbcs" if os.name=="nt" else "latin-1",errors="replace")
-    return text.replace("&quot;",'"').replace("&amp;","&").replace("&apos;","'")
+    return text.replace("&quot;",'"').replace("&apos;","'").replace("&lt;","<").replace("&gt;",">").replace("&amp;","&")
 
 def retire_old_task(ad: Path, new_name: str, upd: str, run) -> str|None:
     """Delete our previous task when the brand name changed, so a re-install never leaves two tasks.
@@ -307,11 +313,172 @@ def retire_old_task(ad: Path, new_name: str, upd: str, run) -> str|None:
     for old in dict.fromkeys(x for x in (recorded,LEGACY_TASK_NAME) if isinstance(x,str) and x):
         if old==new_name or not _task_is_ours(old,upd,run):
             continue
-        p=run(["schtasks","/Delete","/TN",old,"/F"],capture_output=True,text=True)
+        p=run([schtasks_exe(),"/Delete","/TN",old,"/F"],capture_output=True,text=True)
         done.append(f"removed old task {old}" if p.returncode==0 else f"could not remove old task {old}")
     return "; ".join(done) or None
 
-def register_updates(ad: Path, run=None):
+# ---------- update schedule ----------
+# The update check runs daily at 11:00 local time. Laptops are often off or asleep then, so every scheduler
+# also catches up: Task Scheduler with StartWhenAvailable and a logon trigger, systemd with Persistent=true,
+# launchd with RunAtLoad. The updater itself takes a lock, so overlapping runs are harmless.
+UPDATE_HOUR=11
+
+def _plain(v: str, what: str, limit: int=1024) -> str:
+    # Paths and the user name go into XML, unit files and plists: no control characters, bounded length.
+    v=str(v)
+    if not v or len(v)>limit or any(ord(c)<32 or ord(c)==127 or c in "  \x85" for c in v):
+        raise ValueError(f"{what} is empty, too long or holds a control character")
+    return v
+
+def _xml(v: str) -> str:
+    from xml.sax.saxutils import escape
+    return escape(v,{'"':"&quot;","'":"&apos;"})
+
+def windows_user() -> str|None:
+    dom,user=os.environ.get("USERDOMAIN",""),os.environ.get("USERNAME","")
+    if not user: return None
+    try:
+        return _plain(f"{dom}\\{user}" if dom else user,"user name",256)
+    except ValueError:
+        return None
+
+def windows_task_xml(py: str, upd: str, user: str|None, product: str) -> str:
+    """Task Scheduler definition: daily at 11:00 with up to 30 minutes random delay, at logon (10 minutes later,
+    the logon trigger has no random delay in the schema), as soon as possible after a missed start, only with a
+    network, at most one hour per run, and up to 3 restarts 30 minutes apart when the task fails to start.
+    Runs as the installing user without a stored password and with least privilege."""
+    py=_plain(py,"Python path",259); upd=_plain(upd,"updater path",1000)
+    uid=f"<UserId>{_xml(user)}</UserId>" if user else ""
+    logon=(f"<LogonTrigger><Enabled>true</Enabled>{uid}<Delay>PT10M</Delay></LogonTrigger>" if user else "")
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>{_xml(product)}: daily signed update check (scripts/updater.py)</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-01-01T{UPDATE_HOUR:02d}:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <RandomDelay>PT30M</RandomDelay>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+    </CalendarTrigger>
+    {logon}
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      {uid}
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure><Interval>PT30M</Interval><Count>3</Count></RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{_xml(py)}</Command>
+      <Arguments>{_xml(f'-I "{upd}"')}</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+def unit_slug(ad: Path) -> str:
+    # systemd unit and launchd label part: ASCII letters, digits and dashes only, from the brand name.
+    import re
+    s=re.sub(r"[^a-z0-9]+","-",read_product_name(ad).lower()).strip("-")[:40].strip("-")
+    return s or "nexaforge-securecode"
+
+def _systemd_quote(v: str) -> str:
+    # systemd splits ExecStart on spaces and honours "..." with C-style escapes; % starts a specifier.
+    return '"'+v.replace("\\","\\\\").replace('"','\\"').replace("%","%%")+'"'
+
+def systemd_units(py: str, upd: str, product: str) -> tuple[str,str]:
+    py=_plain(py,"Python path"); upd=_plain(upd,"updater path")
+    desc=product.replace("%","%%")
+    service=(f"[Unit]\nDescription={desc} signed update check\n\n"
+             f"[Service]\nType=oneshot\nExecStart={_systemd_quote(py)} -I {_systemd_quote(upd)}\n"
+             "TimeoutStartSec=1h\nNice=10\n")
+    timer=(f"[Unit]\nDescription={desc} daily signed update check\n\n"
+           f"[Timer]\nOnCalendar=*-*-* {UPDATE_HOUR:02d}:00:00\nRandomizedDelaySec=30min\nPersistent=true\n"
+           "OnStartupSec=10min\n\n[Install]\nWantedBy=timers.target\n")
+    return service,timer
+
+def launchd_plist(label: str, py: str, upd: str) -> bytes:
+    import plistlib
+    py=_plain(py,"Python path"); upd=_plain(upd,"updater path")
+    return plistlib.dumps({"Label":label,"ProgramArguments":[py,"-I",upd],"RunAtLoad":True,
+                           "StartCalendarInterval":{"Hour":UPDATE_HOUR,"Minute":0},"ProcessType":"Background",
+                           "LowPriorityIO":True})
+
+def schedule_paths(ad: Path) -> dict:
+    slug=unit_slug(ad)
+    if SYSTEM=="darwin":
+        label=f"eu.nexaforge.{slug}.update"
+        return {"kind":"launchd","label":label,"plist":HOME/"Library"/"LaunchAgents"/f"{label}.plist"}
+    base=Path(os.environ.get("XDG_CONFIG_HOME") or HOME/".config")/"systemd"/"user"
+    unit=f"{slug}-update"
+    return {"kind":"systemd","unit":unit,"service":base/f"{unit}.service","timer":base/f"{unit}.timer"}
+
+def _tool(name: str):
+    exe=shutil.which(name)
+    return exe if exe and os.path.isabs(exe) else None
+
+def register_unix_schedule(ad: Path, upd: str, run, install: bool) -> str:
+    cron=f"add to crontab: 0 {UPDATE_HOUR} * * * \"{sys.executable}\" -I \"{upd}\""
+    sp=schedule_paths(ad)
+    ours=[sp["plist"]] if sp["kind"]=="launchd" else [sp["service"],sp["timer"]]
+    # An update re-runs this installer without flags: a timer or agent we wrote before is refreshed, never dropped.
+    if not install and not any(p.exists() for p in ours):
+        flag=" (or re-run with --update-timer for a "+("launchd agent" if sp["kind"]=="launchd" else "systemd user timer")+" that catches up missed runs)"
+        return cron+flag
+    try:
+        if sp["kind"]=="launchd":
+            data=launchd_plist(sp["label"],sys.executable,upd)
+        else:
+            service,timer=systemd_units(sys.executable,upd,read_product_name(ad))
+    except ValueError as e:
+        return f"schedule skipped: {e}; {cron}"
+    if run is None:
+        import subprocess
+        run=subprocess.run
+    for p in ours:
+        if p.is_symlink(): return f"schedule skipped: {p} is a link; {cron}"
+    if sp["kind"]=="launchd":
+        sp["plist"].parent.mkdir(parents=True,exist_ok=True)
+        sp["plist"].write_bytes(data)
+        lc=_tool("launchctl")
+        if not lc: return f"launchd agent written to {sp['plist']} but launchctl was not found; {cron}"
+        dom=f"gui/{os.getuid()}"
+        run([lc,"bootout",f"{dom}/{sp['label']}"],capture_output=True,text=True)   # not loaded yet is fine
+        p=run([lc,"bootstrap",dom,str(sp["plist"])],capture_output=True,text=True)
+        if p.returncode!=0:
+            return f"launchd agent written but launchctl bootstrap failed: {(p.stderr or '').strip()[:200]}; {cron}"
+        return f"scheduled daily (launchd agent {sp['label']}: {UPDATE_HOUR}:00 and at login)"
+    sp["service"].parent.mkdir(parents=True,exist_ok=True)
+    sp["service"].write_text(service,encoding="utf-8")
+    sp["timer"].write_text(timer,encoding="utf-8")
+    sc=_tool("systemctl")
+    if not sc: return f"systemd user timer written to {sp['timer']} but systemctl was not found; {cron}"
+    for args in (["--user","daemon-reload"],["--user","enable","--now",f"{sp['unit']}.timer"]):
+        p=run([sc,*args],capture_output=True,text=True)
+        if p.returncode!=0:
+            return f"systemd user timer written but systemctl {' '.join(args)} failed: {(p.stderr or '').strip()[:200]}; {cron}"
+    return f"scheduled daily (systemd user timer {sp['unit']}.timer, Persistent=true)"
+
+def register_updates(ad: Path, run=None, timer: bool=False):
     # Daily signed auto-update, only when the security team configured a repo and a signing key.
     try:
         cfg=json.loads((ad/"config"/"update.json").read_text(encoding="utf-8-sig"))
@@ -321,27 +488,35 @@ def register_updates(ad: Path, run=None):
     if not cfg.get("repo") or "ssh-ed25519" not in signers:
         return "skipped: update repo or signing key not configured"
     upd=str(ad/"scripts"/"updater.py")
-    if SYSTEM=="windows":
-        pyw=Path(sys.executable).with_name("pythonw.exe")
-        py=str(pyw if pyw.exists() else Path(sys.executable))
-        tr=f'"{py}" -I "{upd}"'
-        if len(tr)>261: return "skipped: task command too long"
-        if run is None:
-            import subprocess
-            run=subprocess.run
-        name=update_task_name(ad)
+    if SYSTEM!="windows":
+        return register_unix_schedule(ad,upd,run,timer)
+    pyw=Path(sys.executable).with_name("pythonw.exe")
+    py=str(pyw if pyw.exists() else Path(sys.executable))
+    name=update_task_name(ad)
+    try:
+        xml=windows_task_xml(py,upd,windows_user(),read_product_name(ad))
+    except ValueError as e:
+        return f"skipped: {e}"
+    if run is None:
+        import subprocess
+        run=subprocess.run
+    import tempfile
+    tmpd=Path(tempfile.mkdtemp(prefix="nfsc-task-"))
+    try:
+        xf=tmpd/"task.xml"
+        xf.write_text(xml,encoding="utf-16")   # schtasks /XML expects UTF-16 with a byte order mark
         # /F replaces a task of the same name, so re-running the installer never adds a second one.
-        p=run(["schtasks","/Create","/F","/SC","DAILY","/ST","11:00","/TN",name,"/TR",tr],
-              capture_output=True,text=True)
-        if p.returncode!=0:
-            return f"schedule failed: {(p.stderr or '').strip()[:200]}"
-        old=retire_old_task(ad,name,upd,run)
-        try:
-            (ad/TASK_RECORD).write_text(json.dumps({"task_name":name,"updater":upd},ensure_ascii=False)+"\n",encoding="utf-8")
-        except OSError:
-            pass
-        return f"scheduled daily (Task Scheduler: {name})"+(f"; {old}" if old else "")
-    return f"add to crontab: 0 11 * * * {sys.executable} -I \"{upd}\""
+        p=run([schtasks_exe(),"/Create","/F","/TN",name,"/XML",str(xf)],capture_output=True,text=True)
+    finally:
+        shutil.rmtree(tmpd,ignore_errors=True)
+    if p.returncode!=0:
+        return f"schedule failed: {(p.stderr or '').strip()[:200]}"
+    old=retire_old_task(ad,name,upd,run)
+    try:
+        (ad/TASK_RECORD).write_text(json.dumps({"task_name":name,"updater":upd},ensure_ascii=False)+"\n",encoding="utf-8")
+    except OSError:
+        pass
+    return f"scheduled daily (Task Scheduler: {name})"+(f"; {old}" if old else "")
 
 def tool_status():
     return {x:bool(shutil.which(x)) for x in ["claude","python","git","semgrep","trivy","gitleaks","docker"]}
@@ -369,6 +544,10 @@ def main():
     ap.add_argument("--guard-mode",choices=GUARD_MODES,
                     help="owner (default for a new per-user install): force push, hard reset, public repo and publish ask "
                          "with the exact command; managed: they are denied. An existing policy is kept unless this is given.")
+    ap.add_argument("--update-timer",action="store_true",
+                    help="macOS and Linux: install a launchd agent or a systemd user timer for the daily signed update "
+                         "check (catches up missed runs) instead of only printing a crontab line. Windows always uses "
+                         "Task Scheduler.")
     args=ap.parse_args()
     cd=claude_dir(); ad=app_dir(); ad.mkdir(parents=True,exist_ok=True)
     if not args.verify_only:
@@ -390,7 +569,7 @@ def main():
         mode=install_guard_policy(ad,args.guard_mode)
         report["changes"].append({"guard_mode":mode})
         report["changes"].append({"settings":install_settings(ad,mode)})
-        report["changes"].append({"auto_update":register_updates(ad)})
+        report["changes"].append({"auto_update":register_updates(ad,timer=args.update_timer)})
 
     report["checks"]=verify(ad)
     report["success"]=all(report["checks"].values())

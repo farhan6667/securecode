@@ -5,8 +5,8 @@ Extract the zip, then paste this into your AI coding tool. Change the path to yo
 ```
 Install NexaForge SecureCode from C:\Tools\aisec. You have my permission to set it up globally for my
 user account.
-1. Run install-windows.ps1 (on macOS/Linux the matching install script) and then verify-global.py
-   from that folder. All checks must be true.
+1. Run install-windows.ps1 (on macOS/Linux the matching install script with --update-timer, so a
+   missed daily update check catches up) and then verify-global.py from that folder. All checks must be true.
 2. Install Semgrep, Trivy and Gitleaks if missing (Windows: winget --source winget for
    AquaSecurity.Trivy and Gitleaks.Gitleaks, pip install --user semgrep), and confirm each with --version.
 3. If you are not Claude Code, load AGENTS.md from that folder as your own global rules

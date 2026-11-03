@@ -1766,7 +1766,7 @@ def main():
     else:
         counts={s:sum(1 for f in findings if f["severity"]==s) for s in SEV}
     missing=[t for t,v in status.items() if not v]
-    print("=== ORG AI SECURE APPSEC GATE V6.2 ===")
+    print("=== ORG AI SECURE APPSEC GATE 7.0 ===")
     print(safe_text(f"Mode: {args.mode} Target: {target}"))
     for name,msg in errors.items():
         print(safe_text(f"ERROR: {name} did not complete: {msg}"))

@@ -59,8 +59,25 @@ It prints one line, such as `Acme SecureCode: updated to 6.3.0`, `already up to 
 ## Auto-update
 By default an install updates from the public repo `farhan6667/nexaforge-securecode` and accepts only
 releases signed with the NexaForge release key (the public key ships in the package). No GitHub login is
-needed. To stop it on Windows: `schtasks /Delete /TN "NexaForge SecureCode Update" /F` (or your brand
-name followed by ` Update`).
+needed.
+
+When it runs (7.0):
+
+| OS | Scheduler | Missed runs |
+|---|---|---|
+| Windows | Task Scheduler task `<product name> Update`, created from an XML definition: daily at 11:00 with up to 30 minutes random delay, and 10 minutes after you log on | runs as soon as possible after a missed start; needs a network; at most one hour per run; up to 3 restarts 30 minutes apart if the task fails to start |
+| Linux | with `install-global.py --update-timer`: a systemd user timer `<product>-update.timer` (daily 11:00, up to 30 minutes random delay, 10 minutes after the user manager starts) | `Persistent=true` runs a missed check at the next start |
+| macOS | with `install-global.py --update-timer`: a launchd agent `eu.nexaforge.<product>.update` (daily 11:00, and at login) | `RunAtLoad` checks at every login; a run missed while asleep runs on wake |
+
+Without `--update-timer`, Linux and macOS installs print a crontab line to add yourself (cron does not catch up
+missed runs). An update re-runs the installer without flags and refreshes a timer or agent it wrote before.
+Two runs never overlap (a lock file), and when GitHub's rate limit answers 403 or 429 the updater writes down
+when to try again, logs it and exits cleanly. `verify-global.py` shows the last check, its result and the next run.
+
+To stop it: Windows `schtasks /Delete /TN "NexaForge SecureCode Update" /F` (or your brand name followed by
+` Update`); Linux `systemctl --user disable --now nexaforge-securecode-update.timer` and delete the two unit
+files in `~/.config/systemd/user/`; macOS `launchctl bootout gui/$(id -u)/eu.nexaforge.nexaforge-securecode.update`
+and delete the plist in `~/Library/LaunchAgents/`.
 
 An organization that wants to decide its own releases can run its own fork instead:
 

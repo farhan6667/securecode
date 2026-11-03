@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, platform, json, re, shutil, subprocess, sys
+import os, platform, json, re, shutil, subprocess, sys, time
 from pathlib import Path
 home=Path.home()
 cd=Path(os.environ.get("CLAUDE_CONFIG_DIR",home/".claude"))
@@ -114,11 +114,66 @@ def guard_mode(app):
     except Exception as e:
         return {"mode":"unknown","why":f"could not load the installed guard ({type(e).__name__})"}
 
+def _installer():
+    import importlib.util
+    spec=importlib.util.spec_from_file_location("orginstall_sched",Path(__file__).resolve().parent/"install-global.py")
+    g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+    return g
+
+def update_status(app):
+    """Last update check (time, result) from <app>/update-state.json, written by the updater from 7.0 on, and the
+    next scheduled run where the scheduler can tell. Informational only, never a failed check."""
+    out={"last_check":None,"result":None,"next_run":None,"scheduler":None}
+    try:
+        f=Path(app)/"update-state.json"
+        if f.is_file() and not f.is_symlink() and f.stat().st_size<=4096:
+            st=json.loads(f.read_text(encoding="utf-8"))
+            if isinstance(st,dict):
+                out["last_check"]=str(st.get("last_check") or "")[:40] or None
+                out["result"]=str(st.get("result") or "")[:200] or None
+                if isinstance(st.get("backoff_until"),(int,float)):
+                    out["backoff_until"]=time.strftime("%Y-%m-%d %H:%M",time.localtime(st["backoff_until"]))
+        else:
+            out["result"]="no check recorded yet (the updater writes update-state.json from 7.0 on)"
+    except Exception:
+        out["result"]="update-state.json unreadable"
+    try:
+        g=_installer()
+        if platform.system()=="Windows":
+            name=g.update_task_name(app)
+            out["scheduler"]=f"Task Scheduler: {name}"
+            p=subprocess.run([g.schtasks_exe(),"/Query","/TN",name,"/FO","LIST","/V"],capture_output=True,text=True,
+                             timeout=30,encoding="utf-8",errors="replace")
+            if p.returncode!=0:
+                out["scheduler"]+=" (task not found)"
+            for line in p.stdout.splitlines():
+                if line.strip().lower().startswith("next run time:"):
+                    out["next_run"]=line.split(":",1)[1].strip()[:60]; break
+        else:
+            sp=g.schedule_paths(app)
+            if sp["kind"]=="launchd":
+                if sp["plist"].exists():
+                    out["scheduler"]=f"launchd agent {sp['label']}"
+                    out["next_run"]=f"daily at {g.UPDATE_HOUR}:00 and at login"
+            elif sp["timer"].exists():
+                out["scheduler"]=f"systemd user timer {sp['unit']}.timer"
+                sc=shutil.which("systemctl")
+                if sc:
+                    p=subprocess.run([sc,"--user","show",f"{sp['unit']}.timer","-p","NextElapseUSecRealtime","--value"],
+                                     capture_output=True,text=True,timeout=30,encoding="utf-8",errors="replace")
+                    out["next_run"]=(p.stdout.strip()[:60] or None) if p.returncode==0 else None
+            if not out["scheduler"]:
+                out["scheduler"]="none installed by us (crontab line, or re-run the installer with --update-timer)"
+    except Exception as e:
+        out["scheduler"]=out["scheduler"] or f"unknown ({type(e).__name__})"
+    return out
+
 engines=engine_health()
+updates=update_status(ad)
 product=product_name(ad)
 gm=guard_mode(ad)
 print(json.dumps({"product_name":product,"update_task":f"{product} Update","os":platform.platform(),"guard_mode":gm,"checks":checks,
-                  "tools":tools,"engines":engines,"warnings":warnings,"app_dir":str(ad)},indent=2))
+                  "tools":tools,"engines":engines,"updates":updates,"warnings":warnings,"app_dir":str(ad)},indent=2))
 summary=f"{product}: {'all checks passed' if all(checks.values()) else 'some checks FAILED'} (guard mode: {gm['mode']})"
 try:
     print(summary)

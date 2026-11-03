@@ -128,8 +128,9 @@ class FakeSchtasks:
         op, name = args[1], args[args.index("/TN") + 1]
         rc, out = 0, ""
         if op == "/Create":
-            tr = args[args.index("/TR") + 1]
-            self.tasks[name] = f"<Task><Actions><Exec><Arguments>{tr.replace(chr(34), '&quot;')}</Arguments></Exec></Actions></Task>"
+            # 7.0 creates the task from an XML definition file (UTF-16 with a byte order mark), read here the way
+            # schtasks does; the file is gone after the call, so it is read now.
+            self.tasks[name] = Path(args[args.index("/XML") + 1]).read_text(encoding="utf-16")
         elif op == "/Query":
             rc, out = (0, self.tasks[name]) if name in self.tasks else (1, "")
         elif op == "/Delete":
@@ -175,7 +176,9 @@ def test_legacy_task_is_removed_only_when_it_runs_our_updater(tmp_path, monkeypa
     # Someone else's task under the legacy name (another app folder) is left alone.
     app2 = update_ready_app(tmp_path / "second", "Acme SecureCode")
     foreign = FakeSchtasks({"NexaForge SecureCode Update": "<Task><Arguments>C:\\other\\updater.py</Arguments></Task>"})
-    G.register_updates(app2, run=foreign)
+    # The result is checked too: a long temp or venv path once made register_updates return "skipped" here
+    # (the old 261-character /TR limit), and the test then failed on the task list with no hint why.
+    assert G.register_updates(app2, run=foreign) == "scheduled daily (Task Scheduler: Acme SecureCode Update)"
     assert sorted(foreign.tasks) == ["Acme SecureCode Update", "NexaForge SecureCode Update"]
     assert not any(c[1] == "/Delete" for c in foreign.calls)
 

@@ -89,8 +89,10 @@ so every new rule, fix and scanner check reaches you without doing anything.
   release is refused, so even a stolen GitHub token cannot push bad code to your machine.
 - **Your settings stay.** Your own branding and your organization's findings file are never overwritten.
 - **No login needed** for the public repo. Every run is logged in `update.log`.
+- **Catches up.** A laptop that was off at check time checks as soon as it can (Task Scheduler on Windows; a
+  systemd timer or launchd agent with `install-global.py --update-timer` on Linux and macOS).
 - **Update now by hand:** `py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\updater.py"` prints one line,
-  such as `updated to 6.3.0` or `already up to date`.
+  such as `updated to 7.0.0` or `already up to date`.
 - **Turn it off** any time: [see how](ENTERPRISE_DEPLOYMENT.md#auto-update).
 
 ## It fixes OWASP Top 10 issues while you vibe code

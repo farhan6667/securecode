@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Org AI Secure AppSec Gate: signed auto-update from the organization's private GitHub repo.
 
-Runs daily from Task Scheduler (Windows) or cron. Steps:
+Runs daily from Task Scheduler (Windows), a systemd user timer or launchd agent (install-global.py --update-timer)
+or cron. Two runs never overlap (update.lock); a GitHub rate limit (403/429) is a logged back-off, not a failure;
+each run records its time and result in update-state.json for verify-global.py. Steps:
 1. Read config/update.json (repo, asset name, signer identity) from the installed app folder.
 2. Ask GitHub for the latest release using the developer's own `gh` login (or GH_TOKEN /
    GITHUB_TOKEN). No token is shipped with the package.
@@ -19,7 +21,71 @@ NAMESPACE = "org-appsec-update"
 APP = Path(__file__).resolve().parent.parent
 LOG = APP / "update.log"
 LOCK = APP / "update.lock"
+STATE = APP / "update-state.json"   # last check time and result, and a rate-limit back-off; read by verify-global.py
 MAX_ZIP = 50 * 1024 * 1024
+MAX_BACKOFF = 24 * 3600             # a reset time further away than this is not trusted
+
+
+class RateLimited(Exception):
+    """GitHub refused the request because of its rate limit; `until` is when to try again (epoch seconds)."""
+
+    def __init__(self, until: float):
+        super().__init__(f"GitHub rate limit, retry after {time.strftime('%Y-%m-%d %H:%M', time.localtime(until))}")
+        self.until = until
+
+
+def rate_limit_until(e, now: float = None) -> float | None:
+    """The retry time for a GitHub 403 or 429 that is a rate limit, else None (a plain 403 stays an error)."""
+    now = time.time() if now is None else now
+    if not isinstance(e, urllib.error.HTTPError) or e.code not in (403, 429):
+        return None
+    h = e.headers or {}
+    retry, remaining, reset = h.get("Retry-After"), h.get("X-RateLimit-Remaining"), h.get("X-RateLimit-Reset")
+    until = None
+    if retry and str(retry).strip().isdigit():
+        until = now + int(str(retry).strip())
+    elif remaining is not None and str(remaining).strip() == "0" and reset and str(reset).strip().isdigit():
+        until = float(str(reset).strip())
+    elif e.code == 429 or (remaining is not None and str(remaining).strip() == "0"):
+        until = now + 3600
+    if until is None:
+        return None
+    return min(max(until, now + 60), now + MAX_BACKOFF)
+
+
+def read_state(app: Path = None) -> dict:
+    try:
+        f = (app or APP) / "update-state.json"
+        if f.is_symlink() or f.stat().st_size > 4096:
+            return {}
+        d = json.loads(f.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(result: str, ok: bool, backoff_until: float | None = None, app: Path = None):
+    st = {"last_check": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "result": str(result)[:200], "ok": bool(ok)}
+    if backoff_until:
+        st["backoff_until"] = int(backoff_until)
+    f = (app or APP) / "update-state.json"
+    try:
+        if f.is_symlink():
+            f.unlink()
+        tmp = f.with_name(f.name + ".tmp")
+        tmp.write_text(json.dumps(st) + "\n", encoding="utf-8")
+        os.replace(tmp, f)
+    except OSError:
+        pass
+
+
+def backoff_active(now: float = None) -> float | None:
+    """A stored back-off that is still in the future (and not absurdly far, the file is in a user folder)."""
+    now = time.time() if now is None else now
+    until = read_state().get("backoff_until")
+    if isinstance(until, (int, float)) and now < until <= now + MAX_BACKOFF:
+        return float(until)
+    return None
 
 
 DEFAULT_PRODUCT = "NexaForge SecureCode"
@@ -90,6 +156,8 @@ def _ver(t) -> str:
 def result_line(status: str = None, error: BaseException = None) -> str:
     """One plain line for a person running the updater by hand. Return codes are unchanged."""
     if error is not None:
+        if isinstance(error, RateLimited):
+            return f"GitHub rate limit reached, next try after {time.strftime('%H:%M', time.localtime(error.until))}, nothing installed"
         if isinstance(error, urllib.error.HTTPError):
             return f"GitHub answered HTTP {error.code}, nothing installed"
         if isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError)):
@@ -109,6 +177,7 @@ def result_line(status: str = None, error: BaseException = None) -> str:
         "release-missing-signed-asset": "latest release has no signed package, nothing installed",
         "installer-not-found": "signed package has no installer, nothing installed",
         "VERSION-MISMATCH": "signed package version does not match the release tag, nothing installed",
+        "download-incomplete": "download was incomplete (size differs from the release), nothing installed; the next run tries again",
     }.get(status, f"not updated: {status}")
 
 
@@ -203,6 +272,25 @@ def download(url: str, tok: str, dest: Path):
             if total > MAX_ZIP:
                 raise RuntimeError("download larger than the 50 MB limit")
             f.write(chunk)
+        # A connection that drops mid-way can end the read early without an error: compare with the announced length.
+        length = (getattr(r, "headers", None) or {}).get("Content-Length")
+        if length and str(length).isdigit() and int(length) != total:
+            raise IncompleteDownload(f"got {total} of {length} bytes")
+
+
+class IncompleteDownload(RuntimeError):
+    pass
+
+
+def size_matches(path: Path, expected) -> bool:
+    """The asset size GitHub lists for the release. A missing or odd size is not judged here (the signature
+    check still covers the content); a listed size must match exactly."""
+    if isinstance(expected, bool) or not isinstance(expected, int) or expected <= 0:
+        return True
+    try:
+        return path.stat().st_size == expected
+    except OSError:
+        return False
 
 
 def signers_ok(signers: Path, identity: str) -> bool:
@@ -259,12 +347,20 @@ def check_and_update(cfg: dict, tok: str | None, *, fetch=None, workdir: Path | 
     repo, asset, identity = cfg.get("repo"), cfg.get("asset"), cfg.get("signer_identity")
     if not (repo and asset and identity and re.fullmatch(r"[\w.-]+/[\w.-]+", repo)):
         return "not-configured"
-    if fetch is None:
-        # tok may be None: fine for a public repo; a private repo then answers 404 and the check fails visibly.
-        with api(f"https://api.github.com/repos/{repo}/releases/latest", tok) as r:
-            rel = json.load(r)
-    else:
-        rel = fetch("release", None, None)
+    try:
+        if fetch is None:
+            # tok may be None: fine for a public repo; a private repo then answers 404 and the check fails visibly.
+            with api(f"https://api.github.com/repos/{repo}/releases/latest", tok) as r:
+                rel = json.load(r)
+        else:
+            rel = fetch("release", None, None)
+    except urllib.error.HTTPError as e:
+        until = rate_limit_until(e)
+        if until:
+            raise RateLimited(until) from None
+        raise
+    if not isinstance(rel, dict):
+        return "bad-release-tag"
     LAST_RELEASE["tag"] = str(rel.get("tag_name", ""))[:40]   # only for the printed one-line result
     new = parse_version(rel.get("tag_name", ""))
     cur = installed_version()
@@ -274,15 +370,29 @@ def check_and_update(cfg: dict, tok: str | None, *, fetch=None, workdir: Path | 
         return "installed-version-unknown"   # never guess: an unknown baseline would accept any old release
     if new <= cur:
         return "up-to-date"
-    assets = {a.get("name"): a.get("url") for a in rel.get("assets", [])}
+    listed = [a for a in rel.get("assets", []) if isinstance(a, dict)] if isinstance(rel.get("assets"), list) else []
+    assets = {a.get("name"): a.get("url") for a in listed}
+    sizes = {a.get("name"): a.get("size") for a in listed}
     if asset not in assets or asset + ".sig" not in assets:
         return "release-missing-signed-asset"
     tmp = Path(workdir or tempfile.mkdtemp(prefix="orgappsec-upd-"))
     tmp.mkdir(parents=True, exist_ok=True)
     try:
         zp, sp = tmp / asset, tmp / (asset + ".sig")
-        for url, dest in ((assets[asset], zp), (assets[asset + ".sig"], sp)):
-            (fetch or (lambda k, u, d: download(u, tok, d)))("asset", url, dest)
+        for name, dest in ((asset, zp), (asset + ".sig", sp)):
+            try:
+                (fetch or (lambda k, u, d: download(u, tok, d)))("asset", assets[name], dest)
+            except IncompleteDownload as e:
+                log(f"download of {name} incomplete: {e}")
+                return "download-incomplete"
+            except urllib.error.HTTPError as e:
+                until = rate_limit_until(e)
+                if until:
+                    raise RateLimited(until) from None
+                raise
+            if not size_matches(dest, sizes.get(name)):
+                log(f"download of {name} incomplete: size differs from the release listing")
+                return "download-incomplete"
         if not verify_signature(zp, sp, APP / "config" / "allowed_signers", identity):
             return "SIGNATURE-INVALID"
         ex = tmp / "x"; ex.mkdir()
@@ -333,13 +443,29 @@ def main() -> int:
         say("cannot take the update lock, nothing installed")
         return 1
     try:
+        until = backoff_active()
+        if until:
+            # GitHub said to wait: do not spend more of the rate limit until then. The state keeps the back-off.
+            line = f"GitHub rate limit back-off until {time.strftime('%Y-%m-%d %H:%M', time.localtime(until))}, skipped"
+            log(f"update check skipped: {line}")
+            say(line)
+            return 0
         cfg = json.loads((APP / "config" / "update.json").read_text(encoding="utf-8-sig"))
         status = check_and_update(cfg, token())
         log(f"update check: {status}")
+        ok = status in ("updated", "up-to-date", "not-configured")
+        write_state(status, ok)
         say(result_line(status))
-        return 0 if status in ("updated", "up-to-date", "not-configured") else 1
+        return 0 if ok else 1
+    except RateLimited as e:
+        # Not a failure of this machine: log it, remember when to try again, exit cleanly.
+        log(f"update check deferred: {e}")
+        write_state("rate-limited", True, e.until)
+        say(result_line(error=e))
+        return 0
     except Exception as e:
         log(f"update check failed: {type(e).__name__}: {e}")
+        write_state(result_line(error=e), False)
         say(result_line(error=e))
         return 1
     finally:
