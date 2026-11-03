@@ -515,11 +515,130 @@ def test_codex_hook_process_end_to_end(tmp_path):
     def run(raw):
         return subprocess.run([sys.executable, "-I", str(script)], input=raw, text=True, capture_output=True, env=env,
                               timeout=30, encoding="utf-8")
-    assert run(json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(project)})).returncode == 0
+    p = run(json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(project)}))
+    assert p.returncode == 0 and p.stdout.strip() == ""
     p = run(json.dumps({"tool_name": "Bash", "tool_input": {"command": "git reset --hard"}, "cwd": str(project)}))
-    assert p.returncode == 2 and "Blocked" in p.stderr
-    p = run("{")
-    assert p.returncode == 2 and "Traceback" not in p.stderr
+    assert _codex_verdict(p) == "deny" and p.returncode == 0 and "Blocked" in p.stderr       # V7L-02: JSON deny, exit 0
+    assert "Blocked" in json.loads(p.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    for raw in ("{", "[]", "x" * (CODEX.MAX_INPUT + 5)):
+        p = run(raw)
+        assert _codex_verdict(p) == "deny" and "Traceback" not in p.stderr
+
+
+# ---------------------------------------------------------------- V7L-02: template lines in the agents' real shells
+
+def _plain_python():
+    """sys.executable as a Windows hook line can start with it: forward slashes, and the 8.3 short form when the path has
+    a space (a quoted first word is a parse error in PowerShell, and & is an error in cmd)."""
+    p = sys.executable
+    if os.name == "nt" and " " in p:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(p, buf, 1024):
+            p = buf.value
+    return None if " " in p else Path(p).as_posix()
+
+
+def _hook_shells():
+    """Every shell the agents may run a hook line in. Codex (codex-rs/core/src/session/mod.rs build_hooks_config) uses the
+    session shell: PowerShell '-NoProfile -Command <line>' (shell.rs derive_exec_args), cmd '/c' with the line passed raw
+    in quotes (command_runner.rs build_command), or bash '-c'. Antigravity does not document its shell, so all of them."""
+    out = {}
+    if os.name == "nt":
+        for n in ("pwsh", "powershell"):
+            exe = shutil.which(n)
+            if exe:
+                out[n] = lambda c, exe=exe: [exe, "-NoProfile", "-Command", c]
+        comspec = os.environ.get("COMSPEC") or "cmd.exe"
+        out["cmd"] = lambda c: f'"{comspec}" /c "{c}"'       # a string, so Python does not re-quote it (Rust raw_arg)
+    else:
+        for n in ("bash", "sh"):
+            exe = shutil.which(n)
+            if exe:
+                out[n] = lambda c, exe=exe: [exe, "-c", c]
+    return out
+
+
+def _codex_verdict(p):
+    """What Codex 0.160 does with a PreToolUse result (codex-rs/hooks/src/events/pre_tool_use.rs): exit 0 with a JSON
+    permissionDecision deny and a reason blocks, exit 2 with a reason on stderr blocks, any other exit code is a failed
+    hook and THE TOOL RUNS."""
+    if p.returncode == 0:
+        if not p.stdout.strip():
+            return "allow"
+        try:
+            h = json.loads(p.stdout)["hookSpecificOutput"]
+        except (ValueError, KeyError, TypeError):
+            return "failed"
+        return "deny" if h.get("permissionDecision") == "deny" and str(h.get("permissionDecisionReason", "")).strip() else "allow"
+    if p.returncode == 2 and p.stderr.strip():
+        return "deny"
+    return "failed"
+
+
+def _fill(line, app):
+    return line.replace("<PYTHON>", _plain_python()).replace("<APP>", app.as_posix())
+
+
+def _runtime_with_space(tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    app = make_runtime(tmp_path / "app dir", None)          # the script path in the line has a space and is quoted
+    for f in SCRIPTS.glob("*.py"):                            # the Stop line runs stop_gate.py and what it imports
+        if not (app / "scripts" / f.name).exists():
+            shutil.copy2(f, app / "scripts" / f.name)
+    env, _ = hook_env(tmp_path, project)
+    return project, app, env
+
+
+@pytest.mark.skipif(_plain_python() is None, reason="no space-free path to this Python")
+def test_codex_template_lines_really_block_in_every_shell(tmp_path):
+    """V7L-02: Codex on Windows runs the hook line in the session shell. The old line ('"<PYTHON>" -I ...') is a parse
+    error in PowerShell, and even a line that runs there turns the adapter's exit 2 into exit 1 (pwsh -Command), which
+    Codex treats as a failed hook, so the tool ran. The Windows line (commandWindows) and the adapter's answer (exit 0 +
+    JSON deny) must block in PowerShell, Windows PowerShell and cmd."""
+    shells = _hook_shells()
+    if not shells:
+        pytest.skip("no shell found")
+    project, app, env = _runtime_with_space(tmp_path)
+    tpl = json.loads((ROOT / "templates" / "codex" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    pick = (lambda h: h.get("commandWindows", h["command"])) if os.name == "nt" else (lambda h: h["command"])
+    pre = _fill(pick(tpl["PreToolUse"][0]["hooks"][0]), app)
+    stop = _fill(pick(tpl["Stop"][0]["hooks"][0]), app)
+    ev = lambda c: json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": c},  # noqa: E731
+                               "cwd": str(project)})
+    for name, wrap in shells.items():
+        run = lambda line, raw: subprocess.run(wrap(line), input=raw, text=True, capture_output=True, env=env,  # noqa: E731
+                                               cwd=project, timeout=60, encoding="utf-8")
+        p = run(pre, ev("git reset --hard"))
+        assert _codex_verdict(p) == "deny", (name, p.returncode, p.stdout[-300:], p.stderr[-300:])
+        p = run(pre, ev("git status"))
+        assert _codex_verdict(p) == "allow", (name, p.returncode, p.stdout[-300:], p.stderr[-300:])
+        p = run(pre, "{")                                    # a broken input is still a deny, never a failed hook
+        assert _codex_verdict(p) == "deny", (name, p.returncode, p.stdout[-300:], p.stderr[-300:])
+        p = run(stop, json.dumps({"hook_event_name": "Stop", "stop_hook_active": True, "cwd": str(project)}))
+        assert p.returncode == 0 and "ParserError" not in p.stderr and "unexpected" not in p.stderr, (name, p.stderr[-300:])
+
+
+@pytest.mark.skipif(_plain_python() is None, reason="no space-free path to this Python")
+def test_antigravity_template_line_really_blocks_in_every_shell(tmp_path):
+    """V7L-02: Antigravity does not document the shell it runs hooks in. The Windows template line must start Python
+    in PowerShell, Windows PowerShell and cmd alike, and the deny comes back as JSON with exit 0."""
+    shells = _hook_shells()
+    if not shells:
+        pytest.skip("no shell found")
+    project, app, env = _runtime_with_space(tmp_path)
+    name = "hooks.windows.json" if os.name == "nt" else "hooks.json"
+    tpl = json.loads((ROOT / "templates" / "antigravity" / name).read_text(encoding="utf-8"))
+    line = _fill(next(iter(tpl.values()))["PreToolUse"][0]["hooks"][0]["command"], app)
+    a = lambda c: json.dumps({"workspacePaths": [str(project)], "toolCall": {"name": "run_command", "args": {"CommandLine": c}}})  # noqa: E731
+    for sh, wrap in shells.items():
+        run = lambda raw: subprocess.run(wrap(line), input=raw, text=True, capture_output=True, env=env, cwd=project,  # noqa: E731
+                                         timeout=60, encoding="utf-8")
+        p = run(a("cat .env"))
+        assert p.returncode == 0 and json.loads(p.stdout)["decision"] == "deny", (sh, p.returncode, p.stderr[-300:])
+        p = run(a("ls"))
+        assert p.returncode == 0 and json.loads(p.stdout)["decision"] == "allow", (sh, p.returncode, p.stderr[-300:])
 
 
 # ---------------------------------------------------------------- Gemini CLI and Antigravity adapters (S1)

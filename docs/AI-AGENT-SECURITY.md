@@ -71,6 +71,12 @@ is in the block at the end of this section.
 - **Codex**: copy `AGENTS.md` to `~/.codex/AGENTS.md`, merge `templates/codex/config.toml` into
   `~/.codex/config.toml`, copy `templates/codex/rules/org.rules` to `~/.codex/rules/`. Guard and stop hooks:
   `install-global.py --agent codex`, then trust the hooks in `/hooks` (Codex skips untrusted hooks; managed `requirements.toml` hooks are trusted by policy).
+  On Windows Codex uses `commandWindows` and runs it in the session shell (PowerShell, cmd or bash), so that line
+  starts with an unquoted `<PYTHON>` that has no spaces: a quoted first word is a parse error in PowerShell and
+  `&` is an error in cmd. The installer writes the 8.3 short path of Python there, and refuses the adapter with a
+  message when Windows gives no space-free short path (then install Python to a folder without spaces). `pwsh -Command` also turns exit 2 into 1, which Codex counts as
+  a failed hook and then runs the tool, so the adapter answers a deny with exit 0 and Codex's JSON
+  `permissionDecision: "deny"` (finding V7L-02, checked against the Codex source, not yet in a live Codex run).
   Codex parses a hook "ask" but does not support it yet and would run the tool, so the adapter turns every
   ask into a deny with the reason; the developer runs such a command themselves.
 - **Gemini CLI**: copy `AGENTS.md` to `~/.gemini/AGENTS.md` and merge `templates/gemini/settings.json`
@@ -86,12 +92,15 @@ is in the block at the end of this section.
   tool (https://geminicli.com/docs/hooks/reference/). Gemini CLI lets a tool run when a hook exits with any code
   other than 0 or 2 or prints text that is not JSON, so the adapter only exits 0 (allow) or 2 (deny) and denies
   on every error. There is no "ask" decision, so an ask becomes a deny with the reason.
-- Guard hooks for Antigravity: `install-global.py --agent antigravity` (writes `~/.gemini/config/hooks.json`;
-  for one workspace only, `.agents/hooks.json` is manual), and check it with `/hooks`. It runs
+- Guard hooks for Antigravity: `install-global.py --agent antigravity` (writes `~/.gemini/config/hooks.json`,
+  from `templates/antigravity/hooks.windows.json` with the 8.3 short path of Python on Windows; for one
+  workspace only, `.agents/hooks.json` is manual), and check it with `/hooks`. It runs
   `scripts/adapters/antigravity_hook.py` as a `PreToolUse` hook (https://antigravity.google/docs/hooks/). Asks
   are sent as `force_ask`, so a cached "Always Allow" cannot skip them. The docs describe only the JSON decision,
   not exit codes or timeouts, so the adapter always prints an explicit decision; whether Antigravity blocks a
-  call when the hook itself crashes or times out is untested. Details: `templates/gemini/README.md`.
+  call when the hook itself crashes or times out is untested. The docs do not name the shell either, so the
+  Windows line starts with an unquoted, space-free `<PYTHON>`, which PowerShell, Windows PowerShell and cmd all
+  run (tested in those shells, not yet in a live Antigravity session). Details: `templates/gemini/README.md`.
 
 <details>
 <summary>Install the guard hooks by hand instead</summary>
