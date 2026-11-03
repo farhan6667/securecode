@@ -1,4 +1,4 @@
-<h1 align="center"><img src="docs/img/banner.webp" width="100%" alt="NexaForge SecureCode: a gold shield over a laptop, with panels for what's inside (secure-by-default rules, common pentest findings, security knowledge library, signed auto-updates), the AI agents it works with (Claude Code, Cursor, Codex), the secure coding flow and the outcome"></h1>
+<h1 align="center"><img src="docs/img/securecode-logo.webp" width="440" alt="SecureCode logo: a gold and blue shield with a code symbol and an AI chip, above the words SecureCode, Virtual Pentester for AI Coding Agents"></h1>
 
 <p align="center">
   <a href="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml"><img src="https://github.com/farhan6667/nexaforge-securecode/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
@@ -12,6 +12,8 @@ write secure code, finds and fixes security holes while you work, and keeps the 
 Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity (rules, gate and agent guard in all five; the
 full hooks in Claude Code, guard adapters for the other four). Free and open source (MIT), for anyone who builds web apps,
 APIs or Android apps with AI.
+
+<p align="center"><img src="docs/img/securecode-overview.webp" width="100%" alt="NexaForge SecureCode overview: a robot coding on a laptop between two panels. Left, what it does: AI coding agent integration (Claude Code, Cursor, Codex, Gemini), multiple languages and frameworks, secure coding rules, continuous updates. Right, security coverage: OWASP Top 10, CWE Top 25, OWASP API Top 10, IDOR and access control, injection, XSS, secrets and supply chain, legacy backdoors and webshells. Below, the workflow from AI coding to security check, auto fix and validation, and the supported languages: PHP, Laravel, Java, Spring, JavaScript, TypeScript, Node.js, Python, C#, .NET and Go"></p>
 
 <p align="center">
   <a href="#whats-new-in-70">What's new</a> ·
