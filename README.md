@@ -10,9 +10,11 @@
 **NexaForge SecureCode is a virtual pentester that sits next to every developer.** It makes AI coding agents
 write secure code, finds and fixes security holes while you work, and keeps the agent away from your secrets.
 Works with Claude Code, Cursor, Codex, Gemini CLI and Antigravity (rules and gate in all five; the full hooks in
-Claude Code, guard adapters for Cursor and Codex). Free and open source (MIT), for anyone who builds web apps, APIs or Android apps with AI.
+Claude Code, guard adapters for Cursor and Codex). Free and open source (MIT), for anyone who builds web apps,
+APIs or Android apps with AI.
 
 <p align="center">
+  <a href="#whats-new-in-70">What's new</a> ·
   <a href="#install-with-one-prompt">Install</a> ·
   <a href="#what-you-get">What you get</a> ·
   <a href="#how-a-review-works">How a review works</a> ·
@@ -20,6 +22,20 @@ Claude Code, guard adapters for Cursor and Codex). Free and open source (MIT), f
   <a href="#frequently-asked-questions">FAQ</a> ·
   <a href="#contribute">Contribute</a>
 </p>
+
+## What's new in 7.0
+
+- **A guard that allows what is clearly safe and asks about the rest.** Everyday commands inside your project run
+  without a prompt (1 of 256 everyday commands asked in our test); anything unusual shows you the exact command
+  first. Secrets and the agent's own settings stay off limits. Cursor and Codex get guard adapters too.
+- **More scanners, picked by language:** osv-scanner, Bandit, pip-audit, gosec, govulncheck, ESLint security,
+  Dependency-Check and SpotBugs, installed pinned and hash-checked with one setup command.
+- **New rules and labs:** Java and Spring Boot, a legacy audit for planted webshells, database and default-password
+  checks. Lab scores: Laravel 17/18, Spring 20/20, legacy 17/17, web 22/22, no clean file flagged.
+- **Automated pentest flow:** a passive ZAP scan of your own app, a readable report, and a draft fix pull request.
+- **Gemini CLI and Antigravity** get the rules and the gate.
+- **Updates that catch up:** a laptop that was off at check time updates as soon as it can, and 6.x installs move
+  to 7.0 by themselves. Details in [RELEASE-NOTES-V7.0.md](RELEASE-NOTES-V7.0.md).
 
 ## Pass the pentest the first time
 

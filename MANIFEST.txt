@@ -1,6 +1,6 @@
-NexaForge SecureCode (Org AI Secure AppSec Gate) V6.2
-=====================================================
-Version: 6.2.2
+NexaForge SecureCode (Org AI Secure AppSec Gate) 7.0
+====================================================
+Version: 7.0.0
 
 Code security (unchanged core, fixed)
 - Global Claude Code skill (org-appsec-security), /security-gate and /sec-review commands
@@ -39,11 +39,13 @@ Added after review (V6.2 final)
 - Deep source review modes: "Run Security Test", "Run Advisory QA" (/advisory-qa); docs/SOURCE-CODE-REVIEW.md
 - docs/COMMON-FINDINGS.md (common pentest findings); library_scan and config_scan rules
 - scripts/stop_gate.py (Stop hook), scripts/updater.py (signed auto-update), scripts/release/make_release.py
-- scripts/safe_git.py (7.0): git for the stop gate and the scanners without the repo's fsmonitor, hooks or drivers
-- scripts/agent_guard.py (7.0): positive model; tests/test_guard_positive_model.py and tests/test_fuzz_guard.py
 - install-managed.py (organization-enforced install), SECURITY-CONTEXT.md, docs/THIRD-PARTY-REVIEW.md
 
 7.0 guard
+- scripts/agent_guard.py: positive model (normalizer, known everyday commands, paths resolved); every tool goes
+  through it; tests/test_guard_positive_model.py and tests/test_fuzz_guard.py
+- scripts/safe_git.py: git for the stop gate, the scanners and the engines without the repo's fsmonitor, hooks or
+  drivers
 - config/guard-policy.json (written by the installers, not shipped): owner mode asks with the literal command
   for force push, hard reset, force branch delete, public repo or gist and package publish; managed mode
   denies them; missing or malformed policy means managed. Asks are logged to .security/guard-audit.jsonl.
@@ -81,3 +83,15 @@ Added after review (V6.2 final)
 - templates/gemini/: Gemini CLI settings and GEMINI.md, plus Antigravity notes (rules and gate; no hooks yet)
 - tests/test_v7_integration_fixes.py: suppression expiry, unreadable scanner output, hidden characters,
   staging targets, SQL_CONCAT on bound parameters
+
+7.0 per-language engines
+- scripts/securecode.py setup and scripts/engines/: osv-scanner, Bandit, pip-audit, gosec, govulncheck, ESLint
+  security, Retire.js, Dependency-Check, SpotBugs + Find Security Bugs, npm audit; Security Code Scan and CodeQL
+  manual. Versions and hashes in scripts/engines/engines.lock.json
+
+7.0 update mechanism and CI
+- install-global.py: Task Scheduler task from an XML definition (catch-up, logon trigger, network, time limit,
+  restart on failure); --update-timer for a systemd user timer (Persistent=true) or a launchd agent (RunAtLoad)
+- scripts/updater.py: rate-limit back-off, incomplete download check, update-state.json for verify-global.py
+- scripts/install-ci-scanners.ps1 (Windows twin of install-ci-scanners.sh) and scripts/ci/check_skips.py with
+  tests/skip-allowlist.json: the CI test job installs the pinned scanners and fails on unexpected skips
