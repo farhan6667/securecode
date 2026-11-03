@@ -1299,6 +1299,20 @@ def _engines():
             sys.modules.pop("nfsc_engines",None); _ENGINES.append(None)
     return _ENGINES[0]
 
+_MCP=[]
+def _mcp_scan():
+    """scripts/mcp_scan.py, loaded by path (the gate runs with -I). None if missing or broken."""
+    if not _MCP:
+        try:
+            import importlib.util
+            here=Path(__file__).resolve().parent
+            if str(here) not in sys.path: sys.path.insert(0,str(here))
+            spec=importlib.util.spec_from_file_location("nfsc_mcp_scan",here/"mcp_scan.py")
+            mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); _MCP.append(mod)
+        except Exception:
+            _MCP.append(None)
+    return _MCP[0]
+
 # cmd.exe re-parses the arguments of a .bat or .cmd file (the BatBadBut class); such calls are refused when an
 # argument contains a character cmd.exe would interpret.
 CMD_META=re.compile(r'["&|<>^%!\r\n]')
@@ -1970,6 +1984,15 @@ def main():
                 ok,msg=False,f"report could not be read ({type(e).__name__}); its findings are missing"
             if ok is None: continue
             notes.append(f"{name}: {msg}")
+        # MCP launch configs in the project (7.0): read only, never starts a server, never reads user-level files.
+        mcp=_mcp_scan()
+        if mcp is None:
+            notes.append("mcp-scan not loaded (scripts/mcp_scan.py missing or broken); MCP configs were not checked")
+        else:
+            try:
+                mf,mn=mcp.gate_findings(root); findings+=mf; notes+=mn
+            except Exception as e:
+                notes.append(f"mcp-scan stopped ({type(e).__name__}); its findings are missing")
         # Per-language engines (osv-scanner, Bandit, pip-audit, gosec, govulncheck, npm audit, ESLint security,
         # Dependency-Check, SpotBugs + FindSecBugs, Security Code Scan, CodeQL): run when installed and relevant to
         # the project's languages. Missing ones are NOTE lines, never a block, in full and ci alike.

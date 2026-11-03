@@ -76,6 +76,7 @@ def main() -> int:
     G.put_hook(hooks, "PreToolUse", ".*", cmd("agent_guard.py"), "org-ai-agent-guard", 20)   # every tool (7.0)
     G.put_hook(hooks, "PostToolUse", "Edit|Write|MultiEdit", cmd("global_hook.py"), "org-ai-appsec-v5", 120)
     G.put_hook(hooks, "PostToolUse", "Read|WebFetch|mcp__.*", cmd("injection_watch.py"), "org-ai-injection-watch", 20)
+    G.put_hook(hooks, "PostToolUse", G.SHIELD_MATCHER, cmd("secret_shield.py"), "org-ai-secret-shield", 20)
     G.put_hook(hooks, "Stop", "", cmd("stop_gate.py"), "org-ai-stop-gate", 90)
     data = G.merge_preserving_list(data, json.loads((PKG / "config" / "agent-permissions.json").read_text(encoding="utf-8")))
     data = G.align_permissions(data, "managed")

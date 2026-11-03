@@ -203,6 +203,9 @@ def put_hook(hooks: dict, event: str, matcher: str, cmd: str, marker: str, timeo
     filtered.append({"matcher":matcher,"hooks":[{"type":"command","command":cmd,"timeout":timeout,"description":marker}]})
     hooks[event]=filtered
 
+# Tools whose output can carry a secret into the model: shell output, file reads, search hits, web pages, MCP.
+SHIELD_MATCHER="Bash|BashOutput|PowerShell|Read|Grep|WebFetch|mcp__.*"
+
 GUARD_MODES=("owner","managed")
 POLICY_NAME="guard-policy.json"
 # Claude Code permission rules that deny what owner mode turns into an "ask" (deny beats every hook "ask",
@@ -266,6 +269,8 @@ def install_settings(ad: Path, mode: str="managed"):
     put_hook(hooks,"PreToolUse",".*",
              hook_command(ad,"agent_guard.py"),"org-ai-agent-guard",20)
     put_hook(hooks,"PostToolUse","Read|WebFetch|mcp__.*",hook_command(ad,"injection_watch.py"),"org-ai-injection-watch",20)
+    # 7.0 secret shield: replaces secret values in tool output before the model sees them (updatedToolOutput).
+    put_hook(hooks,"PostToolUse",SHIELD_MATCHER,hook_command(ad,"secret_shield.py"),"org-ai-secret-shield",20)
     put_hook(hooks,"Stop","",hook_command(ad,"stop_gate.py"),"org-ai-stop-gate",90)
     perms_file=PKG/"config"/"agent-permissions.json"
     if perms_file.exists():
