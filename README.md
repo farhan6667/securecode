@@ -60,8 +60,18 @@ The full check uses Semgrep, Trivy and Gitleaks. Windows: `winget install --id A
 macOS: `brew install semgrep trivy gitleaks`. Restart the AI tool afterwards.
 </details>
 
-Updates install by themselves once a day, and only releases signed with the NexaForge key.
-[How to turn that off](ENTERPRISE_DEPLOYMENT.md#auto-update).
+## Install once, it updates itself
+
+You never reinstall. Once a day a small task checks this repo for a newer release and installs it by itself,
+so every new rule, fix and scanner check reaches you without doing anything.
+
+- **Only signed releases.** Each release is signed with the NexaForge key. A tampered, unsigned or older
+  release is refused, so even a stolen GitHub token cannot push bad code to your machine.
+- **Your settings stay.** Your own branding and your organization's findings file are never overwritten.
+- **No login needed** for the public repo. Every run is logged in `update.log`.
+- **Update now by hand:** `py -I "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\updater.py"` prints one line,
+  such as `updated to 6.3.0` or `already up to date`.
+- **Turn it off** any time: [see how](ENTERPRISE_DEPLOYMENT.md#auto-update).
 
 ## It fixes OWASP Top 10 issues while you vibe code
 
@@ -120,6 +130,40 @@ plainly under [Honest limits](#honest-limits).
 
 The two trigger phrases are Roman Urdu ("run a security test", "do an advisory QA"). They work as written in any
 language you chat in, and `/security-gate` and `/advisory-qa` do the same.
+
+### Everything it does for you
+
+**While the agent works**
+- Stops it from reading `.env` files, private keys and credentials, even through tricks like renamed paths,
+  links or encoded names.
+- Stops it from changing its own settings, hooks or rules, so a malicious file cannot switch the protection off.
+- Blocks force pushes, `curl | sh` installs, deleting your home folder and creating public repos; asks you before
+  any push or package install.
+- Watches what it reads (files, web pages, MCP tool output) for hidden Unicode and planted instructions, and
+  reminds it that this is data, not orders.
+- Before it says "done", checks the changed files once more and sends it back if a High or Critical issue is
+  still open.
+
+**When you ask for a review**
+- `Security Test Karo`: a pentester-style source review of every route and API, then fix, re-test and a verdict.
+- `Advisory QA Karo`: the same review as a readiness report; nothing changes until you agree.
+- `/sec-review`: a threat model plus a deep review of the repo and your latest changes, with fixes and re-tests.
+- Checks Android manifests (debuggable, backups, cleartext traffic, exported components).
+- A matrix of who may do what (roles against routes), where every row needs a passing test.
+
+**For teams and companies**
+- CI templates for GitHub and GitLab that fail the merge on High findings, with the gate fetched from a
+  central repo so a pull request cannot weaken it.
+- A managed install that developers cannot switch off, for Intune, GPO or SCCM.
+- Exceptions with an owner, a reason and an expiry date; an expired exception brings the finding back by itself.
+- Your own product name through one setting, kept across updates.
+- Optional staging scans with OWASP ZAP or nuclei, only when you explicitly allow them for that URL.
+- Optional webhook to send findings to your tracker.
+
+**Proof, not promises**
+- 145 automated tests, CI on Windows and Linux with Python 3.10, 3.12 and 3.13.
+- A Laravel lab with 18 planted vulnerabilities: the full gate finds 17, and the one it misses is documented.
+- The repo scans itself with its own gate on every push.
 
 ## How a review works
 
