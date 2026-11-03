@@ -1,0 +1,31 @@
+{
+  "errors": [],
+  "generated_at": "2026-11-03T10:00:00Z",
+  "metrics": {"_totals": {"SEVERITY.HIGH": 1, "SEVERITY.MEDIUM": 1, "loc": 40, "nosec": 0}},
+  "results": [
+    {
+      "code": "4 import yaml\n5 data = yaml.load(raw)\n",
+      "col_offset": 7, "end_col_offset": 24,
+      "filename": "./app/loader.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {"id": 20, "link": "https://cwe.mitre.org/data/definitions/20.html"},
+      "issue_severity": "MEDIUM",
+      "issue_text": "Use of unsafe yaml load. Allows instantiation of arbitrary objects. Consider yaml.safe_load().",
+      "line_number": 5, "line_range": [5],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b506_yaml_load.html",
+      "test_id": "B506", "test_name": "yaml_load"
+    },
+    {
+      "code": "12 run_report(cmd)\n",
+      "col_offset": 4, "end_col_offset": 20,
+      "filename": "./app/jobs.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {"id": 78, "link": "https://cwe.mitre.org/data/definitions/78.html"},
+      "issue_severity": "HIGH",
+      "issue_text": "subprocess call with a shell, identified, security issue.",
+      "line_number": 12, "line_range": [12],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b602_subprocess_popen_with_shell_equals_true.html",
+      "test_id": "B602", "test_name": "subprocess_popen_with_shell_equals_true"
+    }
+  ]
+}

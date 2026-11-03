@@ -13,4 +13,8 @@ Recommended enterprise stack:
 
 Install these with your approved corporate package manager/container registry.
 Do not pipe remote shell installers directly into a privileged shell.
+
+Per-language scanners (pinned versions, checked SHA-256):
+  python3 -I scripts/securecode.py doctor
+  python3 -I scripts/securecode.py setup        # prints the plan; installs only with --yes
 EOF

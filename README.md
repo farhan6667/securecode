@@ -204,6 +204,55 @@ py "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on h
 
 `RESULT: PASS` means no High or Critical finding. Reports go to `.security/findings.json` and `.security/findings.sarif`.
 
+## Scanners it sets up for you
+
+The gate looks at which languages your project uses and runs the matching scanners in `full` and `ci` mode.
+It never copies a scanner into this package: each one runs as its own program, and a missing one shows up as
+`NOTE: not run: <name> (install with securecode setup)`, never as a pass and never as a failure.
+
+```bash
+py -I scripts/securecode.py doctor          # what this project needs, what is installed, which version
+py -I scripts/securecode.py setup           # the install plan: source, pinned version, checksum, licence
+py -I scripts/securecode.py setup --yes     # your one yes: installs the plan, checking every checksum
+```
+
+Nothing is installed without `--yes`. Tools go to `%LOCALAPPDATA%\NexaForgeTools` (Windows) or
+`~/.local/share/nexaforge-tools`, outside your projects. Every download comes from the publisher's own release
+page at a pinned version and is checked against a SHA-256 written in
+[scripts/engines/engines.lock.json](scripts/engines/engines.lock.json); a mismatch is deleted and refused.
+
+| Language | Engine | Licence | What it finds |
+|---|---|---|---|
+| Every project | Semgrep | LGPL-2.1, separate program | injection, XSS, unsafe APIs and auth mistakes, with our own rules plus registry packs |
+| Every project | Trivy | Apache-2.0 | vulnerable dependencies, IaC and container misconfigurations, secrets |
+| Every project | Gitleaks | MIT | secrets in source and git history |
+| Every project | osv-scanner | Apache-2.0 | vulnerable dependencies in lockfiles, a second opinion next to Trivy |
+| Python | Bandit | Apache-2.0 | shell injection, eval and exec, pickle, weak crypto, TLS verification switched off |
+| Python | pip-audit | Apache-2.0 | vulnerable pinned packages in `requirements*.txt` |
+| Go | gosec | Apache-2.0 | SQL and command injection, path traversal, weak crypto, file permissions |
+| Go | govulncheck | BSD-3-Clause | vulnerable modules, ranked by whether your code really calls the vulnerable function |
+| Node.js | npm audit | part of npm | vulnerable packages in `package-lock.json` |
+| Node.js | eslint-plugin-security on ESLint | Apache-2.0, MIT | eval, child_process, unsafe regex (ReDoS), non-literal file paths and `require` |
+| Node.js, web | Retire.js | Apache-2.0 | old front-end libraries with known vulnerabilities |
+| Java | OWASP Dependency-Check | Apache-2.0 | vulnerable Maven, Gradle and JAR dependencies (NVD) |
+| Java | SpotBugs with Find Security Bugs | LGPL, separate program | SQL, command and LDAP injection, XXE, unsafe deserialization in compiled classes |
+| PHP | Psalm taint analysis | MIT | user input reaching SQL, shell, file and HTML sinks (a project dev dependency, runs with `--run-tests`) |
+| .NET | Security Code Scan | LGPL-3.0, separate program | injection, XSS and weak crypto; manual install, runs with `--run-tests`; last release 2022 |
+| Several | CodeQL | GitHub's own terms for the CLI | deep data-flow analysis; opt-in only, see below |
+
+Some engines ask online databases about your dependencies: osv-scanner (api.osv.dev), govulncheck
+(vuln.go.dev), npm audit (the npm registry) and pip-audit (PyPI). They send package names and versions, not
+your source code. Dependency-Check downloads the NVD data; set `NVD_API_KEY` to make the first download fast.
+
+**CodeQL is never installed for you.** The CodeQL CLI is free for open source and academic research, but using
+it on private commercial code needs a paid GitHub licence. If your licence covers it, install the CLI yourself,
+put `codeql` on PATH and set `SECGATE_CODEQL=1`; the gate then runs the security-extended queries without
+building your code.
+
+**AI pentest agents are not part of this release.** Tools such as Strix and PentAGI run real attacks against a
+running site, need Docker and your own model key, and can change data. We plan to support them later as
+optional external engines for staging and lab environments only.
+
 ## For teams
 
 Per-user installs can be removed by their user. Real enforcement is the managed install (read-only runtime,

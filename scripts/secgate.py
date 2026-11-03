@@ -391,15 +391,41 @@ def find_tool(name):
         for e in exts:
             c=os.path.join(d,name+e)
             if os.path.isfile(c) and (os.name=="nt" or os.access(c,os.X_OK)): return c
+    # Last, the copy `securecode.py setup` installed into the tools folder (outside every project).
+    eng=_engines()
+    if eng is not None:
+        try: return eng.installed_tool_path(name)
+        except Exception: return None
     return None
 
-def run(cmd,cwd,timeout=600):
+_ENGINES=[]
+def _engines():
+    """The scripts/engines package, loaded by path because the gate runs with -I (no script folder on sys.path).
+    None if it is missing or broken, so the core gate keeps working."""
+    if not _ENGINES:
+        try:
+            import importlib.util
+            here=Path(__file__).resolve().parent/"engines"
+            spec=importlib.util.spec_from_file_location("nfsc_engines",here/"__init__.py",submodule_search_locations=[str(here)])
+            mod=importlib.util.module_from_spec(spec); sys.modules["nfsc_engines"]=mod
+            spec.loader.exec_module(mod); _ENGINES.append(mod)
+        except Exception:
+            sys.modules.pop("nfsc_engines",None); _ENGINES.append(None)
+    return _ENGINES[0]
+
+# cmd.exe re-parses the arguments of a .bat or .cmd file (the BatBadBut class); such calls are refused when an
+# argument contains a character cmd.exe would interpret.
+CMD_META=re.compile(r'["&|<>^%!\r\n]')
+
+def run(cmd,cwd,timeout=600,env=None):
     # Run exactly the executable find_tool chose, never a bare name that the OS would resolve itself.
     exe=find_tool(cmd[0])
     if not exe: return 127,"",f"missing executable: {cmd[0]}"
+    if exe.lower().endswith((".bat",".cmd")) and any(CMD_META.search(str(a)) for a in cmd[1:]):
+        return 126,"","refused: an argument contains a character cmd.exe would interpret"
     cmd=[exe,*cmd[1:]]
     try:
-        p=subprocess.run(cmd,cwd=str(cwd),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=timeout)
+        p=subprocess.run(cmd,cwd=str(cwd),capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=timeout,env=env)
         return p.returncode,p.stdout,p.stderr
     except FileNotFoundError: return 127,"",f"missing executable: {cmd[0]}"
     except subprocess.TimeoutExpired: return 124,"",f"timeout: {' '.join(cmd)}"
@@ -527,13 +553,15 @@ def collect_gitleaks(root,findings,mode="full"):
 
 RETIRE_SEV={"critical":"CRITICAL","high":"HIGH","medium":"MEDIUM","low":"LOW"}
 
-def collect_retire(root,findings):
+def collect_retire(root,findings,mode="full"):
     """Retire.js (Apache-2.0) finds vulnerable client-side libraries by signature, including copies
     renamed or bundled inside themes. Returns (None, "") when it is not installed."""
     if not find_tool("retire"): return None,""
     out_dir=Path(tempfile.mkdtemp(prefix="sc-retire-")); rp=out_dir/"retire.json"
     try:
-        rc,out,err=run(["retire","--outputformat","json","--outputpath",str(rp),"--path","."],root,900)
+        # ci: the package's empty ignore file replaces the repo's .retireignore / .retireignore.json
+        ci_args=["--ignorefile",str(CI_EMPTY_IGNORE)] if mode=="ci" and CI_EMPTY_IGNORE.is_file() else []
+        rc,out,err=run(["retire","--outputformat","json","--outputpath",str(rp),"--path",".",*ci_args],root,900)
         try: data=json.loads(rp.read_text(encoding="utf-8",errors="ignore") or "{}")
         except (OSError,json.JSONDecodeError): return False,f"retire exited {rc} without a readable report"
     finally:
@@ -693,7 +721,7 @@ def main():
     args=ap.parse_args()
     root=Path(".").resolve(); target=args.changed_file or args.target
     findings=local_scan(target)+agent_scan(target)+library_scan(target)+config_scan(target)
-    status={}; errors={}; notes=[]
+    status={}; errors={}; notes=[]; engine_status={}
     required=["semgrep","trivy","gitleaks"]
     if args.mode in ("full","ci"):
         for t in required: status[t]=bool(find_tool(t))
@@ -715,11 +743,22 @@ def main():
         optional=[("retire",collect_retire)]+([("psalm-taint",collect_psalm)] if args.run_tests else [])
         for name,fn in optional:
             try:
-                ok,msg=fn(root,findings)
+                ok,msg=fn(root,findings,mode=args.mode) if name=="retire" else fn(root,findings)
             except Exception as e:   # a malformed optional report is a note, never a crash or a pass
                 ok,msg=False,f"report could not be read ({type(e).__name__}); its findings are missing"
             if ok is None: continue
             notes.append(f"{name}: {msg}")
+        # Per-language engines (osv-scanner, Bandit, pip-audit, gosec, govulncheck, npm audit, ESLint security,
+        # Dependency-Check, SpotBugs + FindSecBugs, Security Code Scan, CodeQL): run when installed and relevant to
+        # the project's languages. Missing ones are NOTE lines, never a block, in full and ci alike.
+        eng=_engines()
+        if eng is None:
+            notes.append("per-language engines not loaded (scripts/engines missing or broken); only the core scanners ran")
+        else:
+            try:
+                engine_status=eng.run_engines(root,findings,notes,args.mode,args.run_tests,find=find_tool,runner=run)
+            except Exception as e:
+                notes.append(f"per-language engines stopped ({type(e).__name__}); their findings are missing")
         if args.run_tests:
             for cmd in project_commands(root,notes):
                 rc,out,err=run(cmd,root,1200)
@@ -729,7 +768,7 @@ def main():
     findings=apply_suppressions(findings,root,args.mode,notes)
     # Quick mode runs on every edit through the hook; it must not litter every project with .security/.
     if args.mode!="quick" or args.report:
-        counts=write_reports(root,findings,args.mode,{**status,"errors":errors,"notes":notes})
+        counts=write_reports(root,findings,args.mode,{**status,"engines":engine_status,"errors":errors,"notes":notes})
     else:
         counts={s:sum(1 for f in findings if f["severity"]==s) for s in SEV}
     missing=[t for t,v in status.items() if not v]

@@ -1,0 +1,13 @@
+{
+  "Golang errors": {},
+  "Issues": [
+    {"severity": "HIGH", "confidence": "HIGH", "cwe": {"id": "89", "url": "https://cwe.mitre.org/data/definitions/89.html"},
+     "rule_id": "G201", "details": "SQL string formatting", "file": "PROJECT/db/query.go",
+     "code": "40: \n41: q := buildQuery(name)\n42: \n", "line": "41", "column": "7", "nosec": false, "suppressions": null},
+    {"severity": "MEDIUM", "confidence": "HIGH", "cwe": {"id": "22", "url": "https://cwe.mitre.org/data/definitions/22.html"},
+     "rule_id": "G304", "details": "Potential file inclusion via variable", "file": "PROJECT/files.go",
+     "code": "18: f, err := readUserFile(p)\n", "line": "18-20", "column": "9", "nosec": false, "suppressions": null}
+  ],
+  "Stats": {"files": 3, "lines": 120, "nosec": 0, "found": 2},
+  "GosecVersion": "v2.30.0"
+}

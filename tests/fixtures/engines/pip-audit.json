@@ -1,0 +1,11 @@
+{
+  "dependencies": [
+    {"name": "jinja2", "version": "2.11.2", "vulns": [
+      {"id": "PYSEC-2021-66", "fix_versions": ["2.11.3"], "aliases": ["CVE-2020-28493", "GHSA-g3rq-g295-4j3m"],
+       "description": "This affects the package jinja2 from 0.0.0 and before 2.11.3. The ReDoS vulnerability is mainly due to the sub-pattern in the urlize filter."}
+    ]},
+    {"name": "requests", "version": "2.32.3", "vulns": []},
+    {"name": "localpkg", "skip_reason": "Dependency not found on PyPI and could not be audited: localpkg (1.0)"}
+  ],
+  "fixes": []
+}

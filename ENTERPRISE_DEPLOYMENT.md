@@ -96,6 +96,31 @@ With signing, a leaked GitHub token is not enough; the attacker also needs the o
 Install them only after the usual review of the source and licence. A missing optional tool is a NOTE in the
 report, not a failure.
 
+## Per-language scanners: offline and air-gapped installs
+
+`py -I scripts/securecode.py setup` installs the per-language engines (osv-scanner, Bandit, pip-audit, gosec,
+govulncheck, ESLint security, Dependency-Check, SpotBugs with Find Security Bugs) after one explicit `--yes`.
+Every pinned version and checksum is in `scripts/engines/engines.lock.json`.
+
+For machines without internet access:
+
+1. On a connected machine, download the files listed in `engines.lock.json` (the `url` of each download, the
+   wheels named by `wheel_sha256`, the npm packages named under `packages`) and check each against the pinned
+   hash. Put them in your internal artifact store.
+2. Point the tools folder at a shared, read-only location with `NEXAFORGE_TOOLS_DIR` (an absolute path outside
+   every project), and lay out each engine as `<engine>/<version>/...` exactly as `setup` does on a connected
+   machine. The simplest route is to run `setup --yes` once on a connected build machine and copy that folder.
+3. Route package managers to your mirrors: `SECGATE_NPM_REGISTRY` for npm (setup and `npm audit` in ci mode),
+   `PIP_INDEX_URL` for pip, `GOPROXY` for Go. The hash checks still apply to what comes back.
+4. Dependency-Check needs the NVD data. Mirror it with the Dependency-Check tooling, point
+   `SECGATE_DEPCHECK_DATA` at that data folder and set `SECGATE_DEPCHECK_NOUPDATE=1`.
+5. osv-scanner, govulncheck, npm audit and pip-audit query online advisory services and do not have a full
+   offline mode in this release. In an air-gapped network they report "did not complete" as a NOTE, and Trivy
+   (with an offline database) remains the dependency check. Say so in your risk register.
+
+CodeQL is never installed by `setup`. Its CLI terms allow open source and academic research; private commercial
+code needs a GitHub licence. If you hold one, install the CLI through your own process and set `SECGATE_CODEQL=1`.
+
 **Pinning Semgrep rules.** The gate uses our own rules (`semgrep/`) plus the Semgrep registry packs. Registry
 rules change over time and are under their own licence, so we don't copy them into this repo. For repeatable CI,
 mirror the packs you use into a private repo you control and set `SEMGREP_CONFIGS` to those files.

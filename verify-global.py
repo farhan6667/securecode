@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, platform, json, re, shutil, subprocess
+import os, platform, json, re, shutil, subprocess, sys
 from pathlib import Path
 home=Path.home()
 cd=Path(os.environ.get("CLAUDE_CONFIG_DIR",home/".claude"))
@@ -87,9 +87,23 @@ if missing: warnings.append("Full scan scanners missing: "+", ".join(missing)+".
 cv=tools.get("claude")
 if cv and cv!="unknown" and tuple(map(int,cv.split(".")))<(2,1,84):
     warnings.append(f"Claude Code {cv} is older than 2.1.84 (trust-dialog bypass CVE-2026-40068). Update it.")
+def engine_health():
+    # Per-language scanners from scripts/engines (7.0): installed or not, version. Informational only, never a failed check.
+    try:
+        import importlib.util
+        here=Path(__file__).resolve().parent/"scripts"/"engines"
+        if not here.is_dir(): here=ad/"scripts"/"engines"
+        spec=importlib.util.spec_from_file_location("nfsc_engines",here/"__init__.py",submodule_search_locations=[str(here)])
+        mod=importlib.util.module_from_spec(spec); sys.modules["nfsc_engines"]=mod; spec.loader.exec_module(mod)
+        return {e.name:(st["version"] or "installed") if st["installed"] else None
+                for e in mod.ENGINES if e.name not in ("semgrep","trivy","gitleaks","psalm") for st in [e.status()]}
+    except Exception as e:
+        return {"error":type(e).__name__}
+
+engines=engine_health()
 product=product_name(ad)
 print(json.dumps({"product_name":product,"update_task":f"{product} Update","os":platform.platform(),"checks":checks,
-                  "tools":tools,"warnings":warnings,"app_dir":str(ad)},indent=2))
+                  "tools":tools,"engines":engines,"warnings":warnings,"app_dir":str(ad)},indent=2))
 summary=f"{product}: {'all checks passed' if all(checks.values()) else 'some checks FAILED'}"
 try:
     print(summary)

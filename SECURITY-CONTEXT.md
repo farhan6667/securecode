@@ -59,6 +59,54 @@ developer machines, plus CI templates. It runs with the developer's own rights a
   edit to a config template) is blocked too. Use the Edit tool for such files.
 - Heuristic rules have false positives; the self-scan suppressions cover the package's own rule tables only.
 
+**Per-language engines and their supply chain (7.0).** `scripts/securecode.py setup` installs third-party
+scanners into a tools folder outside every project (`%LOCALAPPDATA%\NexaForgeTools`,
+`~/.local/share/nexaforge-tools`, or `NEXAFORGE_TOOLS_DIR`). What protects that step, and what does not:
+- Nothing installs without `--yes`. The plan printed first names the source, the exact version, the checksum
+  and the licence. The agent rules ("ask before installing") still apply on top: the agent shows the plan and
+  waits for the owner's yes.
+- Direct downloads (osv-scanner, Trivy, Gitleaks, Dependency-Check, Find Security Bugs) are https only, from
+  github.com release hosts only (redirects are checked too), size-capped, and verified against the SHA-256 in
+  `scripts/engines/engines.lock.json` before anything is extracted. Archives are extracted member by member;
+  absolute paths, `..` and links are refused. A mismatch deletes the file and installs nothing.
+- pip engines (Bandit, pip-audit, Semgrep) get their own virtual environment. The engine's own wheel is checked
+  against the pinned PyPI hash before install. Its dependencies are resolved by pip from your index and are
+  NOT hash-pinned: a compromised dependency release on PyPI would still get in. Accepted for now; a full
+  hashed lock per engine is planned.
+- Go engines (gosec, govulncheck) use `go install module@version` with the Go checksum database forced on
+  (`GOSUMDB`, and `GONOSUMDB`, `GOPRIVATE`, `GOINSECURE`, `GOFLAGS` cleared); afterwards the module hash recorded
+  in the binary must equal the pinned `h1:` value.
+- npm engines (ESLint with eslint-plugin-security, Retire.js) install with `--ignore-scripts` in the tools
+  folder (no project `.npmrc`), and the lockfile integrity of each pinned package must equal the registry value.
+  Transitive npm packages are not pinned by us.
+- Security Code Scan has no checksum we could pin (a NuGet tool package), so it is manual only. CodeQL is never
+  installed because of its licence terms.
+- The tools folder is user-writable, like PATH. A program running as the user (or a prompt-injected agent
+  allowed to write there) could replace a scanner with a fake that reports nothing. The agent guard does not
+  protect this folder yet. CI with freshly installed, hash-checked tools stays the enforcement point.
+- Engine output is treated as untrusted input: reports are size-capped, parsed defensively (wrong types are
+  skipped, not crashed on), control and bidi characters are stripped from messages, and engines run with
+  argument arrays, timeouts and no shell. A `.bat`/`.cmd` call is refused when an argument contains a character
+  cmd.exe would re-interpret.
+- Engines that would run the project's own code are gated: Psalm and Security Code Scan (MSBuild) run only with
+  `--run-tests`; pip-audit runs with `--no-deps --disable-pip` so it never builds or installs the requirements;
+  Dependency-Check runs with its yarn, pnpm, npm, bundle-audit, mix, go-mod, dotnet-assembly and OSS Index
+  analyzers off; Go engines run with `GOTOOLCHAIN=local`, `CGO_ENABLED=0` and `GOWORK=off`; ESLint loads only
+  a config we generate, never the repo's `eslint.config.*` (which is code).
+- ci mode stops the scanned repo from configuring these engines: osv-scanner gets a package-owned `--config`
+  (repo `osv-scanner.toml` files are ignored), Bandit gets `--ini` (repo `.bandit` ignored) and
+  `--ignore-nosec`, gosec gets `-nosec`, ESLint gets `--no-inline-config` and an empty suppressions file (repo
+  `eslint-suppressions.json` ignored), npm audit runs on a copy of `package.json` and the lockfile in a private
+  folder with an explicit registry (repo `.npmrc` ignored), and Retire.js gets the package's empty
+  `--ignorefile`. What ci mode cannot control: Security Code Scan reads `SecurityCodeScan.config.yml`,
+  `.editorconfig` and rulesets from the project; Dependency-Check and SpotBugs only scan what is present
+  (a repo can leave out compiled classes); a `.gitignore` can hide files from osv-scanner (but such files are
+  not committed, so CI does not see them either). Engine failures are NOTE lines, not blocks, so a repo that
+  makes an optional engine crash loses that engine's findings; Semgrep, Trivy and Gitleaks still fail closed.
+- Data that leaves the machine: osv-scanner (api.osv.dev), govulncheck (vuln.go.dev), npm audit (the npm
+  registry) and pip-audit (PyPI) send package names and versions; Dependency-Check downloads NVD data. No
+  source code is sent by any engine.
+
 **Deployment.** Per user (`%LOCALAPPDATA%\OrgAISecureAppSec`), managed (`%ProgramFiles%\OrgAISecureAppSec`),
 CI (pinned, hash-verified scanners). Updates from the public GitHub repo `farhan6667/nexaforge-securecode`
 (or an organization's own fork), signed with an offline ed25519 key.

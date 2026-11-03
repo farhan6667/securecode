@@ -1,0 +1,18 @@
+[
+  {
+    "filePath": "PROJECT/src/server.js",
+    "messages": [
+      {"ruleId": "security/detect-eval-with-expression", "severity": 1, "message": "eval with argument of type Identifier",
+       "line": 12, "column": 3, "nodeType": "CallExpression", "endLine": 12, "endColumn": 15},
+      {"ruleId": "security/detect-object-injection", "severity": 1, "message": "Generic Object Injection Sink",
+       "line": 20, "column": 5, "nodeType": "MemberExpression", "endLine": 20, "endColumn": 17},
+      {"ruleId": "no-unused-vars", "severity": 1, "message": "A variable is defined but never used.", "line": 3, "column": 7}
+    ],
+    "suppressedMessages": [], "errorCount": 0, "fatalErrorCount": 0, "warningCount": 3, "fixableErrorCount": 0, "fixableWarningCount": 0
+  },
+  {
+    "filePath": "PROJECT/src/broken.js",
+    "messages": [{"ruleId": null, "fatal": true, "severity": 2, "message": "Parsing error: Unexpected token", "line": 1, "column": 1}],
+    "suppressedMessages": [], "errorCount": 1, "fatalErrorCount": 1, "warningCount": 0
+  }
+]
