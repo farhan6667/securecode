@@ -3432,6 +3432,7 @@ PATHISH_KEY = re.compile(r"path|file|dir|dest|target|output|source|uri|url|href|
 
 MAX_INPUT_STRINGS = 20_000
 MAX_INPUT_DEPTH = 32
+CTRL_IN_PATH = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class InputTooLarge(Exception):
@@ -3481,7 +3482,17 @@ def check_tool_paths(tool: str, ti: dict, env: GuardEnv):
             if (is_mcp or writes) and PATHISH_KEY.search(key):
                 worst = stronger(worst, ("unknown", f"the argument {key[:40]} is too long to check safely"))
             continue
-        if not s or "\n" in s:
+        if CTRL_IN_PATH.search(s):
+            # A control character in a path never names a real file, but it hid the path from the guard, not from the
+            # OS: Windows collapses "x\n/../.env" lexically (CreateFile and Node's path.resolve both read .env), so
+            # Read/Edit/Write and the MCP file tools got through the secret and protected checks with one newline
+            # (V7P4-01). Refuse it for the built-in file tools; MCP path-like arguments become the unknown class.
+            if builtin_path:
+                return "deny", "the file path holds a control character (newline, tab, NUL); that is not a real file name and is refused."
+            if (is_mcp or writes) and PATHISH_KEY.search(key):
+                worst = stronger(worst, ("unknown", f"the argument {key[:40]} holds a control character in a path"))
+            continue
+        if not s:
             continue
         if not (builtin_path or path_shaped(s) or (tool == "Glob" and key == "pattern")):
             continue

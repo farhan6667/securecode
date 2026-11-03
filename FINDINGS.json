@@ -1088,6 +1088,38 @@
       "what": "Cookie and Set-Cookie values, keys whose name has no secret word (SIGNING_KEY, ENCRYPTION_KEY, Laravel APP_KEY) and double-escaped JSON are not masked",
       "check": "round 3 pentest report; documented in docs/SECRET-SHIELD-AND-MCP.md (What it does not do)",
       "status": "open"
+    },
+    {
+      "id": "V7P4-01",
+      "severity": "high",
+      "where": "scripts/agent_guard.py check_tool_paths()",
+      "what": "Pentest round 4: a control character anywhere in a file-tool or MCP path skipped the whole path check ('\\n' in s: continue, present since 6.2.0). The OS does not skip it: Windows collapses 'x<LF>/../.env' lexically before touching the file system (verified: Node fs.readFileSync on such a path returns the real file, with and without path.resolve), so Read {file_path: '~/x<LF>/../.env'}, Edit/Write on '~/x<LF>/../.claude/settings.json' or '.bashrc', and mcp__filesystem__read_file / read_multiple_files / write_file / move_file with the same shape were allowed in every mode. The shell route was not affected (Shell.path collapses the component and flags other control characters). Fix: a control character (0x00-0x1f, 0x7f) in a built-in file tool path is denied; in an MCP or write-tool path-like argument it is the unknown class; multi-line text under non-path keys is skipped as before.",
+      "check": "tests/test_v7_pentest4.py::test_v7p4_builtin_file_tool_path_with_control_character_is_denied, ::test_v7p4_protected_and_startup_files_behind_a_newline_are_denied, ::test_v7p4_mcp_path_with_control_character_is_never_allowed, ::test_v7p4_shell_path_with_an_escaped_newline_component_is_still_denied, ::test_v7p4_everyday_multiline_content_stays_allowed; failing-first shown by running the file with NFSC_SCRIPTS pointed at the 5d2c680 scripts (42 failed, 37 passed)",
+      "status": "fixed"
+    },
+    {
+      "id": "V7P4-L1",
+      "severity": "low",
+      "where": "scripts/secret_shield.py _strip_invisible(), INVISIBLE",
+      "what": "Two adversarial shapes pass the stripped-copy scan that passed the plain scan before round 3: a NUL between two tokens glues them into one run ('AKIA...<NUL>ghp_...' matches neither pattern), and an ESC [ directly before a token makes the token's first letter the CSI final byte ('<ESC>[ghp_...' scans as 'hp_...'). Neither occurs in real terminal output (a real CSI always has its own final byte; UTF-16 text keeps a separator between tokens); both need attacker-chosen bytes, and the shield is documented as pattern-based",
+      "check": "round 4 pentest probe (scratchpad r4/probe_shield.py, cases 'adjacent secrets', 'csi eats first letter')",
+      "status": "open"
+    },
+    {
+      "id": "V7P4-L2",
+      "severity": "low",
+      "where": "scripts/secret_shield.py auth-header and xml-secret patterns",
+      "what": "Documented shapes with small variations are not masked: <password type=\"x\">...</password> (attributes on the element), <password><![CDATA[...]]></password> (Maven settings.xml idiom), value=\"...\" before key=\"...\", a JSON-escaped XML attribute, more than five spaces after 'Authorization:', and the Digest scheme. The patterns themselves measured linear to 2 MB (ratio 2.0 per doubling, worst 1.85 s for a 2 MB run of secret-named keys)",
+      "check": "round 4 pentest probe (scratchpad r4/probe_shield.py, false-negative section)",
+      "status": "open"
+    },
+    {
+      "id": "V7P4-L3",
+      "severity": "low",
+      "where": "scripts/agent_guard.py check_tool_paths(), _strings()",
+      "what": "Two pre-existing silent skips remain in the tool-input walk: a string longer than 4096 characters under a key that is not path-like (for example args) is skipped without a verdict even when it is a bare path, and dictionary keys are never judged, so an MCP argument shaped {\"files\": {\"~/.env\": \"read\"}} is allowed. Both need an unusual MCP schema. The deadline held: a 99 MB input of 14.4 million list items returned the unknown class at 2.35 s, never allow",
+      "check": "round 4 pentest probe (scratchpad r4/probe_guard.py); tests/test_v7_pentest4.py::test_v7p4_tool_input_walk_past_the_deadline_is_never_allowed covers the deadline",
+      "status": "open"
     }
   ]
 }
