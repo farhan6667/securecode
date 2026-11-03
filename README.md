@@ -7,9 +7,10 @@
   <img src="https://img.shields.io/badge/status-public%20preview-orange.svg" alt="Status: public preview">
 </p>
 
-**NexaForge SecureCode makes AI coding agents (Claude Code, Cursor, Codex) write secure code, check it before
-you ship, and stay away from your secrets.** Free and open source (MIT), for anyone who builds web apps, APIs or
-Android apps with AI.
+**NexaForge SecureCode is a virtual pentester that sits next to every developer.** It makes AI coding agents
+(Claude Code, Cursor, Codex) write secure code, finds and fixes security holes while you work, and keeps the
+agent away from your secrets. Free and open source (MIT), for anyone who builds web apps, APIs or Android apps
+with AI.
 
 <p align="center">
   <a href="#install-with-one-prompt">Install</a> ·
@@ -19,6 +20,25 @@ Android apps with AI.
   <a href="#frequently-asked-questions">FAQ</a> ·
   <a href="#contribute">Contribute</a>
 </p>
+
+## Pass the pentest the first time
+
+The usual road to production is slow:
+
+> code → staging → pentest (2 to 3 days) → report → **fail** → fix → staging → pentest again → ...
+
+Most of those round trips are for the same known issues. SecureCode moves that first pentest pass to the
+developer's desk, in real time:
+
+> code **with a virtual pentester beside you** → fixed while you work → staging → pentest → **pass**
+
+- **Real time.** Each change is checked as it is written, not days later.
+- **Fixes that don't break things.** After a fix the agent re-runs the gate together with your project's own tests,
+  so features keep working (the more tests your project has, the stronger this check).
+- **Your security team's time goes further.** Human testers spend their days on the hard problems (business
+  logic, chained attacks) instead of re-reporting old jQuery and missing headers.
+
+It does not replace a human pentest. It makes the human pentest shorter and far more likely to pass in one go.
 
 ## Why you need it
 
