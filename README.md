@@ -25,6 +25,11 @@ APIs or Android apps with AI.
   <a href="#contribute">Contribute</a>
 </p>
 
+<p align="center">
+  New in 7.0: <a href="https://www.linkedin.com/feed/update/urn:li:activity:7523701753914245121/">read the launch post on LinkedIn</a> ·
+  <a href="https://github.com/farhan6667/securecode/releases/tag/v7.0.0">release notes</a>
+</p>
+
 ## What's new in 7.0
 
 - **A guard that allows what is clearly safe and asks about the rest.** Everyday commands inside your project run
