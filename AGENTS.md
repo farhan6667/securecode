@@ -107,7 +107,10 @@ While you code, write it secure the first time (section 5) and keep going. Do no
 audits or review rounds of your own between edits, and do not open `docs/SOURCE-CODE-REVIEW.md` or other long
 checklists while coding: they belong to "Run Security Test". Before saying a feature is done, check your own diff
 from memory for the classes it touches (endpoint: access control and IDOR; upload: upload rules; query:
-injection; dependency: versions) and fix what you see. That is one short pass, not a protocol.
+injection; dependency: versions) and fix what you see. That is one short pass, not a protocol. One exception,
+because the hooks cannot see these: when the change adds or changes an endpoint, authentication or sessions,
+authorization rules, uploads, payments, cryptography or deserialization, read only the matching section of
+`docs/SOURCE-CODE-REVIEW.md` before saying it is done.
 
 The hooks stay cheap and quiet: the edit hook says nothing when the file is clean and shows only High or Critical
 findings; the stop hook sends you back once for a new High or Critical finding, not again for the same one.

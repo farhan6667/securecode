@@ -2,9 +2,9 @@
 """PostToolUse edit hook: the quick gate on the one file that changed, advisory only.
 
 Smart mode (7.1): it costs the agent nothing while code is clean. A clean result prints nothing (no context is
-added to the model); a High or Critical finding adds a short note with only those lines; the same file content is
-never checked or reported twice (a small cache in the app folder, never in the project). Deep review belongs to
-"Run Security Test"; blocking belongs to the Stop gate and to CI.
+added to the model) and clean content is not checked twice (a small cache in the app folder, never in the
+project); a High or Critical finding adds a short note with only those lines, every time that content is checked.
+Deep review belongs to "Run Security Test"; blocking belongs to the Stop gate and to CI.
 SECURECODE_HOOK_VERBOSE=1 restores the full report after every edit.
 """
 import hashlib, json, os, stat, subprocess, sys, time
@@ -14,10 +14,14 @@ CACHE_MAX = 400                 # entries; the oldest go first
 FILE_MAX = 2_000_000            # bigger files are not hashed (and the quick gate skips them anyway)
 
 
-def cache_file() -> Path:
+def cache_dir() -> Path:
+    """The app folder's cache (never the project): a cloned repository cannot plant or read what is in it."""
     d = os.environ.get("SECURECODE_CACHE_DIR")
-    base = Path(d) if d and os.path.isabs(d) else Path(__file__).resolve().parent.parent / "cache"
-    return base / "edit-hook.json"
+    return Path(d) if d and os.path.isabs(d) else Path(__file__).resolve().parent.parent / "cache"
+
+
+def cache_file() -> Path:
+    return cache_dir() / "edit-hook.json"
 
 
 def _plain(p: Path) -> bool:
@@ -40,7 +44,7 @@ def load_cache(f: Path) -> dict:
         return {}
 
 
-def save_cache(f: Path, data: dict) -> None:
+def save_cache(f: Path, data: dict, cap: int = CACHE_MAX) -> None:
     """Best effort, never through a link; a failure only means the next edit is checked again."""
     try:
         d = f.parent
@@ -52,7 +56,7 @@ def save_cache(f: Path, data: dict) -> None:
             d.mkdir(parents=True)
         if not _plain(f):
             return
-        keep = dict(sorted(data.items(), key=lambda kv: kv[1].get("t", 0) if isinstance(kv[1].get("t"), int) else 0)[-CACHE_MAX:])
+        keep = dict(sorted(data.items(), key=lambda kv: kv[1].get("t", 0) if isinstance(kv[1].get("t"), int) else 0)[-cap:])
         tmp = d / (f.name + f".{os.getpid()}.tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(fd, "wb") as fh:
@@ -64,9 +68,13 @@ def save_cache(f: Path, data: dict) -> None:
 
 def serious_only(out: str) -> str:
     """The gate's header, counts and result lines plus only the High and Critical findings."""
-    keep = [ln for ln in out.splitlines()
-            if ln.startswith(("=== ", "Mode:", "Counts:", "RESULT:", "[CRITICAL]", "[HIGH]"))]
-    return "\n".join(keep)[-4000:]
+    lines = out.splitlines()
+    head = [ln for ln in lines if ln.startswith(("=== ", "Mode:", "Counts:"))][:3]
+    bad = [ln[:400] for ln in lines if ln.startswith(("[CRITICAL]", "[HIGH]"))]
+    bad.sort(key=lambda ln: 0 if ln.startswith("[CRITICAL]") else 1)
+    tail = [ln for ln in lines if ln.startswith("RESULT:")][-1:]
+    more = [f"... and {len(bad) - 30} more High/Critical lines (run the full gate for all)"] if len(bad) > 30 else []
+    return "\n".join(head + bad[:30] + more + tail)
 
 
 def main():
@@ -106,28 +114,39 @@ def main():
     digest = ""
     try:
         if target.stat().st_size <= FILE_MAX:
-            rs = runner.stat()            # a SecureCode update (new rules) checks every file again
-            digest = hashlib.sha256(target.read_bytes() + f"|{rs.st_size}:{int(rs.st_mtime)}".encode()).hexdigest()
+            # everything the quick gate's answer depends on: the content, the gate version (an update checks every
+            # file again), the project root and its suppressions
+            rs = runner.stat()
+            h = hashlib.sha256(target.read_bytes())
+            h.update(f"|{rs.st_size}:{int(rs.st_mtime)}|{root}|{os.environ.get('SECGATE_SUPPRESSIONS', '')}".encode("utf-8", "replace"))
+            sup = root / "config" / "security-suppressions.yaml"
+            if sup.is_file() and sup.stat().st_size <= FILE_MAX:
+                h.update(sup.read_bytes())
+            digest = h.hexdigest()
     except OSError:
         digest = ""
     cf = cache_file()
     cache = load_cache(cf) if digest and not verbose else {}
     if digest and cache.get(key, {}).get("sha") == digest:
-        return 0                # this exact content was already checked (and reported, if it had findings)
+        return 0                # this exact content was already checked and found clean
     try:
         p = subprocess.run(
             [sys.executable, "-I", str(runner), str(target), "--mode", "quick", "--fail-on", "high"],
             cwd=str(root), text=True, encoding="utf-8", errors="replace", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=110, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-        out = p.stdout[-9000:].strip()
-        if digest and not verbose and p.returncode in (0, 2):
-            cache[key] = {"sha": digest, "t": int(time.time()), "rc": p.returncode}
+        # Only clean results are remembered: a finding is reported every time its content is checked, so a report
+        # one session saw is never hidden from another session or agent.
+        if digest and not verbose and p.returncode == 0:
+            cache[key] = {"sha": digest, "t": int(time.time()), "rc": 0}
             save_cache(cf, cache)
-        if not out:
-            return 0
         if p.returncode == 0 and not verbose:
             return 0            # clean (nothing at or above High): silent, no tokens spent
-        text = out if verbose else serious_only(out)
+        if p.returncode not in (0, 2) and not verbose:
+            text = f"The quick gate could not run on this file (exit {p.returncode}); it was not checked."
+        else:
+            text = p.stdout[-9000:].strip() if verbose else serious_only(p.stdout)   # filter first, then cut
+        if not text:
+            return 0
         payload = {"hookSpecificOutput": {"hookEventName": "PostToolUse",
                    "additionalContext": "Org AppSec quick gate on the changed file (advisory; fix High/Critical before you finish):\n" + text}}
         print(json.dumps(payload))

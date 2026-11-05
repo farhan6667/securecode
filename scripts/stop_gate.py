@@ -5,8 +5,9 @@ When the agent is about to finish, scan the files changed in this git working tr
 quick heuristics, agent-config and library checks. If a High or Critical finding is open, send
 the agent back once to fix it (or explain why it is a false positive).
 
-Smart mode (7.1): a finding the agent has already been shown is not sent back again at every stop (it returns
-after SEEN_HOURS), the offer needs a feature's worth of work (OFFER_FILES / OFFER_LINES) and comes once per session,
+Smart mode (7.1): a finding the agent has already been shown in this session is not sent back again at every stop
+(it returns after SEEN_HOURS; the memory is in the app cache, never in the project), the offer needs a feature's
+worth of work (OFFER_FILES / OFFER_LINES) and comes once per session,
 and SECURECODE_MODE=coding or .security/mode.json {"mode": "coding"} turns the offer off.
 
 It also offers the developer a full security test at the end of substantial work: when the code
@@ -36,7 +37,7 @@ TIME_BUDGET = 45                # seconds; the hook timeout is 90, the session m
 OFFER_FILES = 10                # changed code files since the last offer, or
 OFFER_LINES = 300               # changed lines (added + deleted; an untracked file counts all its lines)
 OFFER_MARKER = "pentest-offer.json"
-SEEN_MARKER = "stop-gate-seen.json"   # High/Critical findings already shown to the agent: not blocked again
+SEEN_MARKER = "stop-gate-seen.json"   # in the app cache: High/Critical findings already shown in this session
 SEEN_HOURS = 12                 # a shown finding comes back after this, so an ignored one is not forgotten
 MARKER_MAX = 1_000_000
 CODE_EXT = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".php", ".rb", ".go", ".java", ".kt",
@@ -241,31 +242,40 @@ def _fp(root: Path, f: dict) -> str:
             text = " ".join(lines[n - 1].split()) if n <= len(lines) else ""
     except (OSError, ValueError):
         text = ""
+    if not text:                        # no line (agent config, end-of-life library): the message tells them apart
+        text = "msg:" + str(f.get("message", ""))[:400]
     return hashlib.sha256(f"{f.get('rule', '')}|{rel}|{text}".encode("utf-8", "replace")).hexdigest()[:20]
 
 
-def new_serious(root: Path, serious: list) -> list:
-    """Only High/Critical findings the agent has not been shown in the last SEEN_HOURS. Shown once, the agent fixed
-    them or explained them; sending it back again for the same lines at every stop was the costly loop."""
-    seen = _read_marker(root / ".security" / SEEN_MARKER)
-    if seen.get("_unusable"):
-        return serious                  # cannot remember: fall back to the old, safe behaviour
-    now, keep = time.time(), {}
-    for k, t in (seen.get("fps") or {}).items():
-        if isinstance(k, str) and isinstance(t, (int, float)) and now - t < SEEN_HOURS * 3600:
-            keep[k] = t
-    fresh = [(f, _fp(root, f)) for f in serious]
-    fresh = [(f, k) for f, k in fresh if k not in keep]
-    if not fresh:
+SHOWN_MAX = 15                          # findings printed per block; only these are remembered as shown
+
+
+def new_serious(root: Path, serious: list, session: str = "") -> list:
+    """High/Critical findings to show now: the ones not shown in the last SEEN_HOURS. Shown once, the agent fixed
+    them or explained them; sending it back again for the same lines at every stop was the costly loop.
+
+    The memory lives in the app folder's cache, keyed by the project's real path, never in the project: a cloned
+    repository cannot ship a file that silences findings. Entries from another session, from the future or past
+    SEEN_HOURS do not count. Only the findings actually printed are remembered."""
+    from global_hook import cache_dir, load_cache, save_cache
+    f = cache_dir() / SEEN_MARKER
+    seen = load_cache(f)
+    proj = hashlib.sha256(str(root).encode("utf-8", "replace")).hexdigest()[:20]
+    now = time.time()
+
+    def valid(e):
+        t = e.get("t")
+        return isinstance(t, (int, float)) and not isinstance(t, bool) and now - SEEN_HOURS * 3600 < t <= now + 60 \
+            and (not session or e.get("s") == session)
+    fresh = [(x, proj + ":" + _fp(root, x)) for x in serious]
+    fresh = [(x, k) for x, k in fresh if not (k in seen and valid(seen[k]))]
+    shown = fresh[:SHOWN_MAX]
+    if not shown:
         return []
-    for _, k in fresh:
-        keep[k] = int(now)
-    if not _write_marker(root, {"fps": dict(sorted(keep.items(), key=lambda kv: kv[1])[-2000:]),
-                                "note": "High/Critical findings already shown by the stop gate; each comes back after "
-                                        f"{SEEN_HOURS} hours. The full gate (Run Security Test, CI) always reports all."},
-                         SEEN_MARKER):
-        return serious
-    return [f for f, _ in fresh]
+    for _, k in shown:
+        seen[k] = {"t": int(now), "s": session[:100]}
+    save_cache(f, seen, cap=4000)       # a failed save only means the finding is shown again next time
+    return [x for x, _ in fresh]
 
 
 def main() -> int:
@@ -294,12 +304,14 @@ def main() -> int:
         offer = None
     serious = [f for f in findings if SEV.get(f["severity"], 9) <= SEV["HIGH"]]
     try:
-        serious = new_serious(root, serious)
+        serious = new_serious(root, serious, session)
     except Exception:
-        pass
+        pass                            # cannot remember: the old behaviour, every serious finding blocks
     parts = []
     if serious:
-        lines = [f"- [{f['severity']}] {f['rule']} {Path(f['file']).name}:{f.get('line', 0)}: {f['message'][:160]}" for f in serious[:15]]
+        lines = [f"- [{f['severity']}] {f['rule']} {Path(f['file']).name}:{f.get('line', 0)}: {f['message'][:160]}" for f in serious[:SHOWN_MAX]]
+        if len(serious) > SHOWN_MAX:
+            lines.append(f"- ... and {len(serious) - SHOWN_MAX} more; they come up at the next stop.")
         parts.append("Org AppSec stop gate: changed files still have High/Critical findings. Fix them (or explain "
                      "clearly why each is a false positive), then finish. Run 'Run Security Test' for the full gate.\n" + "\n".join(lines))
     if offer:

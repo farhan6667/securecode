@@ -147,6 +147,7 @@ Added after the 6.2 review
 - README.md
 - RELEASE-NOTES-V6.2.md
 - RELEASE-NOTES-V7.0.md
+- RELEASE-NOTES-V7.1.md
 - SECURITY-CONTEXT.md
 - SECURITY.md
 - api-security/README.md

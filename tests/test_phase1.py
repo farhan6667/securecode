@@ -151,15 +151,33 @@ def test_smart_mode_edit_hook_is_silent_when_clean():
         assert "RESULT: PASS" in _hook(ev, cache, {"SECURECODE_HOOK_VERBOSE": "1"})   # the old report on request
 
 
-def test_smart_mode_edit_hook_shows_only_high_and_critical_and_never_twice():
+def test_smart_mode_edit_hook_shows_only_high_and_critical_every_time():
     with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
         f = write(d, "bad.py", "import subprocess, hashlib\nsubprocess.run(x, shell" + "=True)\nh = hashlib.md5(b'x')\n")
         ev = {"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}
         ctx = json.loads(_hook(ev, cache))["hookSpecificOutput"]["additionalContext"]
         assert "[CRITICAL]" in ctx and "[MEDIUM]" not in ctx and "[LOW]" not in ctx
-        assert _hook(ev, cache) == ""                       # the same content was already reported
-        f.write_text(f.read_text() + "y = 2\n")             # a real change is checked again
-        assert "[CRITICAL]" in _hook(ev, cache)
+        assert "[CRITICAL]" in _hook(ev, cache)             # a finding is never hidden by the cache (another session)
+
+
+def test_smart_mode_edit_hook_keeps_the_serious_lines_when_the_output_is_long():
+    from importlib import util
+    spec = util.spec_from_file_location("gh", ROOT / "scripts" / "global_hook.py"); gh = util.module_from_spec(spec); spec.loader.exec_module(gh)
+    nl = chr(10)
+    out = nl.join(["=== GATE ===", "Mode: quick", "Counts: {}", "[CRITICAL] A x.py:1 bad"] + ["[MEDIUM] B x.py:2 meh"] * 2000
+                  + ["[HIGH] C x.py:3 bad", "RESULT: BLOCKED"])
+    text = gh.serious_only(out)
+    assert "[CRITICAL] A" in text and "[HIGH] C" in text and "Counts:" in text and "RESULT: BLOCKED" in text and "[MEDIUM]" not in text
+
+
+def test_smart_mode_edit_hook_caches_only_clean_content():
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
+        ok = write(d, "ok.py", "x = 1\n")
+        bad = write(d, "bad.py", "import subprocess\nsubprocess.run(x, shell" + "=True)\n")
+        for f in (ok, bad):
+            _hook({"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}, cache)
+        entries = json.loads(Path(cache, "edit-hook.json").read_text(encoding="utf-8"))
+        assert len(entries) == 1 and all(e["rc"] == 0 for e in entries.values())
 
 
 def test_smart_mode_edit_hook_cache_refuses_a_link():

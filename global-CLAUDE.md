@@ -27,8 +27,9 @@ OrgAISecureAppSec app folder). Short version, always on:
    nothing until the user agrees.
 8. Smart mode: while coding, write secure code and keep going; no security phases, audits or review rounds
    between edits. Before saying a feature is done, check your own diff from memory for the classes it touches
-   (one short pass) and fix what you see. Open `docs/SOURCE-CODE-REVIEW.md` and the other long checklists only
-   for "Run Security Test". The most frequent pentest findings are in `docs/COMMON-FINDINGS.md` (or
+   (one short pass) and fix what you see. For a new or changed endpoint, auth, session, authorization rule,
+   upload, payment, crypto or deserialization, read only that section of `docs/SOURCE-CODE-REVIEW.md`; the whole
+   file and the other long checklists are for "Run Security Test". The most frequent pentest findings are in `docs/COMMON-FINDINGS.md` (or
    `docs/ORG-FINDINGS.md`): outdated jQuery/Bootstrap and other libraries come first. Upgrade, never suppress.
 9. Report residual risk; never claim "100% secure".
 10. When you finish substantial work (10+ code files or 300+ changed lines since your last offer) and no

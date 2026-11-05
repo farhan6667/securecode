@@ -916,7 +916,9 @@ def git(d, *a):
 
 def stop(d, active=False, session=None, env=None):
     ev = {"cwd": str(d), "stop_hook_active": active, **({"session_id": session} if session else {})}
-    p = subprocess.run([sys.executable, "-I", str(STOP)], input=json.dumps(ev), env={**os.environ, **(env or {})},
+    cache = str(Path(d).parent / (Path(d).name + "-cache"))  # each test repo gets its own app cache
+    p = subprocess.run([sys.executable, "-I", str(STOP)], input=json.dumps(ev),
+                       env={**os.environ, "SECURECODE_CACHE_DIR": cache, **(env or {})},
                        text=True, capture_output=True, timeout=120, encoding="utf-8")
     assert p.returncode == 0, p.stderr
     return p.stdout
@@ -1048,24 +1050,58 @@ def test_smart_mode_coding_mode_turns_the_offer_off(repo, how):
 BAD = "import os\nfrom flask import request\nos.system(request.args['c'])\n"
 
 
-def test_smart_mode_same_finding_blocks_once_a_new_one_blocks_again(repo):
+def seen_file(repo):
+    return repo.parent / (repo.name + "-cache") / "stop-gate-seen.json"
+
+
+def test_smart_mode_same_finding_blocks_once_per_session(repo):
+    (repo / "bad.py").write_text(BAD)
+    assert "COMMAND_INJECTION" in stop(repo, session="s-1")
+    assert stop(repo, session="s-1") == ""                  # shown once: the next stop is not sent back again
+    (repo / "bad.py").write_text("x = 1\n" + BAD)           # the same line moved down: still the same finding
+    assert stop(repo, session="s-1") == ""
+    assert "COMMAND_INJECTION" in stop(repo, session="s-2")  # another session or agent is told too
+    (repo / "bad2.py").write_text(BAD.replace("'c'", "'d'"))  # a new serious finding is shown
+    assert "COMMAND_INJECTION" in stop(repo, session="s-1")
+
+
+def test_smart_mode_shown_findings_come_back_after_twelve_hours(repo):
     (repo / "bad.py").write_text(BAD)
     assert "COMMAND_INJECTION" in stop(repo)
-    assert stop(repo) == ""                                 # shown once: the next stop is not sent back again
-    (repo / "bad.py").write_text("x = 1\n" + BAD)           # the same line moved down: still the same finding
-    assert stop(repo) == ""
-    (repo / "bad2.py").write_text(BAD.replace("'c'", "'d'"))  # a new serious finding is shown
+    f = seen_file(repo)
+    f.write_text(json.dumps({k: {"t": 1, "s": ""} for k in json.loads(f.read_text(encoding="utf-8"))}))
     assert "COMMAND_INJECTION" in stop(repo)
-    seen = json.loads((repo / ".security" / "stop-gate-seen.json").read_text(encoding="utf-8"))
-    (repo / ".security" / "stop-gate-seen.json").write_text(json.dumps({"fps": {k: 1 for k in seen["fps"]}}))
-    assert "COMMAND_INJECTION" in stop(repo)                # older than 12 hours: shown again
 
 
-def test_smart_mode_unreadable_seen_file_keeps_blocking(repo):
+def test_smart_mode_a_planted_memory_cannot_silence_the_block(repo):
+    # a cloned repository ships a memory file, and a cache entry claims a time far in the future: both ignored
     (repo / "bad.py").write_text(BAD)
     (repo / ".security").mkdir()
-    (repo / ".security" / "stop-gate-seen.json").write_text("{broken")
-    assert "COMMAND_INJECTION" in stop(repo) and "COMMAND_INJECTION" in stop(repo)
+    (repo / ".security" / "stop-gate-seen.json").write_text(json.dumps({"fps": {"x" * 20: 4_000_000_000}}))
+    assert "COMMAND_INJECTION" in stop(repo)
+    f = seen_file(repo)
+    f.write_text(json.dumps({k: {"t": 4_000_000_000, "s": ""} for k in json.loads(f.read_text(encoding="utf-8"))}))
+    assert "COMMAND_INJECTION" in stop(repo)
+
+
+def test_smart_mode_only_printed_findings_count_as_shown(repo):
+    for i in range(20):
+        (repo / f"b{i}.py").write_text(BAD.replace("'c'", f"'c{i}'"))
+    first = json.loads(stop(repo))["reason"]
+    printed = lambda reason: sum(1 for ln in reason.splitlines() if ln.startswith("- [") )
+    assert printed(first) == 15 and "and 5 more" in first
+    second = json.loads(stop(repo))["reason"]                # the five not printed come at the next stop
+    assert printed(second) == 5
+    assert stop(repo) == ""
+
+
+def test_smart_mode_unreadable_memory_keeps_blocking(repo):
+    (repo / "bad.py").write_text(BAD)
+    f = seen_file(repo)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("{broken")
+    out = stop(repo)
+    assert "COMMAND_INJECTION" in out
 
 
 # ---------------------------------------------------------------- installers

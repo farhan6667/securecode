@@ -24,7 +24,9 @@ does runtime pentesting; this skill makes sure everything findable in source cod
 keep going: no security phases or review rounds between edits, and do not read this skill's long checklists
 while coding. Before you tell the developer a feature or fix is done, check your own diff from memory for
 the classes it touches (a new endpoint: access control, IDOR, input, output, rate limit; an upload: upload
-rules; a query: injection; a dependency: versions) and fix what you see, in one short pass. The edit hook
+rules; a query: injection; a dependency: versions) and fix what you see, in one short pass; for an endpoint,
+auth, session, authorization, upload, payment, crypto or deserialization change, read just that section of
+`SOURCE-CODE-REVIEW.md` first, because the hooks cannot see those classes. The edit hook
 is silent while code is clean; the Stop hook sends you back once for a new High or Critical finding.
 
 **End-of-task offer (all agents).** When a substantial task is finished (10 or more code files or 300 or

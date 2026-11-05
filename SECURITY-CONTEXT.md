@@ -285,11 +285,16 @@ nudge, not a control: the agent can write that file or a fake report to silence 
 **Smart mode (7.1): accepted trade-offs.** To stop coding sessions from looping through security rounds:
 - The edit hook adds nothing to the model's context when the quick gate passes, and only High or Critical lines
   when it does not. Medium and Low findings on an edit are no longer shown; they still appear in the full gate.
-- The edit hook skips a file whose exact content (and gate version) it already checked. The cache is
-  `<app>/cache/edit-hook.json`, never in the project; links are refused; a broken cache only means a re-check.
-- The stop gate sends the agent back for a High or Critical finding once; the same rule, file and line text is
-  not blocked again for 12 hours (`.security/stop-gate-seen.json`). The agent can silence it by writing that file,
-  exactly as with the offer marker: it is a coding aid, and CI and "Run Security Test" report every finding.
+- The edit hook skips a file whose exact content it already found clean (the key also covers the gate version,
+  the project root and its suppressions). Findings are never cached, so a report is not hidden from another
+  session. The cache is `<app>/cache/edit-hook.json`, never in the project; links are refused; a broken cache only
+  means a re-check.
+- The stop gate sends the agent back for a High or Critical finding once per session; the same rule, file and
+  line text (or message, for findings without a line) is not blocked again in that session for 12 hours. Only the
+  findings actually printed count as shown. The memory is `<app>/cache/stop-gate-seen.json`, keyed by the
+  project's real path and the session id, never in the project: a cloned repository cannot ship it, and entries
+  dated in the future are ignored. Accepted: the agent itself could write the app cache; it is a coding aid, and
+  CI and "Run Security Test" report every finding.
 
 **Deployment.** Per user (`%LOCALAPPDATA%\OrgAISecureAppSec`), managed (`%ProgramFiles%\OrgAISecureAppSec`),
 CI (pinned, hash-verified scanners). Updates from the public GitHub repo `farhan6667/securecode`

@@ -10,15 +10,18 @@ asked to run a full security test every 40 lines. That cost credits and time, an
 ## What changed
 
 - **The edit hook is silent when the file is clean.** It adds nothing to the agent's context unless the quick
-  gate finds a High or Critical issue, and then it shows only those lines. The same file content is never checked
-  or reported twice. `SECURECODE_HOOK_VERBOSE=1` brings back the full report after every edit.
-- **The stop hook sends the agent back once per finding.** A High or Critical finding it already showed is not
-  sent back again at every stop; it returns after 12 hours so an ignored one is not forgotten.
+  gate finds a High or Critical issue, and then it shows only those lines (Critical first). Content it already
+  found clean is not checked again. `SECURECODE_HOOK_VERBOSE=1` brings back the full report after every edit.
+- **The stop hook sends the agent back once per finding and session.** A High or Critical finding it already
+  showed in this session is not sent back at every stop; it returns after 12 hours. The memory sits in the app
+  folder, never in the project, so a cloned repository cannot silence it.
 - **The security test offer waits for a feature's worth of work** (10 code files or 300 changed lines) and comes
   at most once per session. `SECURECODE_MODE=coding` or `.security/mode.json` with `{"mode": "coding"}` turns it
   off: the developer types "Run Security Test" when the program is done.
 - **The rules say it plainly:** write secure code while coding, no security phases or review rounds between
-  edits, one short self-check of the diff before "done", and the long checklists only for "Run Security Test".
+  edits, one short self-check of the diff before "done" (plus the one matching checklist section for endpoint,
+  auth, session, upload, payment, crypto and deserialization changes), and the long checklists only for
+  "Run Security Test".
   The skill no longer loads for ordinary coding. `/security-gate` no longer runs the project tests twice.
 
 ## What did not change
@@ -29,8 +32,10 @@ blocks a dangerous action was relaxed.
 
 ## Tests
 
-New: silent clean edits, High and Critical only, no repeat report, the cache refusing a link, once per session,
-coding mode (environment and file), the same finding blocked once and a new one blocked again, an unreadable
-memory file keeping the old behaviour. The offer tests moved to the new thresholds.
+New: silent clean edits, High and Critical only and never lost in a long report, findings never cached, the cache
+refusing a link, once per session, coding mode (environment and file), the same finding blocked once per session
+and a new one blocked again, a planted or future-dated memory ignored, only printed findings remembered. The offer
+tests moved to the new thresholds. An independent review of the first draft found six issues (FINDINGS SM-01 to
+SM-06); all are fixed with tests in this branch.
 
 Not measured: tokens saved per session. The saving depends on how often a session edits clean files.

@@ -1120,6 +1120,54 @@
       "what": "Two pre-existing silent skips remain in the tool-input walk: a string longer than 4096 characters under a key that is not path-like (for example args) is skipped without a verdict even when it is a bare path, and dictionary keys are never judged, so an MCP argument shaped {\"files\": {\"~/.env\": \"read\"}} is allowed. Both need an unusual MCP schema. The deadline held: a 99 MB input of 14.4 million list items returned the unknown class at 2.35 s, never allow",
       "check": "round 4 pentest probe (scratchpad r4/probe_guard.py); tests/test_v7_pentest4.py::test_v7p4_tool_input_walk_past_the_deadline_is_never_allowed covers the deadline",
       "status": "open"
+    },
+    {
+      "id": "SM-01",
+      "severity": "medium",
+      "where": "scripts/stop_gate.py new_serious()",
+      "what": "The first smart-mode draft kept the memory of shown High/Critical findings in the project (.security/stop-gate-seen.json): a cloned repository could ship it with future timestamps and silence the stop block for findings nobody was shown. The memory now lives in the app cache, keyed by the project's real path and the session, and future entries are ignored.",
+      "check": "tests/test_v7_guard.py::test_smart_mode_a_planted_memory_cannot_silence_the_block",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-02",
+      "severity": "medium",
+      "where": "scripts/stop_gate.py new_serious()",
+      "what": "Every fresh finding was remembered as shown although only 15 are printed; now only the printed ones count, the rest come at the next stop.",
+      "check": "tests/test_v7_guard.py::test_smart_mode_only_printed_findings_count_as_shown",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-03",
+      "severity": "medium",
+      "where": "scripts/global_hook.py",
+      "what": "The output was cut to its last 9000 characters before the High/Critical filter, so the serious lines could be lost, and a BLOCKED result was cached and never reported again (also hiding it from other sessions). Now the filter runs first, lines are sorted by severity, and only clean results are cached.",
+      "check": "tests/test_phase1.py::test_smart_mode_edit_hook_keeps_the_serious_lines_when_the_output_is_long, ::test_smart_mode_edit_hook_caches_only_clean_content",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-04",
+      "severity": "low",
+      "where": "scripts/global_hook.py cache key",
+      "what": "The clean-result cache key now covers the project root, SECGATE_SUPPRESSIONS and config/security-suppressions.yaml, so a removed suppression is checked again.",
+      "check": "review of the key in global_hook.py main()",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-05",
+      "severity": "low",
+      "where": "scripts/stop_gate.py _fp()",
+      "what": "Findings without a line number (agent config, end-of-life libraries) shared one fingerprint per rule and file; the message is now part of it.",
+      "check": "tests/test_v7_guard.py smart-mode tests",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-06",
+      "severity": "low",
+      "where": "AGENTS.md, global-CLAUDE.md, SKILL.md",
+      "what": "The smart-mode rules allowed only a review from memory; for endpoint, auth, session, authorization, upload, payment, crypto and deserialization changes the matching SOURCE-CODE-REVIEW.md section is read before done, since the hooks cannot see those classes.",
+      "check": "tests/test_v7_guard.py::test_offer_rule_is_in_every_agent_rules_file and manual review",
+      "status": "fixed"
     }
   ]
 }
