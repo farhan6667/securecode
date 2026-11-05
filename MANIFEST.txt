@@ -215,6 +215,7 @@ Added after the 6.2 review
 - scripts/engines/zap.py
 - scripts/fix_pr.py
 - scripts/global_hook.py
+- scripts/guard_switch.py
 - scripts/injection_watch.py
 - scripts/install-ci-scanners.ps1
 - scripts/install-ci-scanners.sh
@@ -320,7 +321,9 @@ Added after the 6.2 review
 - tests/test_ci_skip_check.py
 - tests/test_fuzz_guard.py
 - tests/test_gate.py
+- tests/test_guard_auto_mode.py
 - tests/test_guard_positive_model.py
+- tests/test_guard_switch.py
 - tests/test_heuristics.py
 - tests/test_java_spring.py
 - tests/test_laravel_authz.py

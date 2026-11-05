@@ -25,7 +25,7 @@ Exit 2 blocks the call and shows stderr to the agent. "ask" is returned as PreTo
 Policy modes (config/guard-policy.json next to this runtime, see load_policy): "owner" or "managed".
 """
 from __future__ import annotations
-import fnmatch, json, os, re, stat, sys, tempfile, time
+import fnmatch, json, os, re, shutil, stat, sys, tempfile, time
 from pathlib import Path, PurePath
 from urllib.parse import unquote
 
@@ -334,6 +334,7 @@ class GuardEnv:
     """Home, project roots and protected targets for one decision."""
 
     def __init__(self, event: dict):
+        self.owner = False          # set by _check: the two false-positive fixes below apply to owner mode only
         self.home = split_norm(home_dir(), None) or "/"
         self.home_drive = _drive_of(self.home)
         h = self.home.rstrip("/")
@@ -1142,25 +1143,114 @@ CD_NAMES = {"cd", "chdir", "set-location", "sl", "pushd", "push-location", "popd
 INFO_FLAGS = {"--version", "-V", "-v", "--help", "-h", "-VV", "version"}
 
 
-def install_class(h: str, rest: list[str]):
-    """A new named dependency: npm i x, pip install x, composer require x, cargo add x ..."""
+NPM_FAMILY = ("npm", "pnpm", "yarn", "bun")
+PIP_FAMILY = ("pip", "pipenv", "poetry", "uv", "pdm")
+# A plain registry package by name, with at most a plain version or tag: lodash, @types/node@18, react@^18.2.0.
+# No spaces and no nested optional groups, so the match is linear.
+PKG_NPM = re.compile(r"(?:@[a-z0-9][\w.-]*/)?[a-z0-9][\w.-]*(?:@[\w^~*<>=|-][\w.^~*<>=|-]*)?", re.I)
+_PIP_OP = r"(?:===|==|~=|!=|<=|>=|<|>)"
+PKG_PIP = re.compile(r"[a-z0-9][\w.-]*(?:\[[\w,.-]+\])?(?:@[\d^~*<>=][\w.^~*<>=|-]*)?"
+                     rf"(?:{_PIP_OP}[\w.*+!-]+(?:,{_PIP_OP}[\w.*+!-]+)*)?", re.I)
+NPM_FILE_RX = re.compile(r"\.(?:tgz|tar\.gz|tar)$", re.I)
+ARCHIVE_RX = re.compile(r"\.(?:whl|tar(?:\.\w+)?|tgz|tbz2?|txz|tlz|zip|egg|7z|gem|crate)$", re.I)
+PKG_CARGO = re.compile(r"[a-z0-9][\w-]*(?:@[\w.^~*=<>-]+)?", re.I)
+PKG_COMPOSER = re.compile(r"[a-z0-9][\w.-]*/[a-z0-9][\w.-]*(?::[\w.^~*@-]+)?", re.I)
+PKG_SIMPLE = re.compile(r"[a-z0-9][\w.-]*", re.I)
+PKG_MAX = 214
+# The words reach the guard lowercased, so these are the lowercase forms. Anything not listed here (an option with a
+# value, a registry or index option, a workspace, a proxy) makes the install "install_odd".
+SAFE_NPM_FLAGS = {"-d", "--save-dev", "-s", "--save", "-e", "--save-exact", "-o", "--save-optional", "-p", "--save-prod",
+                  "--no-save", "--dev", "--exact", "--legacy-peer-deps", "--ignore-scripts", "--no-audit", "--no-fund",
+                  "--prefer-offline", "--silent", "--no-progress"}
+SAFE_PIP_FLAGS = {"-u", "--upgrade", "-q", "--quiet", "-qq", "--no-cache-dir", "--no-deps", "--pre",
+                  "--disable-pip-version-check", "--no-warn-script-location", "--require-virtualenv"}
+SAFE_OTHER_FLAGS = {"-d", "--dev", "--save-dev", "--no-interaction"}
+NPX_SAFE_FLAGS = {"-y", "--yes", "--no", "--no-install", "-q", "--quiet", "--no-progress"}
+# Options that change where a package comes from or what runs. For a tool the guard knows (jest, tsc, prettier...) only these
+# make npx an odd install; any other option does for an unknown package, but not for a known one.
+NPX_SOURCE_RX = re.compile(r"^--?(?:registry|userconfig|globalconfig|prefix|cache|cache-dir|node-options|script-shell|proxy|"
+                           r"https-proxy|cafile|cert|npmrc|config|package|call)(?:=|$)|^--@[\w.-]+:registry(?:=|$)", re.I)
+TRUSTED_NAMES = {"node", "npm", "npx", "pip", "pip3", "pytest", "git", "uv"}
+
+
+def trusted_program(p: str, base: str) -> bool:
+    """A path-qualified program is trusted only when it is the very file PATH gives for that name (the guard's own
+    Python also counts for a python name), and the name is one the guard models. Anything else outside the project is
+    code the guard cannot see. Only a local drive or POSIX path is looked at: a UNC or device path would make the
+    guard open a network connection to a host the agent chose."""
+    if not (PY_RX.match(base) or base in TRUSTED_NAMES):
+        return False
+    if not (re.match(r"[a-z]:[/\\]", p, re.I) or (p.startswith("/") and not p.startswith("//"))):
+        return False
+    try:
+        mine = set()
+        if PY_RX.match(base):
+            mine.add(os.path.normcase(os.path.realpath(sys.executable)))
+        w = shutil.which(base)
+        if w:
+            mine.add(os.path.normcase(os.path.realpath(w)))
+        return os.path.normcase(os.path.realpath(p)) in mine
+    except (OSError, ValueError):
+        return False
+
+
+# Options that take the next word as their value. Only these are skipped when looking for the verb: an unknown option
+# followed by a word that is not a verb ends the search, so `npm --silent run add foo` is not read as `npm add foo`.
+VALUE_OPTS = {"--prefix", "-c", "--cwd", "--filter", "--directory", "--registry", "--cache", "--cache-dir", "--manifest-path",
+              "--color", "--config", "--userconfig", "--globalconfig", "--index-url", "--extra-index-url", "--index",
+              "--default-index", "--python", "--project", "--workspace", "--dir", "--target", "--root", "--path", "--git",
+              "--source", "--proxy", "--cafile", "--cert", "--loglevel"}
+
+
+def _find_verb(rest: list[str], subs: set):
+    """Index of the verb, skipping options (and the value of an option that takes one) and the words workspace and
+    global that some package managers put in front of it. -1 when there is none."""
+    i = 0
+    while i < len(rest):
+        t = rest[i]
+        if t in subs:
+            return i
+        if t.startswith("-"):
+            i += 1
+            if "=" not in t and t in VALUE_OPTS and i < len(rest) and rest[i] not in subs:
+                i += 1                               # the option's value
+            continue
+        if t == "workspace":
+            i += 2
+            continue
+        if t in ("global", "workspaces"):
+            i += 1
+            continue
+        return -1
+    return -1
+
+
+def _install_parse(h: str, rest: list[str]):
+    """(tool, verb index, arguments after the verb, package-like names) for an install command, else None."""
     if h == "pip3":
         h = "pip"
-    elif h == "uv" and rest[:1] == ["pip"]:
-        h, rest = "pip", rest[1:]
+    elif h == "uv":
+        j = _find_verb(rest, {"pip", "tool", "add"})
+        if j < 0:
+            return None
+        if rest[j] != "add":                     # uv pip install x, uv tool install x: drop the wrapper word, an option
+            k = _find_verb(rest[j + 1:], {"install"})   # before the verb then keeps the verb index above 0 (odd)
+            if k < 0:
+                return None
+            h, rest = "pip", rest[:j] + rest[j + 1:]
     if h == "dotnet" and rest[:1] == ["add"] and "package" in rest[:3]:
-        return "install", "adding a new dependency; check the package name is real and spelled right."
+        return h, 0, rest, ["package"]
     subs = {"npm": {"install", "i", "add", "in", "isntall"}, "pnpm": {"add", "install", "i"}, "yarn": {"add"}, "bun": {"add", "install", "i"},
             "pip": {"install"}, "poetry": {"add"}, "uv": {"add"}, "pdm": {"add"}, "composer": {"require"}, "pipenv": {"install"},
             "go": {"get", "install"}, "cargo": {"add", "install"}, "gem": {"install"}, "bundle": {"add"}}.get(h)
     if not subs or not rest:
         return None
-    pos = [a for a in rest if not a.startswith("-")]
-    if not pos or pos[0] not in subs:
+    vi = _find_verb(rest, subs)       # an option or a workspace before the verb makes vi > 0, which is never plain
+    if vi < 0:
         return None
     pip_vals = {"-r", "--requirement", "-c", "--constraint", "-e", "--editable", "-i", "--index-url", "--extra-index-url",
                 "-f", "--find-links", "-t", "--target", "--prefix", "--root", "--python", "-p"}
-    args, skip, names = rest[rest.index(pos[0]) + 1:], False, []
+    args, skip, names = rest[vi + 1:], False, []
     for a in args:
         if skip:
             skip = False
@@ -1171,20 +1261,72 @@ def install_class(h: str, rest: list[str]):
         if a in (".", "..") or a.startswith(("./", "../", ".\\", "..\\", "/")) or re.match(r"[a-z]:[/\\]", a, re.I):
             continue
         names.append(a)
-    if names:
+    return h, vi, args, names
+
+
+def plain_package(h: str, name: str) -> bool:
+    """Is this one word a plain registry package by name (with at most a plain version) for this tool?"""
+    if len(name) > PKG_MAX:
+        return False
+    # npm reads x.tgz, x.tar.gz and x.tar as files (but lodash.zip is a registry name); the others never use a file
+    # extension in a package name
+    if (NPM_FILE_RX if h in NPM_FAMILY else ARCHIVE_RX).search(name):
+        return False
+    rx = PKG_NPM if h in NPM_FAMILY else PKG_PIP if h in PIP_FAMILY else PKG_CARGO if h == "cargo" else \
+        PKG_COMPOSER if h == "composer" else PKG_SIMPLE if h in ("gem", "bundle", "dotnet") else None
+    return bool(rx and rx.fullmatch(name))
+
+
+def _plain_install(h: str, vi: int, args: list[str]) -> bool:
+    """Only this shape is "install": the verb first, then known value-less flags and plain package names. A source or
+    index option, a workspace, a URL, a git or file source, a GitHub shorthand, a name@ that hides a source, an
+    archive, and any tool that has no registry of its own (go) are all something else."""
+    if vi != 0 or h == "go":
+        return False
+    flags = SAFE_NPM_FLAGS if h in NPM_FAMILY else SAFE_PIP_FLAGS if h == "pip" else \
+        (SAFE_OTHER_FLAGS - {"-d"} if h == "composer" else SAFE_OTHER_FLAGS)     # composer -d is --working-dir, it takes a value
+    n = 0
+    for a in args:
+        if a.startswith("-"):
+            if a not in flags:
+                return False
+        elif plain_package(h, a):
+            n += 1
+        else:
+            return False
+    return n > 0
+
+
+def install_class(h: str, rest: list[str]):
+    """A new named dependency: npm i x, pip install x, composer require x, cargo add x ..."""
+    p = _install_parse(h, rest)
+    if p is None:
+        return None
+    h2, vi, args, names = p
+    if not names and not any(re.search(r"://|^git\+", a, re.I) for a in args):
+        return None
+    if h2 == "dotnet":
+        plain = len(args) == 3 and args[:2] == ["add", "package"] and plain_package("dotnet", args[2])
+        return ("install", "adding a new dependency; check the package name is real and spelled right.") if plain else \
+            ("install_odd", "adding a package with options or from another source; check where it comes from.")
+    if _plain_install(h2, vi, args):
         return "install", f"adding a new dependency ({names[0][:80]}); check the package name is real and spelled right."
-    return None
+    return "install_odd", ("this installs something other than a plain registry package by name (a source or index option, "
+                           "a URL, git or file source, an archive, a workspace or other options); check where it comes from.")
 
 
 def publish_class(h: str, rest: list[str]):
     if "--dry-run" in rest:
         return None
     args = [a for a in rest if not a.startswith("-")]
-    sub = args[0] if args else ""
-    if (h in ("npm", "pnpm", "bun", "cargo", "poetry", "flit", "uv", "hatch", "pdm") and sub == "publish") or \
-            (h == "yarn" and (sub == "publish" or args[:2] == ["npm", "publish"])) or \
-            (h == "gem" and sub == "push") or (h == "twine" and sub == "upload") or \
-            (h == "dotnet" and args[:2] == ["nuget", "push"]) or (h == "nuget" and sub == "push"):
+
+    def verb(*v):                    # the verb after any options and their values: cargo --color never publish
+        return _find_verb(rest, set(v)) >= 0
+
+    if (h in ("npm", "pnpm", "bun", "cargo", "poetry", "flit", "uv", "hatch", "pdm") and verb("publish")) or \
+            (h == "yarn" and (verb("publish") or args[:2] == ["npm", "publish"])) or \
+            (h == "gem" and verb("push")) or (h == "twine" and verb("upload")) or \
+            (h == "dotnet" and args[:2] == ["nuget", "push"]) or (h == "nuget" and verb("push")):
         return "exposure", "publishing a package makes this code public."
     return None
 
@@ -1359,6 +1501,7 @@ class Shell:
         self.written: set = parent.written if parent else set()
         self.shadow: list = parent.shadow if parent else [False]
         self.write_exec: list = parent.write_exec if parent else [False]
+        self.ask_seen: list = parent.ask_seen if parent else [None]    # the first "ask" any part of the command raised
         self.meta_secret = self.meta_prot = False
         self.worst = None
         self.stage_unmodelled = False
@@ -1366,6 +1509,8 @@ class Shell:
     # ---- results
     def res(self, r):
         if r:
+            if r[0] == "ask" and self.ask_seen[0] is None:
+                self.ask_seen[0] = r[1]      # "ask" ranks below the classes, so stronger() would drop it
             self.worst = stronger(self.worst, r)
 
     def unk(self, why: str):
@@ -1805,6 +1950,9 @@ class Shell:
             self.unk("the command name contains a wildcard")
             return
         args = [Arg(c, r) for c, r in zip(words[1:], raw_texts[1:])]
+        if self.env.owner and self.d == "ps" and not st.call and not args and lexed and lexed[0] and \
+                all(isinstance(e, tuple) and e[0] == "q" for e in lexed[0]):
+            return                                           # a quoted string with no variable or $( ): PowerShell prints it
         if st.call and self.d == "ps":
             if "/" in nm_raw or "\\" in nm_raw:
                 return self.run_script(Arg(first, raw_texts[0]), args, st)
@@ -1818,6 +1966,8 @@ class Shell:
             sysdirs = ("/usr/bin/", "/bin/", "/usr/local/bin/", "/opt/homebrew/bin/", "c:/windows/system32/", "c:/program files/git/")
             if p and any(p.lower().startswith(sd) for sd in sysdirs):
                 return self.dispatch(base, args, st, idx, pipe)
+            if self.env.owner and p and trusted_program(p, base):
+                return self.dispatch(base, args, st, idx, pipe)       # the same file PATH gives for that name
             st.modelled = False
             st.name = base
             self.unk(f"it runs a program outside the project ({nm_raw[:120]})")
@@ -2697,10 +2847,36 @@ class Shell:
                     self.path(c, "write")
 
     # ---- package managers
+    def readings(self, args: list, lower: bool = True):
+        """Every reading of the words, and whether a word could not be resolved. A brace expansion gives a word several
+        values and the shell runs them as separate words, so each value alone (capped) and all values together are
+        returned; the joint reading is what the shell really runs."""
+        combos: list = [[]]
+        joint: list = []
+        unresolved = False
+        for a in args:
+            vals = [c.lower() if lower else c for c in a.cands if isinstance(c, str)]
+            unresolved = unresolved or any(c is None for c in a.cands)
+            vals = vals or [""]
+            joint += vals
+            combos = [x + [v] for x in combos for v in vals[:8]][:64]
+        return combos + [joint], unresolved
+
+    def install_res(self, name: str, args: list):
+        """publish_class and install_class over every reading of the words; the strongest result counts. A word that
+        cannot be resolved turns a plain install into install_odd."""
+        rds, unresolved = self.readings(args)
+        best = None
+        for words in rds:
+            best = stronger(best, publish_class(name, words) or install_class(name, words))
+        if best and best[0] == "install" and unresolved:
+            best = "install_odd", "a word could not be resolved, so the package or its source is not known."
+        return best
+
     def npm(self, name: str, args: list, st: Stage):
         t = [(a.t or "") for a in args]
         tl = [x.lower() for x in t]
-        self.res(publish_class(name, tl) or install_class(name, tl))
+        self.res(self.install_res(name, args))
         if any(x in ("-g", "--global", "--location=global") or x == "--location" and k + 1 < len(tl) and tl[k + 1] == "global"
                for k, x in enumerate(tl)):
             st.modelled = False
@@ -2713,47 +2889,84 @@ class Shell:
         if sub in ("config", "set", "get") and not (len(pos) > 1 and pos[1] in ("get", "list", "ls")) and sub != "get":
             st.modelled = False
             return self.unk("npm config changes are not modelled")
+        rds, unresolved = self.readings(args)
+        for r in rds:
+            pr = [x for x in r if not x.startswith("-")]
+            sr = pr[0] if pr else ""
+            if sr in ("exec", "x", "dlx"):
+                if any(NPX_SOURCE_RX.match(x) for x in r[:r.index(sr)]):        # a registry or config option before the verb
+                    self.res(("install_odd", "an option before the verb can change where the package comes from."))
+            elif sr == "create" or (sr == "init" and len(pr) > 1):
+                tmpl = pr[1] if len(pr) > 1 else ""
+                plain = plain_package("npm", tmpl) and not unresolved and \
+                    all(x in SAFE_NPM_FLAGS or x in ("-y", "--yes") for x in r if x.startswith("-"))
+                self.res(("install" if plain else "install_odd",
+                          "it downloads and runs a project template package; check the name is real and spelled right."))
         if sub in ("exec", "x", "dlx"):
             k = t.index(next(x for x in t if x.lower() == sub)) + 1
             return self.npx(args[k:], st)
-        if sub in ("create",) or (sub == "init" and len(pos) > 1):
-            self.res(("install", "it downloads and runs a project template package; check the name is real and spelled right."))
         self.scan(args, "write", {"--prefix": "write", "-C": "write", "--dir": "write", "--cwd": "write", "--workspace": None,
                                   "-w": None, "--filter": None, "--registry": None, "--tag": None, "--access": None, "--otp": None,
                                   "--reporter": None, "--loglevel": None, "--omit": None, "--include": None})
 
-    def npx(self, args: list, st: Stage):
+    def npx_verdict(self, words: list):
+        """One reading of the words after npx: ("call", k) when it runs a shell command, else (result or None, k)."""
         k = 0
         pkgs = []
-        while k < len(args):
-            tx = args[k].t or ""
-            if tx in ("-p", "--package") and k + 1 < len(args):
-                pkgs.append(args[k + 1].t or "")
+        soft = hard = False
+        while k < len(words):
+            tx = words[k]
+            if tx in ("-p", "--package") and k + 1 < len(words):
+                pkgs.append(words[k + 1])
                 k += 2
                 continue
             if tx.startswith("--package="):
                 pkgs.append(tx.split("=", 1)[1])
                 k += 1
                 continue
-            if tx in ("-c", "--call"):
-                st.modelled = False
-                return self.unk("npx -c runs a shell command")
+            if tx in ("-c", "--call") or tx.startswith("--call=") or (tx[:1] == "-" and tx[1:2] == "c" and not tx.startswith("--")):
+                return "call", k
+            if tx == "--":                                   # the end of the options
+                k += 1
+                break
             if tx.startswith("-"):
+                if tx.lower() not in NPX_SAFE_FLAGS:
+                    if NPX_SOURCE_RX.match(tx):
+                        hard = True
+                    else:
+                        soft = True
                 k += 1
                 continue
             break
-        if k < len(args):
-            pkgs.append(args[k].t or "")
+        if k < len(words):
+            pkgs.append(words[k])
+        best = None
         for p in pkgs:
             base = re.sub(r"(?<=.)@[^/]*$", "", p)
-            if base not in NPX_KNOWN:
-                self.res(("install", f"npx runs a package that may be downloaded first ({p[:80]}); check the name is real and spelled right."))
-        self.scan(args[k + 1:], "write")
+            if base in NPX_KNOWN and not hard:
+                continue                                     # a tool the guard knows, with no option that moves its source
+            cls = "install" if plain_package("npm", p) and not (soft or hard) else "install_odd"
+            best = stronger(best, (cls, f"npx runs a package that may be downloaded first ({p[:80]}); check the name is real and spelled right."))
+        return best, k
+
+    def npx(self, args: list, st: Stage):
+        rds, unresolved = self.readings(args, lower=False)
+        best = None
+        for w in rds:
+            r, _ = self.npx_verdict(w)
+            if r == "call":
+                st.modelled = False
+                return self.unk("npx -c runs a shell command")
+            best = stronger(best, r)
+        if best and best[0] == "install" and unresolved:
+            best = "install_odd", "a word could not be resolved, so the package or its source is not known."
+        self.res(best)
+        self.scan(args[self.npx_verdict(rds[0])[1] + 1:], "write")
 
     def pip(self, args: list, st: Stage):
         t = [(a.t or "") for a in args]
         tl = [x.lower() for x in t]
-        self.res(install_class("pip", tl))
+        self.res(self.install_res("pip", args))
         pos = [x for x in tl if not x.startswith("-")]
         sub = pos[0] if pos else ""
         if sub and sub not in PIP_SUBS:
@@ -3014,7 +3227,7 @@ class Shell:
 
     def tool(self, name: str, args: list, st: Stage, idx: int):
         tl = [(a.t or "").lower() for a in args]
-        self.res(publish_class(name, tl) or install_class(name, tl))
+        self.res(self.install_res(name, args))
         if name in ("php", "ruby", "perl"):
             i = 0
             while i < len(args):
@@ -3246,14 +3459,16 @@ def deglob(text: str) -> str:
 
 # ------------------------------------------------------------------------------------------- policy
 
-CLASSES = ("destructive", "exposure", "install", "unknown")
+CLASSES = ("destructive", "exposure", "install", "install_odd", "unknown")
 MODES = ("owner", "managed")
-POLICY_TABLE = {"owner": {"destructive": "ask", "exposure": "ask", "install": "ask", "unknown": "ask"},
-                "managed": {"destructive": "deny", "exposure": "deny", "install": "ask", "unknown": "deny"}}
+# install_odd is an install that is not a plain registry package by name. It is asked about exactly like install in
+# both modes (so nothing changes for a person or for managed mode); only auto mode treats it differently.
+POLICY_TABLE = {"owner": {"destructive": "ask", "exposure": "ask", "install": "ask", "install_odd": "ask", "unknown": "ask"},
+                "managed": {"destructive": "deny", "exposure": "deny", "install": "ask", "install_odd": "ask", "unknown": "deny"}}
 POLICY_NAME = "guard-policy.json"
 POLICY_MAX = 4096
-POLICY_KEYS = {"mode", "version", "note"}
-RANK = {"deny": 5, "destructive": 3, "exposure": 3, "unknown": 3, "install": 2, "ask": 1}
+POLICY_KEYS = {"mode", "version", "note", "guard"}
+RANK = {"deny": 5, "destructive": 3, "exposure": 3, "unknown": 3, "install_odd": 2.5, "install": 2, "ask": 1}
 SHOW_MAX = 2000
 AUDIT_NAME = "guard-audit.jsonl"
 AUDIT_MAX_BYTES = 5_000_000
@@ -3335,11 +3550,35 @@ def stronger(a, b):
     return a if RANK.get(a[0], 5) >= RANK.get(b[0], 5) else b
 
 
-def apply_policy(result, mode: str, cmd: str):
+def run_style(event: dict) -> str:
+    """How the agent is run, from the permission mode Claude Code puts in the hook input.
+    "bypass" (bypassPermissions) and "unattended" (auto, dontAsk) mean nobody is there to answer a question.
+    Anything missing, unknown or of the wrong type counts as "attended", the strict reading."""
+    pm = event.get("permission_mode") if isinstance(event, dict) else None
+    if pm == "bypassPermissions":
+        return "bypass"
+    if pm in ("auto", "dontAsk"):
+        return "unattended"
+    return "attended"
+
+
+UNATTENDED_NOTE = (" The agent is running without anyone to ask (auto or don't-ask mode), so this is refused instead of"
+                   " asked. Run it yourself, or work another way.")
+
+
+def apply_policy(result, mode: str, cmd: str, style: str = "attended"):
     if not result or result[0] not in CLASSES:
         return result
     cls, why = result
     final = POLICY_TABLE.get(mode, POLICY_TABLE["managed"]).get(cls, "deny")
+    if final == "ask" and mode == "owner" and style != "attended":
+        # Owner mode only. A managed install keeps its policy whatever mode the developer picked.
+        # Bypass: the developer owns the result, nothing is asked. Auto and don't-ask: a named package install goes on
+        # to Claude's own permission system; everything else the guard would have asked about (it could not follow the
+        # command, destructive, exposure) is refused with the reason, so the agent works another way.
+        if style == "bypass" or cls == "install":
+            return None
+        return "deny", f"{why}{UNATTENDED_NOTE}"
     if final == "ask":
         shown = show_command(cmd)
         if shown is None:
@@ -3372,8 +3611,9 @@ def redact(text: str, limit: int = AUDIT_TEXT) -> str:
     return t[:limit] + ("..." if len(t) > limit else "")
 
 
-def audit_ask(event: dict, reason: str, mode: str) -> bool:
-    """Append one line to <project>/.security/guard-audit.jsonl for every "ask". Best effort; refuses links."""
+def audit_ask(event: dict, reason: str, mode: str, decision: str = "ask") -> bool:
+    """Append one line to <project>/.security/guard-audit.jsonl for every "ask", and for an ask that bypass or
+    auto mode answered without a person (decision then says which). Best effort; refuses links."""
     try:
         project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or ""
         if not isinstance(project, str) or not project or len(project) > 4096:
@@ -3398,7 +3638,7 @@ def audit_ask(event: dict, reason: str, mode: str) -> bool:
         ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
         what = ti.get("command") if isinstance(ti.get("command"), str) else \
             next((v for k, v in ti.items() if isinstance(v, str) and re.search(r"path|file", str(k), re.I)), "")
-        line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "mode": mode, "decision": "ask",
+        line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "mode": mode, "decision": decision,
                 "tool": redact(event.get("tool_name") or "", 80), "command": redact(what), "reason": redact(reason.split(" Approve only")[0], 200)}
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
         fd = os.open(f, flags, 0o600)
@@ -3516,6 +3756,9 @@ def check_tool_paths(tool: str, ti: dict, env: GuardEnv):
     return worst
 
 
+GLOBAL_CFG_REASON = "this changes your global Claude settings or rules; approve only if you asked for it."
+
+
 def judge_tool_path(tool, key, s, p, env, writes, reads, is_mcp):
     segs = segs_of(p)
     sec = secret_hit(env, p, segs)
@@ -3539,7 +3782,7 @@ def judge_tool_path(tool, key, s, p, env, writes, reads, is_mcp):
         user_claude = any(relation(segs, t) == "inside" for t in env.claude_cfg)
         if writes and user_claude and re.search(r"/(settings(\.local)?\.json|claude\.md|rules/[^:]+\.md)$", p, re.I) and \
                 not re.search(r"/(hooks|skills|agents|commands)/", p, re.I):
-            return "ask", "this changes your global Claude settings or rules; approve only if you asked for it."
+            return "ask", GLOBAL_CFG_REASON
         return "deny", "the agent may not change its own Claude config, the org security runtime, its update keys, the scanner tools folder or Python startup files."
     if prot == "ancestor" and (writes or is_mcp):
         return "deny", "the agent may not write into the home folder itself or a folder above a protected one."
@@ -3578,6 +3821,9 @@ def check(event: dict, mode: str | None = None):
     except GuardTimeout:
         r = ("unknown", "the guard could not finish checking this in time.")
         m = mode if mode is not None else load_policy()[0]
+        if m == "owner" and run_style(event) != "attended":
+            # Never fail open: an action the guard ran out of time on is refused when nobody can be asked.
+            return "deny", "the guard could not finish checking this in time, so it is refused." + UNATTENDED_NOTE
         return apply_policy(r, m, _display(event))
     finally:
         _DEADLINE[0] = float("inf")
@@ -3599,6 +3845,7 @@ def _check(event: dict, mode: str | None):
     if not isinstance(ti, dict):
         return "deny", "the tool input could not be read, so this action cannot be checked safely."
     env = GuardEnv(event)
+    env.owner = (mode if mode is not None else load_policy()[0]) == "owner"
     project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or os.getcwd()
     worst = None
 
@@ -3618,6 +3865,9 @@ def _check(event: dict, mode: str | None):
             return "deny", "the command could not be read, so it cannot be checked safely."
         if len(cmd) > MAX_COMMAND:
             return "deny", f"command is longer than {MAX_COMMAND} characters and cannot be checked safely; split it or put it in a script file."
+        if GUARD_SWITCH_RX.search(cmd) and (APP_FOLDER in squeeze(cmd).lower() or PROTECTED.search(squeeze(cmd))):
+            return "deny", ("the guard switch in the org runtime is for the owner at a terminal; the agent may not run, "
+                            "import or name it.")
         dialect = "ps" if tool == "PowerShell" else "bash"
         sh = Shell(env, dialect, env.cwd)
         sh.run(cmd)
@@ -3630,10 +3880,14 @@ def _check(event: dict, mode: str | None):
         worst = stronger(worst, r)
         if worst and worst[0] == "deny":
             return worst
+        if sh.ask_seen[0] and run_style(event) == "unattended" and \
+                (mode if mode is not None else load_policy()[0]) == "owner":
+            # a secret or credential file ask raised next to an install item must not be lost
+            return "deny", sh.ask_seen[0].split(" Approve only")[0].rstrip(".") + "." + UNATTENDED_NOTE
 
     if worst and worst[0] in CLASSES:
         m = mode if mode is not None else load_policy()[0]
-        worst = apply_policy(worst, m, _display(event))
+        worst = apply_policy(worst, m, _display(event), run_style(event))
         if worst and worst[0] == "deny":
             return worst
 
@@ -3647,16 +3901,61 @@ def _check(event: dict, mode: str | None):
     return worst
 
 
+GUARD_SWITCH_RX = re.compile(r"guard[_\- ]?switch", re.I)
+
+
+def guard_is_off(path: Path | None = None, markers: list[str] | None = None) -> bool:
+    """True only when the owner turned the command guard off with scripts/guard_switch.py: a valid policy in owner mode
+    (a managed install, a broken or oversized policy, a link, duplicate keys all mean managed, so never off) that says
+    "guard": "off" exactly. It switches off this guard only. The rules, edit hook, stop gate, secret shield and the
+    security tests are separate and are not affected."""
+    try:
+        mode, _ = load_policy(path, markers)
+        if mode != "owner":
+            return False
+        p = Path(path) if path is not None else policy_path()
+        data = json.loads(p.read_bytes().decode("utf-8-sig"), object_pairs_hook=_no_dupes)
+        return isinstance(data, dict) and data.get("guard") == "off"
+    except Exception:
+        return False
+
+
 def decide(event: dict, mode: str | None = None):
     if mode is None:
+        if guard_is_off():
+            return None
         mode = load_policy()[0]
+    style = run_style(event)
     result = check(event, mode)
+    if mode == "owner" and style != "attended":
+        # What the guard would have asked a person: the same check read the strict way. It is logged below with
+        # what was done instead, so bypass and auto mode leave a trail of every ask they answered without you.
+        strict = check({k: v for k, v in event.items() if k != "permission_mode"}, mode)
+        if result and result[0] == "ask":
+            # The direct asks (tool credential files, global Claude settings and rules) never reach apply_policy.
+            if result[1] == GLOBAL_CFG_REASON:
+                result = "deny", ("this changes your global Claude settings or rules, which the agent may not do when nobody "
+                                  "can be asked (auto, don't-ask and bypass mode). Edit it yourself.")
+            elif style == "bypass":
+                result = None
+            else:
+                result = "deny", result[1].split(" Approve only")[0].split("; approve")[0].rstrip(".") + "." + UNATTENDED_NOTE
+        if strict and strict[0] == "ask":
+            audit_ask(event, strict[1], mode, "unattended-refused" if result else
+                      ("bypass-allowed" if style == "bypass" else "unattended-deferred"))
+        return result
     if result and result[0] == "ask":
         audit_ask(event, result[1], mode)
     return result
 
 
 def main() -> int:
+    if guard_is_off():
+        try:
+            sys.stdin.read()                      # take the event so the host's pipe closes cleanly
+        except Exception:
+            pass
+        return 0                                  # the owner turned this guard off; nothing else is touched
     try:
         event = json.loads(sys.stdin.read())
         if not isinstance(event, dict):
