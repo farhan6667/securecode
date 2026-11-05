@@ -52,7 +52,9 @@ Added after the 6.2 review
   denies them; missing or malformed policy means managed. Asks are logged to .security/guard-audit.jsonl.
 - scripts/adapters/cursor_hook.py and scripts/adapters/codex_hook.py; templates/cursor/hooks.json and
   templates/codex/hooks.json.
-- scripts/stop_gate.py offers "Run Security Test" once per substantial change set (3+ code files or 40+ lines).
+- scripts/stop_gate.py offers "Run Security Test" once per substantial change set (10+ code files or 300+ lines),
+  at most once per session; it blocks once per High/Critical finding, not at every stop (smart mode, 7.1).
+- scripts/global_hook.py is silent when the edited file is clean and skips content it already checked (7.1).
 
 7.0 automated pentest
 - scripts/report.py: REPORT.md and print-ready REPORT.html (optional PDF) with executive summary, scope and

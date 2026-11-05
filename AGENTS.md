@@ -101,13 +101,21 @@ When the developer writes **Run Security Test** (or the Roman Urdu "Security Tes
 but changes nothing until the developer agrees. It ends with an OWASP Top 10 status table and a plain
 readiness call: ready for the security team, ready after fixes 1-3, or not ready.
 
-Before saying any feature is done, review your own change against the classes it touches
-(endpoint: access control and IDOR; upload: upload rules; query: injection; dependency: versions) and fix it.
+## 8. Smart mode: secure while coding, deep testing on request
 
-## 8. Offer the security test when the work is done
+While you code, write it secure the first time (section 5) and keep going. Do not stop to run security phases,
+audits or review rounds of your own between edits, and do not open `docs/SOURCE-CODE-REVIEW.md` or other long
+checklists while coding: they belong to "Run Security Test". Before saying a feature is done, check your own diff
+from memory for the classes it touches (endpoint: access control and IDOR; upload: upload rules; query:
+injection; dependency: versions) and fix what you see. That is one short pass, not a protocol.
 
-When you finish a substantial task (3 or more code files changed, or 40 or more changed lines, since you last
+The hooks stay cheap and quiet: the edit hook says nothing when the file is clean and shows only High or Critical
+findings; the stop hook sends you back once for a new High or Critical finding, not again for the same one.
+
+When you finish a substantial task (10 or more code files changed, or 300 or more changed lines, since you last
 offered) and no "Run Security Test" has run since those changes, end by asking the developer one short question:
 "Do you want me to run a full security test now (Run Security Test)?" Run it only after a yes. If they say no or
-later, accept it and do not ask again for the same changes. Skip the offer for tiny edits, docs-only changes
-and pure questions. In Claude Code and Codex the stop hook reminds you; in Cursor this rule is the reminder.
+later, accept it and do not ask again for the same changes or in the same session. Skip the offer for tiny
+edits, docs-only changes and pure questions. In Claude Code and Codex the stop hook reminds you; in Cursor this
+rule is the reminder. `SECURECODE_MODE=coding` (or `.security/mode.json` with `{"mode": "coding"}`) turns the
+offer off; the developer then asks for the test when the program is done.

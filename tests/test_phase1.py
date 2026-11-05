@@ -125,13 +125,55 @@ def test_weak_crypto_in_tests_is_medium_unless_it_is_about_secrets():
 
 def test_edit_hook_is_advisory_only():
     hook = ROOT / "scripts" / "global_hook.py"
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
         f = write(d, "bad.py", "import subprocess\nsubprocess.run(x, shell" + "=True)\n")
         ev = {"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}
         p = subprocess.run([sys.executable, "-I", str(hook)], input=json.dumps(ev), capture_output=True, text=True,
-                           timeout=120, encoding="utf-8", errors="replace")
+                           timeout=120, encoding="utf-8", errors="replace", env={**os.environ, "SECURECODE_CACHE_DIR": cache})
         out = json.loads(p.stdout)
         assert "decision" not in out and "RESULT: BLOCKED" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def _hook(ev, cache, extra=None):
+    p = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "global_hook.py")], input=json.dumps(ev), capture_output=True,
+                       text=True, timeout=120, encoding="utf-8", errors="replace",
+                       env={**os.environ, "SECURECODE_CACHE_DIR": cache, **(extra or {})})
+    assert p.returncode == 0, p.stderr
+    return p.stdout
+
+
+def test_smart_mode_edit_hook_is_silent_when_clean():
+    # a clean edit adds nothing to the model's context (the old hook injected the whole PASS report every time)
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
+        f = write(d, "ok.py", "def add(a, b):\n    return a + b\n")
+        ev = {"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}
+        assert _hook(ev, cache) == ""
+        assert "RESULT: PASS" in _hook(ev, cache, {"SECURECODE_HOOK_VERBOSE": "1"})   # the old report on request
+
+
+def test_smart_mode_edit_hook_shows_only_high_and_critical_and_never_twice():
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
+        f = write(d, "bad.py", "import subprocess, hashlib\nsubprocess.run(x, shell" + "=True)\nh = hashlib.md5(b'x')\n")
+        ev = {"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}
+        ctx = json.loads(_hook(ev, cache))["hookSpecificOutput"]["additionalContext"]
+        assert "[CRITICAL]" in ctx and "[MEDIUM]" not in ctx and "[LOW]" not in ctx
+        assert _hook(ev, cache) == ""                       # the same content was already reported
+        f.write_text(f.read_text() + "y = 2\n")             # a real change is checked again
+        assert "[CRITICAL]" in _hook(ev, cache)
+
+
+def test_smart_mode_edit_hook_cache_refuses_a_link():
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache, tempfile.TemporaryDirectory() as outside:
+        target = Path(outside, "edit-hook.json")
+        target.write_text("{}")
+        try:
+            os.symlink(target, Path(cache, "edit-hook.json"))
+        except (OSError, NotImplementedError):
+            import pytest
+            pytest.skip("symlinks need extra rights on this machine")
+        f = write(d, "ok.py", "x = 1\n")
+        _hook({"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}, cache)
+        assert target.read_text() == "{}"                   # nothing written through the link
 
 
 def test_stop_gate_checks_a_repo_with_no_commits():
