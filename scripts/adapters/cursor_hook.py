@@ -84,7 +84,7 @@ def handle(payload: dict, mode: str | None = None) -> dict:
     name = payload.get("hook_event_name")
     final = None
     for ev in to_guard_events(payload):
-        final = G.stronger(final, G.decide(ev, mode))
+        final = G.stronger(final, G.decide({**ev, "agent": "cursor"}, mode))
         if final and final[0] == "deny":
             break
     if not final:

@@ -125,7 +125,7 @@ def handle(payload: dict, mode: str | None = None) -> dict:
     """Antigravity's JSON answer for one PreToolUse call."""
     final = None
     for e in to_guard_events(payload):
-        final = G.stronger(final, G.decide(e, mode))
+        final = G.stronger(final, G.decide({**e, "agent": "antigravity"}, mode))
         if final and final[0] == "deny":
             break
     if not final:

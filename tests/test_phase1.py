@@ -125,13 +125,73 @@ def test_weak_crypto_in_tests_is_medium_unless_it_is_about_secrets():
 
 def test_edit_hook_is_advisory_only():
     hook = ROOT / "scripts" / "global_hook.py"
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
         f = write(d, "bad.py", "import subprocess\nsubprocess.run(x, shell" + "=True)\n")
         ev = {"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}
         p = subprocess.run([sys.executable, "-I", str(hook)], input=json.dumps(ev), capture_output=True, text=True,
-                           timeout=120, encoding="utf-8", errors="replace")
+                           timeout=120, encoding="utf-8", errors="replace", env={**os.environ, "SECURECODE_CACHE_DIR": cache})
         out = json.loads(p.stdout)
         assert "decision" not in out and "RESULT: BLOCKED" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def _hook(ev, cache, extra=None):
+    p = subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "global_hook.py")], input=json.dumps(ev), capture_output=True,
+                       text=True, timeout=120, encoding="utf-8", errors="replace",
+                       env={**os.environ, "SECURECODE_CACHE_DIR": cache, **(extra or {})})
+    assert p.returncode == 0, p.stderr
+    return p.stdout
+
+
+def test_smart_mode_edit_hook_is_silent_when_clean():
+    # a clean edit adds nothing to the model's context (the old hook injected the whole PASS report every time)
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
+        f = write(d, "ok.py", "def add(a, b):\n    return a + b\n")
+        ev = {"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}
+        assert _hook(ev, cache) == ""
+        assert "RESULT: PASS" in _hook(ev, cache, {"SECURECODE_HOOK_VERBOSE": "1"})   # the old report on request
+
+
+def test_smart_mode_edit_hook_shows_only_high_and_critical_every_time():
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
+        f = write(d, "bad.py", "import subprocess, hashlib\nsubprocess.run(x, shell" + "=True)\nh = hashlib.md5(b'x')\n")
+        ev = {"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}
+        ctx = json.loads(_hook(ev, cache))["hookSpecificOutput"]["additionalContext"]
+        assert "[CRITICAL]" in ctx and "[MEDIUM]" not in ctx and "[LOW]" not in ctx
+        assert "[CRITICAL]" in _hook(ev, cache)             # a finding is never hidden by the cache (another session)
+
+
+def test_smart_mode_edit_hook_keeps_the_serious_lines_when_the_output_is_long():
+    from importlib import util
+    spec = util.spec_from_file_location("gh", ROOT / "scripts" / "global_hook.py"); gh = util.module_from_spec(spec); spec.loader.exec_module(gh)
+    nl = chr(10)
+    out = nl.join(["=== GATE ===", "Mode: quick", "Counts: {}", "[CRITICAL] A x.py:1 bad"] + ["[MEDIUM] B x.py:2 meh"] * 2000
+                  + ["[HIGH] C x.py:3 bad", "RESULT: BLOCKED"])
+    text = gh.serious_only(out)
+    assert "[CRITICAL] A" in text and "[HIGH] C" in text and "Counts:" in text and "RESULT: BLOCKED" in text and "[MEDIUM]" not in text
+
+
+def test_smart_mode_edit_hook_caches_only_clean_content():
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
+        ok = write(d, "ok.py", "x = 1\n")
+        bad = write(d, "bad.py", "import subprocess\nsubprocess.run(x, shell" + "=True)\n")
+        for f in (ok, bad):
+            _hook({"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}, cache)
+        entries = json.loads(Path(cache, "edit-hook.json").read_text(encoding="utf-8"))
+        assert len(entries) == 1 and all(e["rc"] == 0 for e in entries.values())
+
+
+def test_smart_mode_edit_hook_cache_refuses_a_link():
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache, tempfile.TemporaryDirectory() as outside:
+        target = Path(outside, "edit-hook.json")
+        target.write_text("{}")
+        try:
+            os.symlink(target, Path(cache, "edit-hook.json"))
+        except (OSError, NotImplementedError):
+            import pytest
+            pytest.skip("symlinks need extra rights on this machine")
+        f = write(d, "ok.py", "x = 1\n")
+        _hook({"tool_name": "Edit", "cwd": d, "tool_input": {"file_path": str(f)}}, cache)
+        assert target.read_text() == "{}"                   # nothing written through the link
 
 
 def test_stop_gate_checks_a_repo_with_no_commits():

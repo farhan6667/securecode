@@ -16,7 +16,7 @@ APIs or Android apps with AI.
 <p align="center"><img src="docs/img/securecode-overview.webp" width="100%" alt="NexaForge SecureCode overview: a robot coding on a laptop between two panels. Left, what it does: AI coding agent integration (the image names Claude Code, Cursor, Codex and Gemini; Gemini CLI and Antigravity are supported too), multiple languages and frameworks, secure coding rules, continuous updates. Right, security coverage: OWASP Top 10, CWE Top 25, OWASP API Top 10, IDOR and access control, injection, XSS, secrets and supply chain, legacy backdoors and webshells. Below, the workflow from AI coding to security check, auto fix and validation, and the supported languages: PHP, Laravel, Java, Spring, JavaScript, TypeScript, Node.js, Python, C#, .NET and Go"></p>
 
 <p align="center">
-  <a href="#whats-new-in-70">What's new</a> ·
+  <a href="#whats-new-in-71">What's new</a> ·
   <a href="#install-with-one-prompt">Install</a> ·
   <a href="#what-you-get">What you get</a> ·
   <a href="#how-a-review-works">How a review works</a> ·
@@ -26,11 +26,27 @@ APIs or Android apps with AI.
 </p>
 
 <p align="center">
-  New in 7.0: <a href="https://www.linkedin.com/feed/update/urn:li:activity:7523701753914245121/">read the launch post on LinkedIn</a> ·
-  <a href="https://github.com/farhan6667/securecode/releases/tag/v7.0.0">release notes</a>
+  New in 7.1: a quieter guard. <a href="https://github.com/farhan6667/securecode/releases/tag/v7.1.0">Release notes</a> ·
+  <a href="https://www.linkedin.com/feed/update/urn:li:activity:7523701753914245121/">the 7.0 launch post on LinkedIn</a>
 </p>
 
-## What's new in 7.0
+## What's new in 7.1
+
+- **Quiet by default while you code.** The edit hook says nothing when the file is clean, shows only High and Critical
+  findings when it is not, and the security test offer waits for a feature's worth of work. You type "Run Security
+  Test" when the program is done and get the deep review, the report and the fixes.
+- **The command guard knows when nobody is there.** In auto, don't-ask and bypass mode it no longer stops an unattended
+  run with a question: bypass asks nothing, auto and don't-ask let plain installs through to Claude's own permission
+  system and refuse the rest with a reason. Secrets, the agent's own settings and pipe-to-shell stay off limits in every
+  mode.
+- **A switch for the command guard alone.** `guard_switch.py off` from your own terminal turns off only the guard.
+  The rules, the edit check, the stop gate, the secret shield and the security tests stay on.
+- **Fewer false alarms:** the Python that runs the guard by its full path and PowerShell assignments without spaces no
+  longer ask. The guard's audit now records which AI tool asked, and the updater retries without a token when a public
+  repository answers a token with a refusal. Details and the open limits are in
+  [RELEASE-NOTES-V7.1.md](RELEASE-NOTES-V7.1.md) and [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
+
+## What was new in 7.0
 
 - **A guard that allows what is clearly safe and asks about the rest.** Everyday commands inside your project run
   without a prompt (1 of 256 everyday commands asked in our test); anything unusual shows you the exact command
@@ -49,7 +65,7 @@ APIs or Android apps with AI.
 - **Updates that catch up:** a laptop that was off at check time updates as soon as it can, and 6.x installs move
   to 7.0 by themselves. Details in [RELEASE-NOTES-V7.0.md](RELEASE-NOTES-V7.0.md).
 
-## Pass the pentest the first time
+## A shorter pentest, with fewer repeat findings
 
 The usual road to production is slow:
 
@@ -58,7 +74,7 @@ The usual road to production is slow:
 Most of those round trips are for the same known issues. SecureCode moves that first pentest pass to the
 developer's desk, in real time:
 
-> code **with a virtual pentester beside you** → fixed while you work → staging → pentest → **pass**
+> code **with a virtual pentester beside you** → fixed while you work → staging → a shorter pentest
 
 - **Real time.** Each change is checked as it is written, not days later.
 - **Fixes that don't break things.** The gate can run your project's own tests (`--run-tests`), and the review
@@ -66,7 +82,9 @@ developer's desk, in real time:
 - **Your security team's time goes further.** Human testers spend their days on the hard problems (business
   logic, chained attacks) instead of re-reporting old jQuery and missing headers.
 
-It does not replace a human pentest. It makes the human pentest shorter and far more likely to pass in one go.
+It does not replace a human pentest. The known, repeated findings are fixed before the human pentest starts, so it can
+spend its time on the hard problems. We have not measured how often a project passes the first time, so we make no
+promise about it.
 
 ## Why you need it
 

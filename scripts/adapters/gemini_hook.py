@@ -163,13 +163,15 @@ def extra_checks(payload: dict) -> list[tuple[str, str]]:
 def handle(payload: dict, mode: str | None = None):
     """(exit_code, stdout_json, stderr_text). Gemini CLI cannot ask, so ask becomes deny."""
     final = None
+    if mode is None and G.guard_is_off():
+        return 0, {"decision": "allow"}, ""      # the owner switched the command guard off (scripts/guard_switch.py)
     m = mode if mode is not None else G.load_policy()[0]
     for r in extra_checks(payload):
         final = G.stronger(final, G.apply_policy(r, m, f"{payload.get('tool_name')}"))
     for e in to_guard_events(payload):
         if final and final[0] == "deny":
             break
-        final = G.stronger(final, G.decide(e, m))
+        final = G.stronger(final, G.decide({**e, "agent": "gemini"}, m))
         if final and final[0] == "deny":
             break
     if not final:

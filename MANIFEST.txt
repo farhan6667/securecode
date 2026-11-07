@@ -1,6 +1,6 @@
-NexaForge SecureCode (Org AI Secure AppSec Gate) 7.0
+NexaForge SecureCode (Org AI Secure AppSec Gate) 7.1
 ====================================================
-Version: 7.0.0
+Version: 7.1.0
 
 Code security (unchanged core, fixed)
 - Global Claude Code skill (org-appsec-security), /security-gate and /sec-review commands
@@ -52,7 +52,9 @@ Added after the 6.2 review
   denies them; missing or malformed policy means managed. Asks are logged to .security/guard-audit.jsonl.
 - scripts/adapters/cursor_hook.py and scripts/adapters/codex_hook.py; templates/cursor/hooks.json and
   templates/codex/hooks.json.
-- scripts/stop_gate.py offers "Run Security Test" once per substantial change set (3+ code files or 40+ lines).
+- scripts/stop_gate.py offers "Run Security Test" once per substantial change set (10+ code files or 300+ lines),
+  at most once per session; it blocks once per High/Critical finding, not at every stop (smart mode, 7.1).
+- scripts/global_hook.py is silent when the edited file is clean and skips content it already checked (7.1).
 
 7.0 automated pentest
 - scripts/report.py: REPORT.md and print-ready REPORT.html (optional PDF) with executive summary, scope and
@@ -145,6 +147,7 @@ Added after the 6.2 review
 - README.md
 - RELEASE-NOTES-V6.2.md
 - RELEASE-NOTES-V7.0.md
+- RELEASE-NOTES-V7.1.md
 - SECURITY-CONTEXT.md
 - SECURITY.md
 - api-security/README.md
@@ -215,6 +218,7 @@ Added after the 6.2 review
 - scripts/engines/zap.py
 - scripts/fix_pr.py
 - scripts/global_hook.py
+- scripts/guard_switch.py
 - scripts/injection_watch.py
 - scripts/install-ci-scanners.ps1
 - scripts/install-ci-scanners.sh
@@ -268,6 +272,7 @@ Added after the 6.2 review
 - templates/strict-project/CLAUDE.section.md
 - templates/strict-project/claude_docs/IGNORED_FILES.md
 - templates/strict-project/claude_docs/security.md
+- tests/conftest.py
 - tests/fixtures/engines/bandit.json
 - tests/fixtures/engines/dependency-check.json
 - tests/fixtures/engines/eslint.json
@@ -315,12 +320,17 @@ Added after the 6.2 review
 - tests/fixtures/zap-report.json
 - tests/skip-allowlist.json
 - tests/test_agent_guard.py
+- tests/test_audit_agent.py
+- tests/test_audit_isolation.py
 - tests/test_benchmark_lab.py
 - tests/test_brand_overlay.py
 - tests/test_ci_skip_check.py
 - tests/test_fuzz_guard.py
 - tests/test_gate.py
+- tests/test_guard_auto_mode.py
 - tests/test_guard_positive_model.py
+- tests/test_guard_replay_shapes.py
+- tests/test_guard_switch.py
 - tests/test_heuristics.py
 - tests/test_java_spring.py
 - tests/test_laravel_authz.py
@@ -329,6 +339,7 @@ Added after the 6.2 review
 - tests/test_org_findings.py
 - tests/test_phase1.py
 - tests/test_phase2.py
+- tests/test_ps_assignment.py
 - tests/test_review2_regressions.py
 - tests/test_review3_regressions.py
 - tests/test_review4_regressions.py
@@ -338,6 +349,7 @@ Added after the 6.2 review
 - tests/test_secret_shield.py
 - tests/test_update_mechanism.py
 - tests/test_updater.py
+- tests/test_updater_token_retry.py
 - tests/test_v6_package.py
 - tests/test_v7_docs.py
 - tests/test_v7_engines.py

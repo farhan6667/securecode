@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Org AI Secure AppSec Gate (NexaForge SecureCode 7.0.0).
+"""Org AI Secure AppSec Gate (NexaForge SecureCode 7.1.0).
 
 Modes:
  quick: lightweight changed-file heuristics only.
@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse, json, os, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
-GATE_VERSION="7.0.0"   # kept equal to VERSION in install-global.py (tests/test_v7_docs.py checks it)
+GATE_VERSION="7.1.0"   # kept equal to VERSION in install-global.py (tests/test_v7_docs.py checks it)
 SEV={"CRITICAL":0,"HIGH":1,"MEDIUM":2,"LOW":3,"INFO":4}
 SKIP={".git","node_modules","vendor","dist","build","coverage",".next","venv",".venv","__pycache__","target",".security"}
 EXT={".twig",".ejs",".hbs",".php",".js",".jsx",".ts",".tsx",".py",".rb",".java",".go",".cs",".vue",".html",".htm",".sql",".sh",".bash",".yml",".yaml",".json",".xml",".tf",".tfvars",".env"}
