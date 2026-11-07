@@ -4,8 +4,8 @@ Many guard tests run the guard with the repository as the working folder. The gu
 <project>/.security/guard-audit.jsonl, so before this file existed those runs filled the real audit file with made-up asks
 (`cp .env.example .env`, `Read C:\\Users\\u\\.npmrc`, ...) that a person reading it would take for real ones.
 
-Two layers: (1) every test gets a throwaway CLAUDE_PROJECT_DIR and the in-process guard refuses to write an audit line for the
-repository itself; (2) at the end of the run the size of the real file is compared with the size at the start, and any growth
+Two layers: (1) the in-process guard refuses to write an audit line for the repository itself (and the guard itself never logs
+into its own source folder); (2) at the end of the run the size of the real file is compared with the size at the start, and any growth
 fails the run, which also catches a test that runs the guard in a subprocess.
 """
 import os
@@ -37,9 +37,7 @@ def _is_repo(path) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def _tests_never_write_the_repos_own_audit(monkeypatch, tmp_path_factory):
-    if "CLAUDE_PROJECT_DIR" not in os.environ:
-        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path_factory.mktemp("project")))
+def _tests_never_write_the_repos_own_audit(monkeypatch):
     g = sys.modules.get("agent_guard")
     real = getattr(g, "audit_ask", None) if g is not None else None
     if real is not None and not getattr(real, "_repo_safe", False):

@@ -40,11 +40,6 @@ def test_an_ask_for_another_project_is_still_logged(tmp_path, monkeypatch):
     assert len(lines) == 1 and json.loads(lines[0])["decision"] == "ask"
 
 
-def test_a_run_without_an_explicit_project_dir_gets_a_throwaway_one():
-    p = os.environ.get("CLAUDE_PROJECT_DIR")
-    assert p and Path(p).resolve() != ROOT and ROOT not in Path(p).resolve().parents
-
-
 def test_the_backstop_catches_a_subprocess_that_does_write(tmp_path):
     # a guard run as a subprocess with the repo as project does log (this is what the end-of-run size check is for)
     probe = tmp_path / "probe"
