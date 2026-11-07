@@ -1,5 +1,5 @@
 <!-- ORG-AI-APPSEC-GATE-START -->
-# Organization AppSec Guard (Global 7.0.0)
+# Organization AppSec Guard (Global 7.1.0)
 
 The full rules are in `%LOCALAPPDATA%\OrgAISecureAppSec\AGENTS.md` (macOS/Linux: the
 OrgAISecureAppSec app folder). Short version, always on:
@@ -25,11 +25,14 @@ OrgAISecureAppSec app folder). Short version, always on:
    and an offer to open a fix PR (`fix_pr.py`, dry run first, never the default branch).
    **"Run Advisory QA"** (or "Advisory QA Karo") or `/advisory-qa` does the same review as a readiness advisory and changes
    nothing until the user agrees.
-8. Before saying a feature is done, review your own change against `docs/SOURCE-CODE-REVIEW.md` for
-   the classes it touches and fix what you find. The most frequent pentest findings are in
-   `docs/COMMON-FINDINGS.md` (or `docs/ORG-FINDINGS.md` if your organization added one): outdated jQuery/Bootstrap and other libraries come first. Upgrade, never suppress.
+8. Smart mode: while coding, write secure code and keep going; no security phases, audits or review rounds
+   between edits. Before saying a feature is done, check your own diff from memory for the classes it touches
+   (one short pass) and fix what you see. For a new or changed endpoint, auth, session, authorization rule,
+   upload, payment, crypto or deserialization, read only that section of `docs/SOURCE-CODE-REVIEW.md`; the whole
+   file and the other long checklists are for "Run Security Test". The most frequent pentest findings are in `docs/COMMON-FINDINGS.md` (or
+   `docs/ORG-FINDINGS.md`): outdated jQuery/Bootstrap and other libraries come first. Upgrade, never suppress.
 9. Report residual risk; never claim "100% secure".
-10. When you finish substantial work (3+ code files or 40+ changed lines since your last offer) and no
-   "Run Security Test" has run since, offer it in one short question. Run it only on a yes; a no stands
-   for those changes. The stop hook reminds you once.
+10. When you finish substantial work (10+ code files or 300+ changed lines since your last offer) and no
+   "Run Security Test" has run since, offer it in one short question, at most once per session. Run it only on
+   a yes; a no stands for those changes. `SECURECODE_MODE=coding` turns the offer off.
 <!-- ORG-AI-APPSEC-GATE-END -->

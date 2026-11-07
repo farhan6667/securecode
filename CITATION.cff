@@ -7,11 +7,11 @@ authors:
     alias: "SFA"
     affiliation: "NexaForge"
     email: "nexaforge.services@gmail.com"
-date-released: 2026-11-03
+date-released: 2026-11-07
 url: "https://github.com/farhan6667/securecode"
 repository-code: "https://github.com/farhan6667/securecode"
 license: MIT
-version: 7.0.0
+version: 7.1.0
 keywords:
   - secure coding
   - AI coding agent security

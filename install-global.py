@@ -17,10 +17,10 @@ Safe behavior:
 - idempotent upgrades using a managed marker
 """
 from __future__ import annotations
-import argparse, json, os, platform, shutil, sys, time
+import argparse, json, os, platform, shutil, stat, sys, time
 from pathlib import Path
 
-VERSION="7.0.0"
+VERSION="7.1.0"
 PKG=Path(__file__).resolve().parent
 SYSTEM=platform.system().lower()
 HOME=Path.home()
@@ -303,8 +303,23 @@ def install_guard_policy(ad: Path, mode: str|None=None) -> str:
     mode=mode or "owner"
     f=Path(ad)/"config"/POLICY_NAME
     f.parent.mkdir(parents=True,exist_ok=True)
+    keep={}
+    if mode=="owner" and current=="owner":
+        # the owner's own "command guard off" setting (scripts/guard_switch.py) survives a repair or a re-run, but only
+        # from a policy that passes the guard's own strict checks (plain file, small, no duplicate or unknown keys)
+        try:
+            st=os.lstat(f)
+            if stat.S_ISREG(st.st_mode) and not getattr(st,"st_file_attributes",0)&0x400 and st.st_size<=4096:
+                def _nodupes(pairs):
+                    if len({k for k,_ in pairs})!=len(pairs): raise ValueError("duplicate key")
+                    return dict(pairs)
+                old=json.loads(f.read_text(encoding="utf-8-sig"),object_pairs_hook=_nodupes)
+                if set(old)<={"mode","version","note","guard"} and old.get("mode")=="owner" and old.get("guard")=="off":
+                    keep={"guard":"off","note":str(old.get("note",""))[:200]}
+        except Exception:
+            keep={}
     if f.is_symlink(): f.unlink()
-    f.write_text(json.dumps({"mode":mode,"version":1},indent=2)+"\n",encoding="utf-8")
+    f.write_text(json.dumps({"mode":mode,"version":1,**keep},indent=2)+"\n",encoding="utf-8")
     return mode
 
 def align_permissions(data: dict, mode: str) -> dict:

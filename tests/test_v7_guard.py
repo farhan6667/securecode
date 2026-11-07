@@ -914,8 +914,11 @@ def git(d, *a):
                    cwd=d, check=True, capture_output=True)
 
 
-def stop(d, active=False):
-    p = subprocess.run([sys.executable, "-I", str(STOP)], input=json.dumps({"cwd": str(d), "stop_hook_active": active}),
+def stop(d, active=False, session=None, env=None):
+    ev = {"cwd": str(d), "stop_hook_active": active, **({"session_id": session} if session else {})}
+    cache = str(Path(d).parent / (Path(d).name + "-cache"))  # each test repo gets its own app cache
+    p = subprocess.run([sys.executable, "-I", str(STOP)], input=json.dumps(ev),
+                       env={**os.environ, "SECURECODE_CACHE_DIR": cache, **(env or {})},
                        text=True, capture_output=True, timeout=120, encoding="utf-8")
     assert p.returncode == 0, p.stderr
     return p.stdout
@@ -936,18 +939,21 @@ def repo(tmp_path):
     return tmp_path
 
 
+N_OFFER = 10                    # smart mode: a feature's worth of files (or 300 lines)
+
+
 def test_offer_once_per_change_set_and_respects_no(repo):
-    for i in range(3):
+    for i in range(N_OFFER):
         (repo / f"m{i}.py").write_text(clean_code(i))
     out = stop(repo)
     assert OFFER in out and '"decision": "block"' in out
     assert stop(repo, active=True) == ""                    # never twice in a row
     assert stop(repo) == ""                                 # same change set (the developer said no): no repeat
     marker = json.loads((repo / ".security" / "pentest-offer.json").read_text(encoding="utf-8"))
-    assert set(marker["snapshot"]) == {"m0.py", "m1.py", "m2.py"}
+    assert set(marker["snapshot"]) == {f"m{i}.py" for i in range(N_OFFER)}
     (repo / "m0.py").write_text(clean_code(0) + "x = 1\n")  # a tiny follow-up edit does not nag
     assert stop(repo) == ""
-    for i in range(3, 6):                                  # a new substantial change set is offered again
+    for i in range(N_OFFER, 2 * N_OFFER):                  # a new substantial change set is offered again
         (repo / f"m{i}.py").write_text(clean_code(i))
     assert OFFER in stop(repo)
 
@@ -961,7 +967,7 @@ def test_no_offer_for_small_or_non_code_changes(repo):
 
 
 def test_offer_on_one_big_file(repo):
-    (repo / "big.ts").write_text("".join(f"export const v{i} = {i};\n" for i in range(45)))
+    (repo / "big.ts").write_text("".join(f"export const v{i} = {i};\n" for i in range(310)))
     assert OFFER in stop(repo)
 
 
@@ -969,12 +975,12 @@ def test_tracked_edits_count_lines(repo):
     (repo / "svc.py").write_text(clean_code(0, 1))
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "svc")
-    (repo / "svc.py").write_text(clean_code(0, 25))         # about 48 changed lines in one tracked file
+    (repo / "svc.py").write_text(clean_code(0, 160))        # about 320 changed lines in one tracked file
     assert OFFER in stop(repo)
 
 
 def test_no_offer_when_a_full_test_ran_after_the_changes(repo):
-    for i in range(3):
+    for i in range(N_OFFER):
         (repo / f"m{i}.py").write_text(clean_code(i))
     (repo / ".security").mkdir()
     (repo / ".security" / "findings.json").write_text(json.dumps({"mode": "ci", "findings": []}))
@@ -985,7 +991,7 @@ def test_no_offer_when_a_full_test_ran_after_the_changes(repo):
 
 @pytest.mark.parametrize("content", ['{"disabled": true}', "{broken", "[]"])
 def test_disabled_or_unreadable_marker_means_no_offer(repo, content):
-    for i in range(3):
+    for i in range(N_OFFER):
         (repo / f"m{i}.py").write_text(clean_code(i))
     (repo / ".security").mkdir()
     (repo / ".security" / "pentest-offer.json").write_text(content)
@@ -995,14 +1001,14 @@ def test_disabled_or_unreadable_marker_means_no_offer(repo, content):
 def test_offer_is_not_written_through_a_linked_security_folder(repo, tmp_path_factory):
     outside = tmp_path_factory.mktemp("outside")
     dir_link(outside, repo / ".security")
-    for i in range(3):
+    for i in range(N_OFFER):
         (repo / f"m{i}.py").write_text(clean_code(i))
     assert stop(repo) == ""                                 # cannot record the offer, so it does not make one
     assert not list(outside.iterdir())
 
 
 def test_findings_and_offer_share_one_block(repo):
-    for i in range(3):
+    for i in range(N_OFFER):
         (repo / f"m{i}.py").write_text(clean_code(i))
     (repo / "bad.py").write_text("import os\nfrom flask import request\nos.system(request.args['c'])\n")
     out = json.loads(stop(repo))
@@ -1012,7 +1018,90 @@ def test_findings_and_offer_share_one_block(repo):
 def test_offer_rule_is_in_every_agent_rules_file():
     for f in ("AGENTS.md", "global-CLAUDE.md", ".claude/skills/security-review/SKILL.md"):
         text = (ROOT / f).read_text(encoding="utf-8")
-        assert "Run Security Test" in text and "offer" in text.lower() and "40" in text, f
+        assert "Run Security Test" in text and "offer" in text.lower() and "300" in text, f
+
+
+def test_smart_mode_offer_needs_a_features_worth_of_work(repo):
+    for i in range(3):                                      # the old threshold (3 files, about 40 lines): no offer now
+        (repo / f"m{i}.py").write_text(clean_code(i, 7))
+    assert stop(repo) == ""
+
+
+def test_smart_mode_one_offer_per_session(repo):
+    for i in range(N_OFFER):
+        (repo / f"m{i}.py").write_text(clean_code(i))
+    assert OFFER in stop(repo, session="s-1")
+    for i in range(N_OFFER, 2 * N_OFFER):                  # more substantial work in the same session: no second offer
+        (repo / f"m{i}.py").write_text(clean_code(i))
+    assert stop(repo, session="s-1") == ""
+    assert OFFER in stop(repo, session="s-2")               # a new session may ask once
+
+
+@pytest.mark.parametrize("how", ["env", "file"])
+def test_smart_mode_coding_mode_turns_the_offer_off(repo, how):
+    for i in range(N_OFFER):
+        (repo / f"m{i}.py").write_text(clean_code(i))
+    if how == "file":
+        (repo / ".security").mkdir()
+        (repo / ".security" / "mode.json").write_text('{"mode": "coding"}')
+    assert stop(repo, env={"SECURECODE_MODE": "coding"} if how == "env" else None) == ""
+
+
+BAD = "import os\nfrom flask import request\nos.system(request.args['c'])\n"
+
+
+def seen_file(repo):
+    return repo.parent / (repo.name + "-cache") / "stop-gate-seen.json"
+
+
+def test_smart_mode_same_finding_blocks_once_per_session(repo):
+    (repo / "bad.py").write_text(BAD)
+    assert "COMMAND_INJECTION" in stop(repo, session="s-1")
+    assert stop(repo, session="s-1") == ""                  # shown once: the next stop is not sent back again
+    (repo / "bad.py").write_text("x = 1\n" + BAD)           # the same line moved down: still the same finding
+    assert stop(repo, session="s-1") == ""
+    assert "COMMAND_INJECTION" in stop(repo, session="s-2")  # another session or agent is told too
+    (repo / "bad2.py").write_text(BAD.replace("'c'", "'d'"))  # a new serious finding is shown
+    assert "COMMAND_INJECTION" in stop(repo, session="s-1")
+
+
+def test_smart_mode_shown_findings_come_back_after_twelve_hours(repo):
+    (repo / "bad.py").write_text(BAD)
+    assert "COMMAND_INJECTION" in stop(repo)
+    f = seen_file(repo)
+    f.write_text(json.dumps({k: {"t": 1, "s": ""} for k in json.loads(f.read_text(encoding="utf-8"))}))
+    assert "COMMAND_INJECTION" in stop(repo)
+
+
+def test_smart_mode_a_planted_memory_cannot_silence_the_block(repo):
+    # a cloned repository ships a memory file, and a cache entry claims a time far in the future: both ignored
+    (repo / "bad.py").write_text(BAD)
+    (repo / ".security").mkdir()
+    (repo / ".security" / "stop-gate-seen.json").write_text(json.dumps({"fps": {"x" * 20: 4_000_000_000}}))
+    assert "COMMAND_INJECTION" in stop(repo)
+    f = seen_file(repo)
+    f.write_text(json.dumps({k: {"t": 4_000_000_000, "s": ""} for k in json.loads(f.read_text(encoding="utf-8"))}))
+    assert "COMMAND_INJECTION" in stop(repo)
+
+
+def test_smart_mode_only_printed_findings_count_as_shown(repo):
+    for i in range(20):
+        (repo / f"b{i}.py").write_text(BAD.replace("'c'", f"'c{i}'"))
+    first = json.loads(stop(repo))["reason"]
+    printed = lambda reason: sum(1 for ln in reason.splitlines() if ln.startswith("- [") )
+    assert printed(first) == 15 and "and 5 more" in first
+    second = json.loads(stop(repo))["reason"]                # the five not printed come at the next stop
+    assert printed(second) == 5
+    assert stop(repo) == ""
+
+
+def test_smart_mode_unreadable_memory_keeps_blocking(repo):
+    (repo / "bad.py").write_text(BAD)
+    f = seen_file(repo)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("{broken")
+    out = stop(repo)
+    assert "COMMAND_INJECTION" in out
 
 
 # ---------------------------------------------------------------- installers

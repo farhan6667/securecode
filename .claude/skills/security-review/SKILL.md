@@ -1,8 +1,8 @@
 ---
 name: org-appsec-security
-description: Organization secure coding, deep source code security review and AppSec gate. Use for any web, API or mobile coding; run the full protocol when the user writes "Run Security Test" or "Run Advisory QA" (Roman Urdu "Security Test Karo" / "Advisory QA Karo" also work), runs /security-gate, or asks for a security check, source code review, IDOR check, pentest readiness or QA before handover.
+description: Organization deep source code security review and AppSec gate. Use when the user writes "Run Security Test" or "Run Advisory QA" (Roman Urdu "Security Test Karo" / "Advisory QA Karo" also work), runs /security-gate, or asks for a security check, source code review, IDOR check, pentest readiness or QA before handover. Not for ordinary coding: the rules in CLAUDE.md / AGENTS.md cover secure coding.
 ---
-# Org AppSec Security Review 7.0.0
+# Org AppSec Security Review 7.1.0
 
 The installed runtime lives in the per-user app folder, not in the project:
 Windows `%LOCALAPPDATA%\OrgAISecureAppSec`, macOS `~/Library/Application Support/OrgAISecureAppSec`,
@@ -20,20 +20,23 @@ does runtime pentesting; this skill makes sure everything findable in source cod
 
 ## Modes
 
-**Mode A: always on (default).** Write code to the baseline in `CLAUDE.md` / `AGENTS.md`. Before you
-tell the developer a feature or fix is done, review your own diff against the classes in
-`SOURCE-CODE-REVIEW.md` that the change touches (a new endpoint: access control, IDOR, input,
-output, rate limit; an upload: the upload section; a query: injection; a dependency: versions) and
-fix what you find. The Stop hook runs the quick gate on changed files and will send you back if a
-High or Critical finding is still open.
+**Mode A: smart mode while coding (default).** Write code to the baseline in `CLAUDE.md` / `AGENTS.md` and
+keep going: no security phases or review rounds between edits, and do not read this skill's long checklists
+while coding. Before you tell the developer a feature or fix is done, check your own diff from memory for
+the classes it touches (a new endpoint: access control, IDOR, input, output, rate limit; an upload: upload
+rules; a query: injection; a dependency: versions) and fix what you see, in one short pass; for an endpoint,
+auth, session, authorization, upload, payment, crypto or deserialization change, read just that section of
+`SOURCE-CODE-REVIEW.md` first, because the hooks cannot see those classes. The edit hook
+is silent while code is clean; the Stop hook sends you back once for a new High or Critical finding.
 
-**End-of-task offer (all agents).** When a substantial task is finished (3 or more code files or 40 or
+**End-of-task offer (all agents).** When a substantial task is finished (10 or more code files or 300 or
 more changed lines since the last offer) and no "Run Security Test" has run since those changes, ask the
 developer once: "Do you want me to run a full security test now (Run Security Test)?" Start Mode B only
-after a yes. A no or "later" is respected for that change set; do not repeat it. Tiny edits, docs-only
-changes and questions get no offer. Claude Code and Codex: the Stop hook sends this reminder once and
-records it in `.security/pentest-offer.json` (`{"disabled": true}` there turns it off for a project).
-Cursor: follow this rule yourself.
+after a yes. A no or "later" is respected for that change set and for the rest of the session. Tiny edits,
+docs-only changes and questions get no offer. Claude Code and Codex: the Stop hook sends this reminder once
+and records it in `.security/pentest-offer.json` (`{"disabled": true}` there turns it off for a project;
+`SECURECODE_MODE=coding` or `.security/mode.json` `{"mode": "coding"}` turns it off too). Cursor: follow
+this rule yourself.
 
 **Mode B: "Run Security Test" (find, fix, re-test).** Triggered by that phrase or "Security Test Karo" (any casing), by
 `/security-gate`, or by a request for a security test before handover. Run the Deep Review Protocol
