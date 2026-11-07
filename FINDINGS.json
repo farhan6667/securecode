@@ -1144,6 +1144,54 @@
       "what": "New feature, asked for by developers: switch off the command guard alone, keeping the rules, edit check, stop gate, secret shield and security tests. Honoured only for a valid owner policy that says guard off exactly; managed, broken, linked, oversized or duplicate-key policies mean on; a change needs a terminal; an update keeps it. Review found, fixed: the terminal check lived only in main() (now also in write_switch), the adapters were switched inconsistently (all five now follow the file), a busy file was reported as a refusal (retry, then a different message), a repair could launder an invalid off file (now strict), stdin was not drained, and the runtime's guard_switch was only asked about in attended mode (now a hard deny by name in every mode). Known limit, documented: a terminal check is not authentication, and a script the agent writes and runs itself can still edit the policy file (OPEN-04), so the switch is a convenience for the owner and not a barrier against agent-run code",
       "check": "tests/test_guard_switch.py",
       "status": "fixed"
+    },
+    {
+      "id": "SM-01",
+      "severity": "medium",
+      "where": "scripts/stop_gate.py new_serious()",
+      "what": "The first smart-mode draft kept the memory of shown High/Critical findings in the project (.security/stop-gate-seen.json): a cloned repository could ship it with future timestamps and silence the stop block for findings nobody was shown. The memory now lives in the app cache, keyed by the project's real path and the session, and future entries are ignored.",
+      "check": "tests/test_v7_guard.py::test_smart_mode_a_planted_memory_cannot_silence_the_block",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-02",
+      "severity": "medium",
+      "where": "scripts/stop_gate.py new_serious()",
+      "what": "Every fresh finding was remembered as shown although only 15 are printed; now only the printed ones count, the rest come at the next stop.",
+      "check": "tests/test_v7_guard.py::test_smart_mode_only_printed_findings_count_as_shown",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-03",
+      "severity": "medium",
+      "where": "scripts/global_hook.py",
+      "what": "The output was cut to its last 9000 characters before the High/Critical filter, so the serious lines could be lost, and a BLOCKED result was cached and never reported again (also hiding it from other sessions). Now the filter runs first, lines are sorted by severity, and only clean results are cached.",
+      "check": "tests/test_phase1.py::test_smart_mode_edit_hook_keeps_the_serious_lines_when_the_output_is_long, ::test_smart_mode_edit_hook_caches_only_clean_content",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-04",
+      "severity": "low",
+      "where": "scripts/global_hook.py cache key",
+      "what": "The clean-result cache key now covers the project root, SECGATE_SUPPRESSIONS and config/security-suppressions.yaml, so a removed suppression is checked again.",
+      "check": "review of the key in global_hook.py main()",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-05",
+      "severity": "low",
+      "where": "scripts/stop_gate.py _fp()",
+      "what": "Findings without a line number (agent config, end-of-life libraries) shared one fingerprint per rule and file; the message is now part of it.",
+      "check": "tests/test_v7_guard.py smart-mode tests",
+      "status": "fixed"
+    },
+    {
+      "id": "SM-06",
+      "severity": "low",
+      "where": "AGENTS.md, global-CLAUDE.md, SKILL.md",
+      "what": "The smart-mode rules allowed only a review from memory; for endpoint, auth, session, authorization, upload, payment, crypto and deserialization changes the matching SOURCE-CODE-REVIEW.md section is read before done, since the hooks cannot see those classes.",
+      "check": "tests/test_v7_guard.py::test_offer_rule_is_in_every_agent_rules_file and manual review",
+      "status": "fixed"
     }
   ]
 }

@@ -153,8 +153,9 @@ def test_edit_hook_scans_only_the_changed_file():
         changed = Path(other, "new.py")
         changed.write_text("print('hello')\n")
         event = {"tool_name": "Edit", "cwd": cwd, "tool_input": {"file_path": str(changed)}}
+        env = {**os.environ, "SECURECODE_CACHE_DIR": other, "SECURECODE_HOOK_VERBOSE": "1"}   # verbose: show the PASS
         p = subprocess.run([sys.executable, "-I", str(hook)], input=__import__("json").dumps(event), text=True,
-                           capture_output=True, timeout=60, encoding="utf-8", errors="replace")
+                           capture_output=True, timeout=60, encoding="utf-8", errors="replace", env=env)
         assert p.returncode == 0
         assert "RESULT: PASS" in p.stdout and "old.py" not in p.stdout, p.stdout
         bad = {"tool_name": "Edit", "cwd": cwd, "tool_input": ["x"]}
