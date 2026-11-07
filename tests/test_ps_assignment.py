@@ -74,3 +74,32 @@ def test_a_glued_assignment_value_feeds_the_variable_like_the_spaced_form():
     # the stored value is used when the variable is then read as a path
     assert dec('$p="src"; Get-Content $p/a.txt') == dec('$p = "src"; Get-Content $p/a.txt')
     assert dec('$p=".env"; Get-Content $p') == dec('$p = ".env"; Get-Content $p') != "allow"
+
+
+# review round 8: in PowerShell the right side of `$x=...` is an expression and a bare word there is a command that RUNS
+BAREWORDS = [r"$x=calc", r"$x=C:\evil\a.exe", r"$x=.\evil.ps1", "$x=./evil.sh", "$x=notepad.exe", "$x=cmd", "$x=powershell",
+             "$x=pwsh", "$x=bash", "$x=curl", "$x=rm", "$x=del", "$x=start", "$x=iex", "$x=Invoke-Expression", "$x=Start-Process",
+             "$x=Get-Content", "$env:APP_X=calc", "$env:X=curl", "$x=`\ncalc", '$x="a"\n$y=calc', "$x=whoami;Get-Content $x",
+             '$p=".e"+"nv"; Get-Content $p', "$x=1,2", "$x=a+b", '$x="a"b']
+
+
+@pytest.mark.parametrize("cmd", BAREWORDS)
+def test_a_bare_word_after_the_equals_sign_is_a_command_and_never_a_plain_assignment(cmd):
+    assert dec(cmd) in ("ask", "deny"), cmd
+    assert dec(cmd, "owner", "auto") == "deny", cmd
+    spaced = cmd.replace("=", " = ", 1)
+    if "\n" not in cmd:
+        assert dec(spaced) in ("ask", "deny"), spaced              # the spaced form had the same hole on 7.0.0
+        assert dec(spaced, "owner", "auto") == "deny", spaced
+
+
+@pytest.mark.parametrize("cmd", ["$x=~/.ssh/id_rsa", r"$x=$HOME\.ssh\id_rsa"])
+def test_naming_a_protected_place_in_a_bare_word_assignment_is_still_refused(cmd):
+    assert dec(cmd) == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ['$x="a"', "$x=1", "$x=-1", "$x=1.5", "$x=$null", "$x=$true", "$x=$false", "$env:X=$env:Y",
+                                 '$x="a$y"', "$x='a'", '$env:PYTHONUTF8="1"', '$x = "a"', "$x = 1", "$x = $null"])
+def test_real_values_are_still_plain_assignments(cmd):
+    assert dec(cmd) == "allow", cmd
+    assert dec(cmd, "owner", "auto") == "allow", cmd

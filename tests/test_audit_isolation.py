@@ -54,3 +54,20 @@ def test_the_backstop_catches_a_subprocess_that_does_write(tmp_path):
     subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "agent_guard.py")], input=json.dumps(ask_event(probe)),
                    capture_output=True, text=True, env=env, timeout=60, cwd=str(probe))
     assert size() == size()
+
+
+def test_a_link_or_junction_named_scripts_cannot_switch_the_audit_off(tmp_path, monkeypatch):
+    # review round 8: the own-folder rule compared real paths, so a project whose scripts folder pointed at the real one
+    # (a junction on Windows needs no privilege, a symlink elsewhere) lost its audit trail
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    link = proj / "scripts"
+    if os.name == "nt":
+        r = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(ROOT / "scripts")], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    else:
+        os.symlink(ROOT / "scripts", link, target_is_directory=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    assert G.decide(ask_event(proj), "owner")[0] == "ask"
+    got = (proj / ".security" / G.AUDIT_NAME).read_text().splitlines()
+    assert len(got) == 1 and json.loads(got[0])["decision"] == "ask"

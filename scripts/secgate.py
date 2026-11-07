@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Org AI Secure AppSec Gate (NexaForge SecureCode 7.0.0).
+"""Org AI Secure AppSec Gate (NexaForge SecureCode 7.1.0).
 
 Modes:
  quick: lightweight changed-file heuristics only.

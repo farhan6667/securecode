@@ -272,6 +272,7 @@ Added after the 6.2 review
 - templates/strict-project/CLAUDE.section.md
 - templates/strict-project/claude_docs/IGNORED_FILES.md
 - templates/strict-project/claude_docs/security.md
+- tests/conftest.py
 - tests/fixtures/engines/bandit.json
 - tests/fixtures/engines/dependency-check.json
 - tests/fixtures/engines/eslint.json
@@ -319,6 +320,8 @@ Added after the 6.2 review
 - tests/fixtures/zap-report.json
 - tests/skip-allowlist.json
 - tests/test_agent_guard.py
+- tests/test_audit_agent.py
+- tests/test_audit_isolation.py
 - tests/test_benchmark_lab.py
 - tests/test_brand_overlay.py
 - tests/test_ci_skip_check.py
@@ -326,6 +329,7 @@ Added after the 6.2 review
 - tests/test_gate.py
 - tests/test_guard_auto_mode.py
 - tests/test_guard_positive_model.py
+- tests/test_guard_replay_shapes.py
 - tests/test_guard_switch.py
 - tests/test_heuristics.py
 - tests/test_java_spring.py
@@ -335,6 +339,7 @@ Added after the 6.2 review
 - tests/test_org_findings.py
 - tests/test_phase1.py
 - tests/test_phase2.py
+- tests/test_ps_assignment.py
 - tests/test_review2_regressions.py
 - tests/test_review3_regressions.py
 - tests/test_review4_regressions.py
@@ -344,6 +349,7 @@ Added after the 6.2 review
 - tests/test_secret_shield.py
 - tests/test_update_mechanism.py
 - tests/test_updater.py
+- tests/test_updater_token_retry.py
 - tests/test_v6_package.py
 - tests/test_v7_docs.py
 - tests/test_v7_engines.py

@@ -1493,6 +1493,18 @@ EXFIL_TEXT = {"curl", "wget", "iwr", "irm", "invoke-webrequest", "invoke-restmet
 PATH_TOKEN = re.compile(r"[^\s'\"`;()<>|&]+")
 
 
+def ps_value_ok(elems: list) -> bool:
+    """The right side of `$x=...` in PowerShell is an expression, and a bare word there is a command that runs
+    (`$x=calc`, `$x=.\\evil.ps1`). Only a quoted string, a variable, or a plain number is a value; a bare word, a path, a
+    `+` or `,` expression, a command substitution and anything else are not modelled."""
+    if not elems or any(isinstance(e, tuple) and e[0] == "u" for e in elems):
+        return False
+    plain = [e for e in elems if isinstance(e, str)]
+    if not plain:
+        return True                                  # only quoted strings and variable references ($null, $true, $env:Y)
+    return len(plain) == len(elems) and bool(re.fullmatch(r"-?\d+(?:\.\d+)?", "".join(plain)))
+
+
 class Shell:
     def __init__(self, env: GuardEnv, dialect: str, cwd: str | None, depth: int = 0, parent: "Shell | None" = None):
         self.env, self.d, self.cwd, self.depth = env, dialect, cwd, depth
@@ -1899,11 +1911,11 @@ class Shell:
             # substitution or an expression is not modelled, as in the spaced form.
             name = st.words[0][0][1]
             valw = st.words[0][2:]
-            if any(isinstance(e, tuple) and e[0] == "u" for e in valw):
+            if not ps_value_ok(valw):
                 st.modelled = False
                 self.unk("PowerShell assignments of command results are not modelled")
                 return
-            cands = self.expand(valw) if valw else [""]
+            cands = self.expand(valw)
             val = cands[0] if cands else None
             key = name.lower() if name.lower().startswith("env:") else "ps:" + name.lower()
             if name.lower().startswith("env:") and not self.safe_env(name[4:]):
@@ -1913,7 +1925,7 @@ class Shell:
             return
         elif self.d == "ps" and len(st.words) >= 2 and raw_texts[0].startswith("$") and raw_texts[1] == "=":
             name = st.words[0][0][1] if isinstance(st.words[0][0], tuple) and st.words[0][0][0] == "v" else None
-            if name and len(st.words) == 3 and not st.redirs:
+            if name and len(st.words) == 3 and not st.redirs and ps_value_ok(st.words[2]):
                 val = words[2][0] if words[2] else None
                 key = name.lower() if name.lower().startswith("env:") else "ps:" + name.lower()
                 if name.lower().startswith("env:") and not self.safe_env(name[4:]):
@@ -3652,9 +3664,11 @@ def audit_ask(event: dict, reason: str, mode: str, decision: str = "ask") -> boo
         try:
             # The guard's own folder (the installed runtime, or a checkout of its source) is not a project: a test or a
             # developer working on it would fill the real audit file with asks that mean nothing.
-            if os.path.normcase(os.path.realpath(os.path.join(root, "scripts", "agent_guard.py"))) == \
-                    os.path.normcase(os.path.realpath(__file__)):
-                return False
+            sd, gf = os.path.join(root, "scripts"), os.path.join(root, "scripts", "agent_guard.py")
+            sst, gst = os.lstat(sd), os.lstat(gf)
+            if stat.S_ISDIR(sst.st_mode) and not getattr(sst, "st_file_attributes", 0) & 0x400 and _plain_file(gst) \
+                    and gst.st_nlink == 1 and os.path.samefile(gf, __file__):
+                return False                     # a plain folder and file only: a link or junction cannot switch the audit off
         except (OSError, ValueError):
             pass
         home = os.path.realpath(os.path.expanduser("~"))
