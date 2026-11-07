@@ -1200,6 +1200,14 @@
       "what": "Found in review round 8, present on 7.0.0, not fixed: the list of environment variables that may be set without a question contains env (the sh startup file variable) and database_url (it redirects a database), so setting them asks nothing in bash or PowerShell, spaced or glued. Dropping them would add asks to an everyday workflow, so it waits for the 7.2 work on false positives",
       "check": "review round 8 probes",
       "status": "open"
+    },
+    {
+      "id": "V71-GA05",
+      "severity": "medium",
+      "where": "scripts/agent_guard.py audit_ask(), protected-path matching",
+      "what": "Found in review round 9, present since 7.0.0, not fixed in 7.1.0: the guard audit is a file in the project and only its direct path is protected. In auto or bypass mode an agent can delete it with a glob or pipeline (Remove-Item .security\\*, rm -r .s*, Get-ChildItem | Remove-Item), replace .security with a link or junction (New-Item -ItemType Junction, ln -s), or push it past the 5 MB limit, and audit_ask then returns False without a trace. 7.1 makes the audit more useful (it records what auto and bypass answered), so this matters more. Planned fix: a second copy in the app cache outside the project, keyed by the project path, and wildcard and link rules for .security. Until then the release notes and docs call the audit a convenience log, not evidence",
+      "check": "review round 9 probes (scratchpad review9)",
+      "status": "open"
     }
   ]
 }

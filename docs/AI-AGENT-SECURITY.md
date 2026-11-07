@@ -175,6 +175,11 @@ The rules, the edit hook, the stop gate, "Run Security Test" and "Run Advisory Q
 affected. Every ask that auto or bypass mode answered for you is written to `.security/guard-audit.jsonl` with the
 decision `unattended-deferred` (left to Claude's own permission system), `unattended-refused` or `bypass-allowed`.
 
+The audit file is a convenience log, not evidence. It lives in the project, and the guard only blocks the direct path to it: an
+agent that can run commands in auto or bypass mode can still delete it with a glob or a pipeline, replace `.security` with a
+link or a junction, or fill it past its size limit, and the guard then writes nothing. Do not rely on it to prove what an
+unattended run did.
+
 What changed for a person and for managed mode: nothing is looser. A differential run of the 7.0.0 guard against this
 one found only tightenings, all of them commands that 7.0.0 let through without any question and that now ask or
 are denied (managed mode too): installs that 7.0.0 did not classify (`uv tool install ...`, `pip install -r http://...`,

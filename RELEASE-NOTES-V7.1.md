@@ -78,6 +78,9 @@ V71-GA03, SM-01 to SM-06). This is not a third-party audit.
   with no package name (`npm install`, `pip install -r requirements.txt`), which read whatever the manifest says.
 - A package manager or verb the guard has no model for (`npm update`, `pip download`, `composer create-project`) returns
   no verdict, and project-level `.claude/settings.json` and `.mcp.json` writes are allowed in every mode.
+- The guard audit is a file in the project, not tamper-proof: an agent that can run commands in auto or bypass mode can delete
+  it (a glob or a pipeline), replace `.security` with a link, or fill it, and nothing is logged afterwards. Treat it as a
+  convenience log, not evidence.
 - A typo-squatted package name is not caught by the guard.
 - In an attended session the guard still asks for shell syntax it does not model (`$( )`, variable prefixes, inline
   Python, `xargs`, remote commands, reads in sibling folders). Planned for 7.2, together with an adaptive mode.
