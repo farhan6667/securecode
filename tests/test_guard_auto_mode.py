@@ -303,14 +303,25 @@ def test_powershell_wrappers_with_a_bare_inner_command_do_not_crash(cmd, pm):
     assert dec(ev(cmd, pm, "PowerShell")) == "allow", (cmd, pm)
 
 
+def test_the_package_name_patterns_are_linear():
+    # round 4: PKG_PIP was quadratic on spaces. The patterns themselves are timed (a loaded CI runner makes a whole decision
+    # slow, a regex call cannot be cut off by the guard's own deadline); the quadratic version took seconds, this takes milliseconds
+    import time
+    for word in ("x@" + " " * 19000 + "!", "a" * 20000, "x@" + "1." * 9000, "x[" + "a," * 9000, "x" + " ," * 9000):
+        t = time.monotonic()
+        G.PKG_PIP.fullmatch(word)
+        G.PKG_NPM.fullmatch(word)
+        assert time.monotonic() - t < 1.0, word[:20]
+
+
 @pytest.mark.parametrize("pm", [None, "auto"])
-def test_a_long_run_of_spaces_in_a_package_name_is_not_slow(pm):
-    # round 4: PKG_PIP was quadratic on spaces; a regex call cannot be cut off by the guard's own deadline
+def test_a_long_package_name_does_not_stall_a_decision(pm):
+    # a loose bound, only to catch a catastrophic stall: a slow shared runner can take a couple of seconds
     import time
     for cmd in ("pip install 'x@" + " " * 19000 + "!'", "pip install '" + "a" * 20000 + "'", "npm i '" + "x@" + "1." * 9000 + "'"):
         t = time.monotonic()
         G.decide(ev(cmd, pm), "owner")
-        assert time.monotonic() - t < 1.5, (cmd[:30], pm)
+        assert time.monotonic() - t < 15, (cmd[:30], pm)
 
 
 def test_odd_installs_are_asked_exactly_as_before_in_attended_and_managed_mode():
