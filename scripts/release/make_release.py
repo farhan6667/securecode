@@ -73,7 +73,7 @@ def write_manifest_files(names) -> None:
     path.write_text(head + section, encoding="utf-8", newline="\n")
 
 
-PLACEHOLDER_FILES = ("README.md", "RELEASE-NOTES-V7.0.md")
+PLACEHOLDER_FILES = ("README.md", "RELEASE-NOTES-V7.0.md", "RELEASE-NOTES-V7.1.md")
 
 
 def unfilled_placeholders() -> list:

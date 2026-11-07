@@ -1,5 +1,5 @@
 <!-- ORG-AI-APPSEC-GATE-START -->
-# Organization AppSec Guard (Global 7.0.0)
+# Organization AppSec Guard (Global 7.1.0)
 
 The full rules are in `%LOCALAPPDATA%\OrgAISecureAppSec\AGENTS.md` (macOS/Linux: the
 OrgAISecureAppSec app folder). Short version, always on:

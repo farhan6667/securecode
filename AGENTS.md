@@ -1,4 +1,4 @@
-# Organization AI Secure Development Rules (7.0.0)
+# Organization AI Secure Development Rules (7.1.0)
 
 These rules apply to every AI coding agent used in the organization (Claude Code, Cursor, Codex
 and others), in every project, by default. They protect two things: the code you write, and the

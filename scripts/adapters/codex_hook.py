@@ -66,7 +66,7 @@ def handle(payload: dict, mode: str | None = None):
     """(exit_code, stderr_text). Codex cannot ask, so ask becomes deny."""
     final = None
     for ev in to_guard_events(payload):
-        final = G.stronger(final, G.decide(ev, mode))
+        final = G.stronger(final, G.decide({**ev, "agent": "codex"}, mode))
         if final and final[0] == "deny":
             break
     if not final:

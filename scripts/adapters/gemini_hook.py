@@ -171,7 +171,7 @@ def handle(payload: dict, mode: str | None = None):
     for e in to_guard_events(payload):
         if final and final[0] == "deny":
             break
-        final = G.stronger(final, G.decide(e, m))
+        final = G.stronger(final, G.decide({**e, "agent": "gemini"}, m))
         if final and final[0] == "deny":
             break
     if not final:

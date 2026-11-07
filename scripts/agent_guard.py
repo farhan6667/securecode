@@ -1892,6 +1892,25 @@ class Shell:
                     break
                 assigns.append((m.group(1), [c[m.end():] if c is not None else None for c in words[k]]))
                 k += 1
+        elif self.d == "ps" and len(st.words) == 1 and not st.redirs and len(st.words[0]) >= 2 and \
+                isinstance(st.words[0][0], tuple) and st.words[0][0][0] == "v" and st.words[0][1] == "=":
+            # the glued form `$x="a"` and `$env:X="v"`: one word that is a variable, an equals sign and the value. The
+            # spaced form `$x = "a"` was always modelled; this reads both the same way. A value that is a command
+            # substitution or an expression is not modelled, as in the spaced form.
+            name = st.words[0][0][1]
+            valw = st.words[0][2:]
+            if any(isinstance(e, tuple) and e[0] == "u" for e in valw):
+                st.modelled = False
+                self.unk("PowerShell assignments of command results are not modelled")
+                return
+            cands = self.expand(valw) if valw else [""]
+            val = cands[0] if cands else None
+            key = name.lower() if name.lower().startswith("env:") else "ps:" + name.lower()
+            if name.lower().startswith("env:") and not self.safe_env(name[4:]):
+                self.unk(f"it changes the environment variable {name[4:]}")
+            self.vars[key] = val
+            st.name = "="
+            return
         elif self.d == "ps" and len(st.words) >= 2 and raw_texts[0].startswith("$") and raw_texts[1] == "=":
             name = st.words[0][0][1] if isinstance(st.words[0][0], tuple) and st.words[0][0][0] == "v" else None
             if name and len(st.words) == 3 and not st.redirs:
@@ -3471,6 +3490,17 @@ POLICY_KEYS = {"mode", "version", "note", "guard"}
 RANK = {"deny": 5, "destructive": 3, "exposure": 3, "unknown": 3, "install_odd": 2.5, "install": 2, "ask": 1}
 SHOW_MAX = 2000
 AUDIT_NAME = "guard-audit.jsonl"
+AGENTS = ("claude", "cursor", "codex", "gemini", "antigravity", "other")   # the AI tool, as a fixed list in the audit
+
+
+def audit_agent(event: dict) -> str:
+    """Which AI tool asked. The adapters add "agent" to the event they build; the Claude Code hook sends none, so no field
+    means Claude. It is read from the top level of the event only (the host's), never from tool_input, and anything that
+    is not on the list is "other"."""
+    if "agent" not in event:
+        return "claude"
+    a = event.get("agent")
+    return a if isinstance(a, str) and a in AGENTS else "other"
 AUDIT_MAX_BYTES = 5_000_000
 AUDIT_TEXT = 300
 
@@ -3619,6 +3649,14 @@ def audit_ask(event: dict, reason: str, mode: str, decision: str = "ask") -> boo
         if not isinstance(project, str) or not project or len(project) > 4096:
             return False
         root = os.path.realpath(project)
+        try:
+            # The guard's own folder (the installed runtime, or a checkout of its source) is not a project: a test or a
+            # developer working on it would fill the real audit file with asks that mean nothing.
+            if os.path.normcase(os.path.realpath(os.path.join(root, "scripts", "agent_guard.py"))) == \
+                    os.path.normcase(os.path.realpath(__file__)):
+                return False
+        except (OSError, ValueError):
+            pass
         home = os.path.realpath(os.path.expanduser("~"))
         if not os.path.isdir(root) or os.path.normcase(root) == os.path.normcase(home) or os.path.dirname(root) == root \
                 or PROTECTED.search(squeeze(root.replace(os.sep, "/") + "/")):
@@ -3638,7 +3676,7 @@ def audit_ask(event: dict, reason: str, mode: str, decision: str = "ask") -> boo
         ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
         what = ti.get("command") if isinstance(ti.get("command"), str) else \
             next((v for k, v in ti.items() if isinstance(v, str) and re.search(r"path|file", str(k), re.I)), "")
-        line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "mode": mode, "decision": decision,
+        line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "mode": mode, "agent": audit_agent(event), "decision": decision,
                 "tool": redact(event.get("tool_name") or "", 80), "command": redact(what), "reason": redact(reason.split(" Approve only")[0], 200)}
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
         fd = os.open(f, flags, 0o600)
