@@ -314,8 +314,16 @@ def install_guard_policy(ad: Path, mode: str|None=None) -> str:
                     if len({k for k,_ in pairs})!=len(pairs): raise ValueError("duplicate key")
                     return dict(pairs)
                 old=json.loads(f.read_text(encoding="utf-8-sig"),object_pairs_hook=_nodupes)
-                if set(old)<={"mode","version","note","guard"} and old.get("mode")=="owner" and old.get("guard")=="off":
-                    keep={"guard":"off","note":str(old.get("note",""))[:200]}
+                if set(old)<={"mode","version","note","guard","adaptive","workspace_roots","remote_wrappers"} and old.get("mode")=="owner":
+                    if old.get("guard")=="off":
+                        keep={"guard":"off","note":str(old.get("note",""))[:200]}
+                    # 7.2: the owner's guard mode and the folders and wrappers they listed survive a repair too (same strict checks)
+                    if old.get("adaptive") in ("adaptive","coding","strict"):
+                        keep["adaptive"]=old["adaptive"]
+                    for lk in ("workspace_roots","remote_wrappers"):
+                        v=old.get(lk)
+                        if isinstance(v,list) and all(isinstance(x,str) and 0<len(x)<1024 for x in v) and len(v)<=8:
+                            keep[lk]=v
         except Exception:
             keep={}
     if f.is_symlink(): f.unlink()

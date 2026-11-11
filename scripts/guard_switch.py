@@ -4,6 +4,9 @@
     py -I guard_switch.py status
     py -I guard_switch.py off
     py -I guard_switch.py on
+    py -I guard_switch.py mode adaptive|coding|strict
+    py -I guard_switch.py workspace add <folder>
+    py -I guard_switch.py workspace clear
 
 Off switches off only the PreToolUse command guard (scripts/agent_guard.py): the questions about unknown commands,
 installs, force pushes and so on, and its hard denials. Everything else stays on: the secure-coding rules, the check
@@ -14,6 +17,10 @@ A managed install (managed-settings.json or the runtime under Program Files) ign
 administrator. Turning the guard off or on needs a person at a terminal, so an agent that runs this script without
 one is refused. The setting lives in config/guard-policy.json in the runtime folder, which the guard stops agents
 from editing while it is on. An update keeps the setting.
+
+mode: "adaptive" (default) lets the guard stay quiet about shell syntax it cannot follow but whose commands it checked
+(coding mode) and read it strictly after a risk signal in the session; "coding" and "strict" pin it. workspace: folders
+next to your project that the agent may READ (never write); every secret rule still applies there.
 """
 from __future__ import annotations
 import json
@@ -44,20 +51,70 @@ def write_switch(want: str, path: Path | None = None, markers: list[str] | None 
     """Change the setting. A person at a terminal is required here as well as in main(), so that importing this function
     from another script does not skip the check. This stops accidents and simple prompt injection; it is not
     authentication, and code an agent writes and runs itself can still edit the file."""
+    def mutate(data):
+        if want == "off":
+            data["guard"] = "off"
+            data["note"] = "command guard switched off by the owner with guard_switch.py; run it with 'on' to turn it back on"
+        else:
+            data.pop("guard", None)
+            data.pop("note", None)
+    return _update(mutate, path, markers, need_terminal)
+
+
+def write_mode(value: str, path: Path | None = None, markers: list[str] | None = None, need_terminal: bool = True) -> str:
+    """adaptive (the default, so the key is removed), coding or strict."""
+    if value not in G.GMODES:
+        raise SwitchRefused(f"the guard mode must be one of {', '.join(G.GMODES)}")
+
+    def mutate(data):
+        if value == "adaptive":
+            data.pop("adaptive", None)
+        else:
+            data["adaptive"] = value
+    _update(mutate, path, markers, need_terminal)
+    return value
+
+
+def write_workspace(op: str, folder: str | None = None, path: Path | None = None, markers: list[str] | None = None,
+                    need_terminal: bool = True) -> list:
+    """Add a folder the agent may read (never write), or clear the list. The folder must exist, be absolute and be a place
+    the guard would accept as a root (not a drive root, not the home folder, not above or inside a protected place)."""
+    if op == "add":
+        if not folder or not os.path.isabs(folder) or not os.path.isdir(folder):
+            raise SwitchRefused("give the full path of an existing folder")
+        real = os.path.realpath(folder)
+        n = G.split_norm(os.path.abspath(real), None)
+        if not n or not G.GuardEnv({"cwd": real}).root_ok(n):
+            raise SwitchRefused("that folder is not allowed as a workspace (a drive root, your home folder, or a protected place)")
+    elif op != "clear":
+        raise SwitchRefused("workspace takes add <folder> or clear")
+    out: list = []
+
+    def mutate(data):
+        cur = [x for x in data.get("workspace_roots", []) if isinstance(x, str)] if isinstance(data.get("workspace_roots"), list) else []
+        if op == "clear":
+            cur = []
+        elif real not in cur and len(cur) < 8:
+            cur.append(real)
+        if cur:
+            data["workspace_roots"] = cur
+        else:
+            data.pop("workspace_roots", None)
+        out[:] = cur
+    _update(mutate, path, markers, need_terminal)
+    return out
+
+
+def _update(mutate, path: Path | None, markers: list[str] | None, need_terminal: bool) -> str:
     if need_terminal and not (sys.stdin.isatty() and sys.stdout.isatty()):
-        raise SwitchRefused("turning the guard on or off needs a person at a terminal")
+        raise SwitchRefused("changing the guard setting needs a person at a terminal")
     p = Path(path) if path is not None else G.policy_path()
     mode, why = G.load_policy(p, markers)
     if mode != "owner":
         raise SwitchRefused("this is a managed install, or the guard policy file is missing or not valid, so the switch is "
                               f"not used ({why}). Ask your administrator, or run install-global.py to repair the policy.")
     data = json.loads(p.read_bytes().decode("utf-8-sig"), object_pairs_hook=G._no_dupes)
-    if want == "off":
-        data["guard"] = "off"
-        data["note"] = "command guard switched off by the owner with guard_switch.py; run it with 'on' to turn it back on"
-    else:
-        data.pop("guard", None)
-        data.pop("note", None)
+    mutate(data)
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".policy-", suffix=".tmp")
     try:
@@ -82,13 +139,17 @@ def write_switch(want: str, path: Path | None = None, markers: list[str] | None 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) != 1 or args[0] not in ("on", "off", "status"):
+    ok = (len(args) == 1 and args[0] in ("on", "off", "status")) or (len(args) == 2 and args[0] == "mode") or \
+        (args[:1] == ["workspace"] and (args[1:] == ["clear"] or (len(args) == 3 and args[1] == "add")))
+    if not ok:
         print(__doc__)
         return 2
     cmd = args[0]
     if cmd == "status":
         st, why = state()
         print(f"command guard: {st.upper()} ({why})")
+        print(f"guard mode: {G.guard_pref()} (adaptive = coding until a risk signal, then strict); "
+              f"workspace folders: {G.policy_list('workspace_roots') or 'none'}")
         if st == "off":
             print("Still on: secure-coding rules, edit check, stop gate, output shield, security tests, scanners, signed updates.")
         return 0
@@ -97,6 +158,12 @@ def main(argv: list[str] | None = None) -> int:
               "command there.", file=sys.stderr)
         return 3
     try:
+        if cmd == "mode":
+            print(f"guard mode is now {write_mode(args[1]).upper()}.")
+            return 0
+        if cmd == "workspace":
+            print(f"workspace folders (read only): {write_workspace(args[1], args[2] if len(args) > 2 else None) or 'none'}")
+            return 0
         new = write_switch(cmd)
     except SwitchRefused as e:
         print(f"Refused: {e}", file=sys.stderr)
