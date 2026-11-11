@@ -1442,6 +1442,60 @@
       "check": "pytest tests/test_guard_review72.py",
       "status": "fixed",
       "fix": "ip verbs limited to reads, more secret names, no stdin or here-document to ssh"
+    },
+    {
+      "id": "V72-21",
+      "severity": "high",
+      "where": "agent_guard.py Shell.run_script",
+      "what": "/dev/stdin (also /dev/fd/N, /proc/self/fd/N) given as a script path let `source /dev/stdin <<< 'rm -rf ~'` and `bash /dev/stdin <<< 'cat .env'` run unseen code in every mode (present since 7.0).",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "such a path is treated as code read from standard input"
+    },
+    {
+      "id": "V72-22",
+      "severity": "high",
+      "where": "agent_guard.py Lexer.dollar",
+      "what": "`${y:x}` (substring offset and length) evaluates arithmetic, and `x='a[$(cmd)]'` runs a command (present since 7.0).",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "any substring form is treated as an evaluation that is not followed"
+    },
+    {
+      "id": "V72-23",
+      "severity": "high",
+      "where": "agent_guard.py python_inline_ok",
+      "what": "The Python inline filter let a secret read through implicit string concatenation, variable concatenation and computed Path arguments, started a process with an aliased os.execvpe, and wrote files through map(open, ...).",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "Python inline code is now accepted only from an allowlist of syntax-tree node types, builtins, harmless modules and methods; Path, os, glob, a bare reference to open and any .. or absolute path literal are refused"
+    },
+    {
+      "id": "V72-24",
+      "severity": "medium",
+      "where": "agent_guard.py node_inline_ok",
+      "what": "Node inline code could read .env through string building and copy files with fs.cp.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "Node inline code is accepted in one shape only: console.log of a literal, arithmetic, JSON.stringify of a literal, or a property of a local .json file"
+    },
+    {
+      "id": "V72-25",
+      "severity": "high",
+      "where": "agent_guard.py REMOTE_SECRET_ANY",
+      "what": "The ssh read-only check missed secret names behind a prefix, suffix or brace group (`git show :.env`, `/etc/shadow-`, `/etc/{shadow,x}`, k3s.yaml, sasl_passwd).",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "secret names are matched anywhere in an argument and braces are refused"
+    },
+    {
+      "id": "V72-26",
+      "severity": "medium",
+      "where": "agent_guard.py Shell.remote_check",
+      "what": "GNU option abbreviations defeated the grep, date and ss denylists (`grep --rec`, `date 010100002030`, `ss -D`), and `-o StrictHostKeyChecking=no` was accepted.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "grep, date and ss use allowlists, and ssh -o accepts only BatchMode, ConnectTimeout, ServerAlive and LogLevel"
     }
   ]
 }

@@ -772,7 +772,8 @@ class Lexer:
                 self.add(("u", "variable"), i)
                 return n if j < 0 else j + 1
             inner = s[i + 2:j]
-            if "$(" in inner or "`" in inner or re.search(r"@[Pp]$", inner) or inner.startswith("!") or "[" in inner:
+            if "$(" in inner or "`" in inner or re.search(r"@[Pp]$", inner) or inner.startswith("!") or "[" in inner \
+                    or re.match(r"\w+:(?![-=?+])", inner):
                 # also ${x@P} (prompt expansion), ${!x} (indirection) and a subscript: bash evaluates text there
                 self.feat("cmdsubst", i)            # a command inside a parameter default or pattern: not followed
                 self.add(("u", "command substitution"), i)
@@ -1266,6 +1267,7 @@ PKG_COMPOSER = re.compile(r"[a-z0-9][\w.-]*/[a-z0-9][\w.-]*(?::[\w.^~*@-]+)?", r
 PKG_SIMPLE = re.compile(r"[a-z0-9][\w.-]*", re.I)
 PKG_MAX = 214
 SUBST_MAX = 8000
+STDIN_PATH = re.compile(r"^/(?:dev/(?:stdin|fd/\d+|tty|tcp/.*|udp/.*)|proc/(?:self|\d+)/fd/\d+)$", re.I)
 # commands that only print a size or a listing of what they are given: an unknown path from a checked command is harmless
 COUNT_ONLY = {"wc", "ls", "dir", "vdir", "du", "stat", "tree", "test", "[", "[[", "file"}
 COUNT_ONLY |= {"get-childitem", "gci", "get-item", "gi", "test-path", "resolve-path", "rvpa", "split-path"}
@@ -1311,85 +1313,110 @@ INLINE_RISK = re.compile(
     r"\.open\s*\(|\bopen\s*\(\s*(?![\'\"][\w./-]+[\'\"]\s*[,)])|readFileSync\s*\(\s*(?![\'\"])|readFile\s*\(\s*(?![\'\"])|"
     r"__\w+__|\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|\bopen\s*\([^)]*,\s*[\'\"][^\'\"]*[wax+]|\.write\s*\(|\brequire\s*\(\s*[^\'\"\s]"
     r"|\bimport\s*\(|\bchr\s*\(|`)")
-INLINE_PY_OK = {"json", "sys", "re", "math", "datetime", "time", "pathlib", "collections", "itertools", "functools", "textwrap",
-                "string", "statistics", "decimal", "fractions", "random", "uuid", "platform", "argparse", "typing", "csv", "glob",
-                "fnmatch", "hashlib", "html", "difflib", "pprint", "operator", "enum", "dataclasses", "ast", "tomllib", "configparser",
-                "xml.etree.elementtree", "importlib.metadata", "sysconfig", "os"}
+INLINE_PY_OK = {"json", "sys", "re", "math", "datetime", "time", "collections", "itertools", "textwrap", "string", "statistics",
+                "decimal", "fractions", "random", "uuid", "platform", "typing", "hashlib", "enum"}
 INLINE_NODE_OK = {"path", "util", "url", "assert", "fs", "os", "node:path", "node:util", "node:url", "node:assert", "node:fs", "node:os"}
 INLINE_CRED = re.compile(r"(?i)\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.docker|\.kube|hosts\.yml|\bpip\b|\brunpy\b|\bpkgutil\b")
 
 
-PY_BAD_ATTR = {"system", "popen", "spawn", "spawnl", "spawnv", "spawnlp", "spawnvp", "posix_spawn", "posix_spawnp", "exec", "execl",
-               "execv", "execve", "execvp", "execlp", "fork", "forkpty", "kill", "killpg", "environ", "environb", "getenv", "putenv",
-               "unsetenv", "remove", "unlink", "rmdir", "removedirs", "rmtree", "rename", "renames", "replace", "chmod", "lchmod",
-               "chown", "lchown", "truncate", "touch", "mkdir", "makedirs", "symlink", "symlink_to", "link", "link_to", "hardlink_to",
-               "write", "write_text", "write_bytes", "writelines", "open", "attrgetter", "itemgetter", "methodcaller", "getattr",
-               "setattr", "delattr", "__import__", "eval", "exec", "compile", "system", "startfile", "chdir", "chroot", "utime",
-               "listdir", "scandir", "walk", "glob", "rglob", "iterdir", "home", "expanduser", "run", "call", "check_call",
-               "check_output", "Popen", "create_subprocess_shell", "create_subprocess_exec", "urlopen", "urlretrieve", "connect"}
-PY_OK_CALLS = {"print", "len", "sorted", "sum", "min", "max", "range", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
-               "enumerate", "zip", "abs", "round", "repr", "isinstance", "any", "all", "map", "filter", "reversed", "format", "type",
-               "Path", "PurePath", "open"}
-ABS_PATH_LITERAL = re.compile(r"^(?:/|~|[A-Za-z]:[\\/]|\\\\)")
+PY_MODULES = {"json", "sys", "re", "math", "datetime", "time", "collections", "itertools", "textwrap", "string", "statistics",
+              "decimal", "fractions", "platform", "typing", "hashlib", "enum", "uuid", "random"}
+PY_BUILTINS = {"print", "len", "sorted", "sum", "min", "max", "range", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
+               "enumerate", "zip", "abs", "round", "repr", "isinstance", "any", "all", "reversed", "type", "map", "filter"}
+PY_METHODS = {"strip", "lstrip", "rstrip", "split", "rsplit", "splitlines", "lower", "upper", "title", "startswith", "endswith", "find",
+              "count", "items", "keys", "values", "get", "append", "index", "read", "readlines", "close", "format", "isdigit", "capitalize",
+              "zfill", "ljust", "rjust", "center", "encode", "decode", "hex", "most_common", "total_seconds", "isoformat", "strftime"}
+PY_ATTR_BAD = {"modules", "path", "meta_path", "stdin", "stdout", "stderr", "exit", "_getframe", "settrace", "setprofile", "argv_no"}
+PY_NODES = (ast_names := None)
+ABS_PATH_LITERAL = re.compile(r"^(?:/|~|[A-Za-z]:[\\/]|\\\\)|(?:^|[\\/])\.\.(?:[\\/]|$)")
 
 
 def python_inline_ok(code: str) -> bool:
-    """Python inline code is parsed. It may call only a short list of builtins and the module functions of the harmless
-    standard modules it imports, may not use an attribute that starts a process, touches the environment, writes, deletes,
-    evaluates, or reaches the network, and may not name a path outside the project (an absolute or home path). open() is
-    accepted only for a literal file name in read mode."""
+    """Python inline code is accepted only when its syntax tree is made of a short list of node types and every name is
+    known: the builtins above, an import from the harmless modules above, a variable the code assigns, or open() called
+    directly with a literal file name inside the project in read mode. Methods are limited to PY_METHODS, module attributes
+    may not be dunder or on PY_ATTR_BAD, and a string constant may not be an absolute, home or `..` path. Anything else (a
+    Path, os, a lambda, a def, a with, a bare reference to open, a call of a call) is not followed. A syntax tree filter, not a
+    sandbox."""
     import ast
+    allowed = (ast.Module, ast.Expr, ast.Assign, ast.AugAssign, ast.Import, ast.ImportFrom, ast.alias, ast.Call, ast.Name, ast.Attribute,
+               ast.Constant, ast.List, ast.Tuple, ast.Dict, ast.Set, ast.Subscript, ast.Slice, ast.BinOp, ast.UnaryOp, ast.BoolOp,
+               ast.Compare, ast.IfExp, ast.JoinedStr, ast.FormattedValue, ast.ListComp, ast.GeneratorExp, ast.DictComp, ast.SetComp,
+               ast.comprehension, ast.keyword, ast.Starred, ast.Load, ast.Store, ast.operator, ast.unaryop, ast.boolop, ast.cmpop)
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return False
+    mods, assigned, direct_open = set(), set(), set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr in PY_BAD_ATTR and node.attr != "open":
+        if not isinstance(node, allowed):
             return False
-        if isinstance(node, ast.Name) and (node.id in ("__builtins__", "__import__", "eval", "exec", "compile", "getattr", "setattr",
-                                                       "delattr", "globals", "locals", "vars", "input", "breakpoint")):
-            return False
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and ABS_PATH_LITERAL.match(node.value):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name not in PY_MODULES:
+                    return False
+                mods.add(a.asname or a.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level or node.module not in PY_MODULES or any(a.name == "*" for a in node.names):
+                return False
+            for a in node.names:
+                assigned.add(a.asname or a.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            assigned.add(node.id)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id.startswith("__") or node.id == "open" and id(node) not in direct_open and True:
+                pass
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
+            direct_open.add(id(node.func))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            n = node.id
+            if n == "open":
+                if id(node) not in direct_open:
+                    return False
+            elif n.startswith("__") or not (n in PY_BUILTINS or n in mods or n in assigned or n in ("True", "False", "None")):
+                return False
+        if isinstance(node, ast.Attribute):
+            if node.attr.startswith("_") or node.attr in PY_ATTR_BAD:
+                return False
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and ABS_PATH_LITERAL.search(node.value):
             return False
         if isinstance(node, ast.Call):
             fn = node.func
-            if isinstance(fn, ast.Name) and fn.id not in PY_OK_CALLS:
-                return False
-            if isinstance(fn, ast.Name) and fn.id == "open":
-                a0 = node.args[0] if node.args else None
-                mode = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
-                if not (isinstance(a0, ast.Constant) and isinstance(a0.value, str)):
+            if isinstance(fn, ast.Name):
+                if fn.id == "open":
+                    a0 = node.args[0] if node.args else None
+                    mode = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
+                    if len(node.args) + len(node.keywords) > 3 or not (isinstance(a0, ast.Constant) and isinstance(a0.value, str)):
+                        return False
+                    if mode is not None and not (isinstance(mode, ast.Constant) and isinstance(mode.value, str)
+                                                 and re.fullmatch(r"r[bt]?", mode.value)):
+                        return False
+                elif fn.id not in PY_BUILTINS and fn.id not in assigned:
                     return False
-                if mode is not None and not (isinstance(mode, ast.Constant) and isinstance(mode.value, str) and re.fullmatch(r"r[bt]?", mode.value)):
+                if fn.id in ("map", "filter") and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id not in PY_BUILTINS:
                     return False
-            if isinstance(fn, ast.Attribute) and fn.attr == "open":
+            elif isinstance(fn, ast.Attribute):
+                base = fn.value
+                if isinstance(base, ast.Name) and base.id in mods:
+                    pass                                    # a function of an imported harmless module
+                elif fn.attr not in PY_METHODS:
+                    return False
+            else:
                 return False
-            if not isinstance(fn, (ast.Name, ast.Attribute)):
-                return False                      # a call of a call, a subscript, a lambda: not followed
     return True
 
 
-NODE_BAD = re.compile(
-    r"(?i)\b(?:unlink|rename|copyFile|cpSync|rmdir|rmSync|rm|chmod|chown|truncate|link|symlink|openSync|open|write|append|mkdir|mkdtemp|"
-    r"createWriteStream|utimes|execSync|exec|spawn|fork|eval|Function|process|child_process|fetch|XMLHttpRequest|WebSocket|Deno|Bun|"
-    r"globalThis|import|setTimeout|setInterval|while|readdirSync|readdir|opendir)\w*|\[[^\]]*['\"]\s*\+|fromCharCode|\.join\s*\(|`|\\\\x|\\\\u")
+NODE_SHAPE = re.compile(
+    r"\s*console\.log\(\s*(?:require\(\s*['\"](?:\./)?[\w-]+(?:/[\w-]+)*\.json['\"]\s*\)(?:\.[A-Za-z_]\w*)*|"
+    r"JSON\.stringify\([^()`\\]*\)|['\"][^'\"\\`$]*['\"]|[\d\s.+*/()-]+)\s*\)\s*;?\s*")
 
 
 def node_inline_ok(code: str) -> bool:
-    """Node inline code: every require() takes one literal core-module name from a short list, no process, no string
-    building, and the only fs calls are reads of a literal file name."""
-    if NODE_BAD.search(code) or ABS_PATH_LITERAL.search(code.replace("'", " ").replace('"', " ")) is None and False:
-        return False
-    reqs = re.findall(r"\brequire\b", code)
-    lit = re.findall(r"\brequire\s*\(\s*(?:'([^']*)'|\"([^\"]*)\")\s*\)", code)
-    if len(reqs) != len(lit) or any((a or b) not in INLINE_NODE_OK for a, b in lit):
-        return False
-    for m in re.finditer(r"['\"]([^'\"]*)['\"]", code):
-        if ABS_PATH_LITERAL.match(m.group(1)):
-            return False
-    for m in re.finditer(r"\b(?:readFileSync|readFile|existsSync|statSync)\s*\(\s*(?!['\"])", code):
-        return False
-    return True
+    """Node inline code is accepted only in one shape: console.log of a literal, arithmetic, JSON.stringify of a literal, or a
+    property of a local .json file. Everything else is not followed."""
+    return bool(NODE_SHAPE.fullmatch(code)) and not ABS_PATH_LITERAL.search(code)
 
 
 def inline_imports_ok(code: str) -> bool:
@@ -1402,7 +1429,7 @@ def inline_imports_ok(code: str) -> bool:
             if name not in INLINE_PY_OK and name.split(".")[0] not in {x.split(".")[0] for x in INLINE_PY_OK if "." not in x}:
                 return False
     for m in re.finditer(r"require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", code):
-        if m.group(1) not in INLINE_NODE_OK:
+        if m.group(1) not in INLINE_NODE_OK and not re.fullmatch(r"(?:\./)?[\w-]+(?:/[\w-]+)*\.json", m.group(1)):
             return False
     return True
 
@@ -1414,6 +1441,10 @@ REMOTE_PLAIN = {"ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "df
                 "whoami", "id", "date", "pwd", "ps", "pgrep", "echo", "stat", "file", "which", "nproc", "lscpu", "lsblk",
                 "lsb_release", "ss", "netstat", "true", "false", "sort", "uniq", "cut", "tr", "nl", "basename", "dirname"}
 REMOTE_FIND_BAD = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"}
+REMOTE_SECRET_ANY = re.compile(
+    r"(?i)\.env|id_(?:rsa|dsa|ecdsa|ed25519)|shadow|sudoers|\.ssh|\.aws|\.kube|\.docker|\.gnupg|\.netrc|\.pgpass|\.npmrc|\.pypirc|"
+    r"credential|secret|private|\.pem|\.key\b|token|history|\.p12|\.pfx|\.kdbx|tfstate|k3s\.yaml|chap-secrets|sasl_passwd|logins\.json|"
+    r"config\.v2\.json|\.tfrc|wp-config|htpasswd|admin\.conf|kubeconfig|\.vault|[{}]")
 REMOTE_SECRET_DIR = re.compile(r"(?i)(?:^|/)\.(?:ssh|aws|kube|docker|gnupg|azure|config/gcloud|config/gh|config/rclone|vault-token|my\.cnf|"
                                r"mylogin\.cnf|s3cfg|boto|config/hub)(?:/|$)|/ssh_host_\w+_key|/proc/[^/]*/(?:environ|cmdline|mem|maps)|"
                                r"/etc/(?:ssl/private|letsencrypt)/")
@@ -2351,6 +2382,11 @@ class Shell:
     def run_script(self, script: "Arg", args: list, st: Stage):
         st.name = st.name or "script"
         for c in script.cands:
+            if c is not None and STDIN_PATH.match(c):
+                # /dev/stdin, /dev/fd/N, /proc/self/fd/N: the code comes from a pipe or a here-string, like `bash -s`
+                st.stdin_code = True
+                st.modelled = False
+                return self.unk("the script is read from standard input (a device path)")
             if c is not None and URL_RE.match(c):
                 st.modelled = False
                 self.unk("it runs a script straight from a URL")
@@ -2602,8 +2638,8 @@ class Shell:
                 i += 2
             elif t == "-l" and nxt and re.fullmatch(r"[\w.-]{1,32}", nxt):
                 i += 2
-            elif t == "-o" and nxt and re.fullmatch(r"(?i)(?:BatchMode|StrictHostKeyChecking|ConnectTimeout|ServerAliveInterval|"
-                                                    r"ServerAliveCountMax|LogLevel)=[\w.-]{1,20}", nxt):
+            elif t == "-o" and nxt and re.fullmatch(r"(?i)(?:BatchMode=yes|ConnectTimeout=\d{1,3}|ServerAliveInterval=\d{1,3}|"
+                                                    r"ServerAliveCountMax=\d{1,3}|LogLevel=(?:ERROR|QUIET|INFO))", nxt):
                 i += 2
             elif t == "-i" and nxt:
                 self.path(nxt, "use")
@@ -2650,7 +2686,7 @@ class Shell:
                     return "the command sent over ssh sets a variable"
                 nm = ws[0].rsplit("/", 1)[-1]
                 a = [x.lower() for x in ws[1:]]
-                if any(REMOTE_SECRET.search(x) or REMOTE_SECRET_DIR.search(x) for x in ws[1:]):
+                if any(REMOTE_SECRET.search(x) or REMOTE_SECRET_DIR.search(x) or REMOTE_SECRET_ANY.search(x) for x in ws[1:]):
                     self.res(R_SECRET)
                     return "the command sent over ssh names a secret file"
                 pos = [x for x in a if not x.startswith("-")]
@@ -2686,10 +2722,12 @@ class Shell:
                 elif nm == "ps":
                     ok = a in ([], ["aux"], ["-ef"], ["-e"], ["ax"], ["-aux"], ["auxf"], ["-f"])
                 elif nm in ("grep", "egrep", "fgrep"):
-                    ok = not any(re.fullmatch(r"-[a-zA-Z]*[rRf][a-zA-Z]*", x) or x in ("--recursive", "--dereference-recursive") or
-                                 x.startswith(("--recursive", "-d", "--directories", "--file")) for x in a)
+                    ok = all(re.fullmatch(r"-[inclvwEFHhoqsx]{1,8}", x) or x in ("--color", "--color=never", "--color=auto", "--ignore-case",
+                                                                                 "--line-number", "--count", "--files-with-matches",
+                                                                                 "--invert-match", "--word-regexp", "--no-messages")
+                             or re.fullmatch(r"-[ABCm]\d{1,4}", x) for x in ws[1:] if x.startswith("-"))
                 elif nm == "date":
-                    ok = not any(x.startswith(("-s", "--set", "-f", "--file")) for x in a)
+                    ok = all(x in ("-u", "--utc", "--universal") or x.startswith("+") or x == "-i" or x == "-I" for x in ws[1:])
                 elif nm == "hostname":
                     ok = not pos
                 elif nm == "sort":
@@ -2697,7 +2735,7 @@ class Shell:
                 elif nm == "uniq":
                     ok = all(x in ("-c", "-d", "-u", "-i") for x in ws[1:])
                 elif nm == "ss":
-                    ok = not any(x in ("-k", "--kill") for x in a)
+                    ok = all(re.fullmatch(r"-[tulnasH46]{1,8}", x) for x in ws[1:])
                 elif nm in REMOTE_PLAIN:
                     ok = True
                 if not ok:
