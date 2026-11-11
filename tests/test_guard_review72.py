@@ -280,3 +280,28 @@ def test_remote_round_four(env, cmd):
 @pytest.mark.parametrize("cmd", ['ssh host "ss -tln"', 'ssh host "date"', 'ssh host "grep -n error /var/log/app.log"', 'ssh host "grep -i fail app.log | tail -5"'])
 def test_everyday_remote_still_quiet_round_four(env, cmd):
     assert v(cmd, env) == "allow", cmd
+
+
+# round 5 (fifth reviewer): FINDINGS V72-27 to V72-29
+@pytest.mark.parametrize("cmd", [
+    "python -c \"g=(x for x in [1]).gi_frame.f_builtins; i=g['_'*2+'import'+'_'*2]; o=i('o'+'s'); a=g['get'+'attr']; s=a(o,'sys'+'tem'); s('echo P')\"",
+    "python -c \"import typing; typing.get_type_hints(typing.NamedTuple('X',[('a','_'*2+'import'+'_'*2+'(os)')]))\"",
+    "python -c \"g=(x for x in [1]).gi_frame.f_builtins; o=g['op'+'en']; a='.e'; b='nv'; print(o(a+b).read())\"",
+    "python -c \"g=(x for x in [1]).gi_frame.f_builtins; o=g['op'+'en']; print(o('.e%sv' % 'n').read())\"",
+    "python -c \"o=open; print(o('x.txt').read())\"",
+    "node -e \"console.log(JSON.stringify(process))\"", "node -e \"console.log(JSON.stringify(process,null,1))\"",
+    "python -c \"print(len('a'*10**10))\"", "python -c \"print(sum(range(10**12)))\"", "python -c \"import itertools; list(itertools.count())\"",
+    "python -c \"import sys; sys.breakpointhook()\"", "python -c \"import sys; print(sys.modules)\"", "python -c \"import time; time.sleep(100000)\"",
+    "python -c \"import uuid; uuid.getnode()\"", "python -c \"print('{0.__class__}'.format(1))\"", "python -c \"x=print; x(1)\"",
+    "python -c \"print(1, file=open('x','w'))\""])
+def test_inline_code_round_five(env, cmd):
+    assert v(cmd, env) != "allow", cmd
+
+
+@pytest.mark.parametrize("cmd", ['python -c "import datetime; print(datetime.datetime.now().isoformat())"',
+                                 'python -c "import re; print(re.sub(\'a\', \'b\', \'aaa\'))"',
+                                 'python -c "import hashlib; print(hashlib.sha256(b\'x\').hexdigest())"',
+                                 'python -c "import collections; print(collections.Counter(\'aab\').most_common(1))"',
+                                 'python -c "import json,sys; d=json.load(open(\'package.json\')); print(d.get(\'version\'))"'])
+def test_everyday_inline_code_still_quiet_round_five(env, cmd):
+    assert v(cmd, env) == "allow", cmd

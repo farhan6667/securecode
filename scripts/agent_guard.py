@@ -1320,24 +1320,29 @@ INLINE_CRED = re.compile(r"(?i)\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.dock
 
 
 PY_MODULES = {"json", "sys", "re", "math", "datetime", "time", "collections", "itertools", "textwrap", "string", "statistics",
-              "decimal", "fractions", "platform", "typing", "hashlib", "enum", "uuid", "random"}
+              "decimal", "fractions", "platform", "hashlib", "random"}
 PY_BUILTINS = {"print", "len", "sorted", "sum", "min", "max", "range", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
                "enumerate", "zip", "abs", "round", "repr", "isinstance", "any", "all", "reversed", "type", "map", "filter"}
 PY_METHODS = {"strip", "lstrip", "rstrip", "split", "rsplit", "splitlines", "lower", "upper", "title", "startswith", "endswith", "find",
-              "count", "items", "keys", "values", "get", "append", "index", "read", "readlines", "close", "format", "isdigit", "capitalize",
-              "zfill", "ljust", "rjust", "center", "encode", "decode", "hex", "most_common", "total_seconds", "isoformat", "strftime"}
-PY_ATTR_BAD = {"modules", "path", "meta_path", "stdin", "stdout", "stderr", "exit", "_getframe", "settrace", "setprofile", "argv_no"}
-PY_NODES = (ast_names := None)
+              "count", "items", "keys", "values", "get", "append", "index", "read", "readlines", "close", "isdigit", "capitalize",
+              "zfill", "ljust", "rjust", "center", "encode", "decode", "hex", "hexdigest", "most_common", "total_seconds", "isoformat",
+              "strftime", "sub", "subn", "findall", "match", "search", "fullmatch", "group", "groups", "replace_no", "date", "time",
+              "timestamp", "days", "seconds"}
+# a module's own attributes: only these are reachable (sys especially hands out the interpreter), and never these
+PY_MODULE_ALLOW = {"sys": {"version", "version_info", "platform", "argv", "maxsize", "byteorder", "float_info", "getsizeof"}}
+PY_MODULE_BAD = {"time": {"sleep"}, "itertools": {"count", "cycle", "repeat"}, "platform": {"popen"}}
+PY_PAIRS = {"datetime.datetime", "datetime.date", "datetime.timedelta", "datetime.timezone", "collections.Counter",
+            "collections.defaultdict", "collections.OrderedDict", "collections.deque", "json.JSONDecodeError"}
 ABS_PATH_LITERAL = re.compile(r"^(?:/|~|[A-Za-z]:[\\/]|\\\\)|(?:^|[\\/])\.\.(?:[\\/]|$)")
 
 
 def python_inline_ok(code: str) -> bool:
     """Python inline code is accepted only when its syntax tree is made of a short list of node types and every name is
-    known: the builtins above, an import from the harmless modules above, a variable the code assigns, or open() called
-    directly with a literal file name inside the project in read mode. Methods are limited to PY_METHODS, module attributes
-    may not be dunder or on PY_ATTR_BAD, and a string constant may not be an absolute, home or `..` path. Anything else (a
-    Path, os, a lambda, a def, a with, a bare reference to open, a call of a call) is not followed. A syntax tree filter, not a
-    sandbox."""
+    known: the builtins above, an import from the harmless modules above, a variable the code assigns (never called), or
+    open() called directly with a literal file name inside the project in read mode. A module gives only its own plain
+    attributes (sys only a few), anything deeper must be a method on the list, no name or attribute starts with an underscore
+    (so no frame, class or builtins walk), no ** and no big number (no memory or CPU bomb), and a string constant may not be
+    an absolute, home or `..` path. A syntax tree filter, not a sandbox."""
     import ast
     allowed = (ast.Module, ast.Expr, ast.Assign, ast.AugAssign, ast.Import, ast.ImportFrom, ast.alias, ast.Call, ast.Name, ast.Attribute,
                ast.Constant, ast.List, ast.Tuple, ast.Dict, ast.Set, ast.Subscript, ast.Slice, ast.BinOp, ast.UnaryOp, ast.BoolOp,
@@ -1347,7 +1352,10 @@ def python_inline_ok(code: str) -> bool:
         tree = ast.parse(code)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return False
-    mods, assigned, direct_open = set(), set(), set()
+    mods: set = set()
+    imported: set = set()
+    assigned: set = set()
+    direct_open: set = set()
     for node in ast.walk(tree):
         if not isinstance(node, allowed):
             return False
@@ -1360,14 +1368,15 @@ def python_inline_ok(code: str) -> bool:
             if node.level or node.module not in PY_MODULES or any(a.name == "*" for a in node.names):
                 return False
             for a in node.names:
-                assigned.add(a.asname or a.name)
+                if a.name.startswith("_") or a.name in PY_MODULE_BAD.get(node.module, ()) or \
+                        (node.module in PY_MODULE_ALLOW and a.name not in PY_MODULE_ALLOW[node.module]):
+                    return False
+                imported.add(a.asname or a.name)
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            if node.id.startswith("_"):
+                return False
             assigned.add(node.id)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            if node.id.startswith("__") or node.id == "open" and id(node) not in direct_open and True:
-                pass
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
             direct_open.add(id(node.func))
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
@@ -1375,14 +1384,31 @@ def python_inline_ok(code: str) -> bool:
             if n == "open":
                 if id(node) not in direct_open:
                     return False
-            elif n.startswith("__") or not (n in PY_BUILTINS or n in mods or n in assigned or n in ("True", "False", "None")):
+            elif n.startswith("_") or not (n in PY_BUILTINS or n in mods or n in imported or n in assigned or n in ("True", "False", "None")):
                 return False
-        if isinstance(node, ast.Attribute):
-            if node.attr.startswith("_") or node.attr in PY_ATTR_BAD:
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("_"):
                 return False
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and ABS_PATH_LITERAL.search(node.value):
+            v = node.value
+            if isinstance(v, ast.Name) and v.id in mods:
+                mod = next((m for m in PY_MODULES if v.id == m or v.id.endswith(m)), v.id)
+                if node.attr in PY_MODULE_BAD.get(mod, ()) or (mod in PY_MODULE_ALLOW and node.attr not in PY_MODULE_ALLOW[mod]):
+                    return False
+            elif isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id in mods and \
+                    f"{v.value.id}.{v.attr}" in PY_PAIRS:
+                pass                                         # datetime.datetime.now, collections.Counter(...).most_common
+            elif node.attr not in PY_METHODS:
+                return False
+        elif isinstance(node, ast.Constant):
+            if isinstance(node.value, str) and ABS_PATH_LITERAL.search(node.value):
+                return False
+            if isinstance(node.value, (int, float)) and not isinstance(node.value, bool) and abs(node.value) > 10 ** 6:
+                return False
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Pow, ast.LShift)):
             return False
-        if isinstance(node, ast.Call):
+        elif isinstance(node, ast.keyword) and node.arg in ("file", "end_no"):
+            return False
+        elif isinstance(node, ast.Call):
             fn = node.func
             if isinstance(fn, ast.Name):
                 if fn.id == "open":
@@ -1393,24 +1419,18 @@ def python_inline_ok(code: str) -> bool:
                     if mode is not None and not (isinstance(mode, ast.Constant) and isinstance(mode.value, str)
                                                  and re.fullmatch(r"r[bt]?", mode.value)):
                         return False
-                elif fn.id not in PY_BUILTINS and fn.id not in assigned:
+                elif fn.id not in PY_BUILTINS and fn.id not in imported:
+                    return False                             # a variable is never called
+                if fn.id in ("map", "filter") and node.args and not (isinstance(node.args[0], ast.Name) and node.args[0].id in PY_BUILTINS):
                     return False
-                if fn.id in ("map", "filter") and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id not in PY_BUILTINS:
-                    return False
-            elif isinstance(fn, ast.Attribute):
-                base = fn.value
-                if isinstance(base, ast.Name) and base.id in mods:
-                    pass                                    # a function of an imported harmless module
-                elif fn.attr not in PY_METHODS:
-                    return False
-            else:
+            elif not isinstance(fn, ast.Attribute):
                 return False
     return True
 
 
 NODE_SHAPE = re.compile(
     r"\s*console\.log\(\s*(?:require\(\s*['\"](?:\./)?[\w-]+(?:/[\w-]+)*\.json['\"]\s*\)(?:\.[A-Za-z_]\w*)*|"
-    r"JSON\.stringify\([^()`\\]*\)|['\"][^'\"\\`$]*['\"]|[\d\s.+*/()-]+)\s*\)\s*;?\s*")
+    r"JSON\.stringify\(\s*(?:['\"][^'\"\\`$]*['\"]|\d+(?:\.\d+)?)\s*\)|['\"][^'\"\\`$]*['\"]|[\d\s.+*/()-]+)\s*\)\s*;?\s*")
 
 
 def node_inline_ok(code: str) -> bool:

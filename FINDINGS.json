@@ -1496,6 +1496,42 @@
       "check": "pytest tests/test_guard_review72.py",
       "status": "fixed",
       "fix": "grep, date and ss use allowlists, and ssh -o accepts only BatchMode, ConnectTimeout, ServerAlive and LogLevel"
+    },
+    {
+      "id": "V72-27",
+      "severity": "high",
+      "where": "agent_guard.py python_inline_ok",
+      "what": "Assigned names were callable and frame attributes (gi_frame, f_builtins) were reachable, so inline Python reached full builtins through string-built keys: it started a process, read .env, and wrote files. typing.get_type_hints evaluated a string.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "a variable is never called; no name or attribute starts with an underscore; a module gives only its own plain attributes (sys only a few); deeper attributes must be on the method list; typing and uuid removed"
+    },
+    {
+      "id": "V72-28",
+      "severity": "medium",
+      "where": "agent_guard.py NODE_SHAPE",
+      "what": "`node -e \"console.log(JSON.stringify(process))\"` printed the whole environment.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "JSON.stringify accepts only a quoted literal or a number"
+    },
+    {
+      "id": "V72-29",
+      "severity": "low",
+      "where": "agent_guard.py python_inline_ok",
+      "what": "A short one-liner could use all memory or hang (`'a'*10**10`, `range(10**12)`, `itertools.count()`, `time.sleep`, `sys.breakpointhook`).",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "** and << refused, numbers over a million refused, the unbounded itertools functions and time.sleep refused"
+    },
+    {
+      "id": "V72-O7",
+      "severity": "low",
+      "where": "agent_guard.py",
+      "what": "Pre-existing: make -f /dev/stdin, cmake -P /dev/stdin and jq -n env run code or print the environment; build tools are trusted as project tools.",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: planned for 7.3"
     }
   ]
 }
