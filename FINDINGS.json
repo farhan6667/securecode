@@ -1532,6 +1532,51 @@
       "check": "none yet",
       "status": "open",
       "fix": "open: planned for 7.3"
+    },
+    {
+      "id": "V72-30",
+      "severity": "high",
+      "where": "agent_guard.py Shell.py_module",
+      "what": "`python -m timeit -s \"x=open('.env').read()\" ...` ran arbitrary Python and read secrets in every mode, as did `-m http.server` (serves the folder) and `-m webbrowser` (present since 7.0). Every `-m` module that was not special-cased fell through to a path scan.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "`python -m` is now an allowlist of everyday modules (pytest, unittest, venv, json.tool, black, ruff, mypy, build, tox...); anything else is not followed"
+    },
+    {
+      "id": "V72-31",
+      "severity": "medium",
+      "where": "agent_guard.py Shell.inline",
+      "what": "Inline code could open id_rsa, id_ed25519 or credentials, which `cat` denies, because a bare name with no dot or slash skipped the secret check.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "every string in inline code is checked for secret names, with or without a dot"
+    },
+    {
+      "id": "V72-32",
+      "severity": "medium",
+      "where": "agent_guard.py python_inline_ok",
+      "what": "A module alias (`import itertools as it`, `import sys as t`) defeated the per-module deny lists.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "an alias map from the import statements"
+    },
+    {
+      "id": "V72-33",
+      "severity": "low",
+      "where": "agent_guard.py python_inline_ok",
+      "what": "Short one-liners could still use all memory or CPU (nested multiplication, double loops, factorial, product), and platform.architecture() and uname() spawn processes on POSIX.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "nested or large multiplication, more than one loop in a comprehension, large range, factorial, comb, perm, product, permutations refused; platform limited to six plain functions"
+    },
+    {
+      "id": "V72-34",
+      "severity": "medium",
+      "where": "agent_guard.py npm, npx, tool, dispatch",
+      "what": "`bun -e`, `npx tsx -e`, `erl -eval`, `elixir -e`, `ghc -e`, `swift -e` and `jq -n env` ran code or printed the environment without a question.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "these evaluate flags are not followed"
     }
   ]
 }

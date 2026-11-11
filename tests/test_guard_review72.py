@@ -45,7 +45,7 @@ def test_a_syntax_stage_does_not_hide_an_install_or_credential_ask(env, cmd):
                                  'python -c "import evil;evil.run()"', "node -e \"require('./evil')\"",
                                  'python -c "print(open(\'.pypirc\').read())"', 'python -c "from evil import x"'])
 def test_inline_code_that_imports_or_names_a_credential_file_asks(env, cmd):
-    assert v(cmd, env) == "ask", cmd
+    assert v(cmd, env) in ("ask", "deny"), cmd        # a credential file named in the code is now refused outright
 
 
 @pytest.mark.parametrize("cmd", ['python -c "import json,sys;print(json.load(open(\'package.json\'))[\'version\'])"',
@@ -305,3 +305,45 @@ def test_inline_code_round_five(env, cmd):
                                  'python -c "import json,sys; d=json.load(open(\'package.json\')); print(d.get(\'version\'))"'])
 def test_everyday_inline_code_still_quiet_round_five(env, cmd):
     assert v(cmd, env) == "allow", cmd
+
+
+# round 6 (sixth reviewer): FINDINGS V72-30 to V72-34
+@pytest.mark.parametrize("cmd", ["python -m timeit -s \"x=open('.env').read()\" \"print(x)\"", "python3 -m timeit -n1 -r1 'open(\".env\").read()'",
+                                 "python -m timeit \"import socket\"", "py -m timeit x", "python -m http.server", "python -m http.server --bind 0.0.0.0 8080",
+                                 "python -m webbrowser -t http://x.example", "python -m trace --trace x.py", "python -m cProfile x.py"])
+def test_unlisted_python_modules_are_not_followed(env, cmd):
+    for gm in ("coding", "strict"):
+        assert v(cmd, env, gm) != "allow", (gm, cmd)
+    if ".env" in cmd:
+        assert v(cmd, env, "coding") == "deny"
+
+
+@pytest.mark.parametrize("cmd", ["python -m pytest -q", "python -m pytest tests/test_a.py -x", "python -m venv .venv", "python -m json.tool x.json",
+                                 "python -m black .", "python -m ruff check .", "python -m mypy src", "python -m unittest discover"])
+def test_everyday_python_modules_stay_quiet(env, cmd):
+    assert v(cmd, env) == "allow", cmd
+
+
+@pytest.mark.parametrize("cmd", ['python -c "print(open(\'id_rsa\').read())"', 'python -c "print(open(\'id_ed25519\').read())"',
+                                 'python -c "print(open(\'credentials\').read())"',
+                                 'python -c "import hashlib; print(hashlib.sha256(open(\'id_rsa\',\'rb\').read()).hexdigest())"'])
+def test_inline_code_does_not_open_a_private_key_or_credentials(env, cmd):
+    assert v(cmd, env) == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ['python -c "import itertools as it; print(len(list(it.count())))"', 'python -c "import sys as t; print(t.modules)"',
+                                 'python -c "import sys as t; t.breakpointhook()"', 'python -c "import itertools as q; print(sum(q.cycle([1])))"',
+                                 'python -c "print(len([0]*1000000*1000))"', 'python -c "print(len(\'a\'*1000000*10000))"',
+                                 'python -c "print(sum(1 for a in range(1000000) for b in range(1000000)))"',
+                                 'python -c "import math; print(math.factorial(1000000))"',
+                                 'python -c "import itertools; print(len(list(itertools.product(range(1000000),repeat=3))))"',
+                                 'python -c "import platform; print(platform.architecture())"', 'python -c "import platform; print(platform.uname())"'])
+def test_inline_aliases_and_bombs_round_six(env, cmd):
+    assert v(cmd, env) != "allow", cmd
+
+
+@pytest.mark.parametrize("cmd", ["bun -e 'Bun.spawn([\"id\"])'", "bun --eval 'x'", "npx tsx -e \"require('child_process')\"", "npx ts-node -e 'x'",
+                                 "erl -eval 'halt().'", "elixir -e 'System.cmd(\"id\", [])'", "ghc -e main", "swift -e 'print(1)'",
+                                 "jq -n env", "jq -n '$ENV.PATH'", "perl -e 'system(\"id\")'", "ruby -e 'system(\"id\")'", "php -r 'system(\"id\");'"])
+def test_other_eval_flags_are_not_followed(env, cmd):
+    assert v(cmd, env) != "allow", cmd

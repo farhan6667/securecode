@@ -1267,6 +1267,11 @@ PKG_COMPOSER = re.compile(r"[a-z0-9][\w.-]*/[a-z0-9][\w.-]*(?::[\w.^~*@-]+)?", r
 PKG_SIMPLE = re.compile(r"[a-z0-9][\w.-]*", re.I)
 PKG_MAX = 214
 SUBST_MAX = 8000
+PY_M_OK = {"pytest", "unittest", "venv", "json.tool", "black", "ruff", "mypy", "flake8", "pylint", "isort", "coverage", "build", "tox",
+           "nox", "uv", "pre_commit", "alembic", "django", "flask", "uvicorn", "gunicorn", "sphinx", "mkdocs", "bandit", "pip_audit",
+           "playwright", "pytest_cov", "compileall", "py_compile", "poetry", "hatch", "pdm", "pyright", "pydocstyle", "autopep8", "yapf",
+           "semgrep", "safety", "pipx", "wheel", "setuptools", "cython", "sqlfluff", "codespell", "nbconvert", "behave", "locust"}
+EVAL_FLAGS = {"-e", "-eval", "--eval", "-E", "--execute", "-r", "-p", "--print"}
 STDIN_PATH = re.compile(r"^/(?:dev/(?:stdin|fd/\d+|tty|tcp/.*|udp/.*)|proc/(?:self|\d+)/fd/\d+)$", re.I)
 # commands that only print a size or a listing of what they are given: an unknown path from a checked command is harmless
 COUNT_ONLY = {"wc", "ls", "dir", "vdir", "du", "stat", "tree", "test", "[", "[[", "file"}
@@ -1329,8 +1334,13 @@ PY_METHODS = {"strip", "lstrip", "rstrip", "split", "rsplit", "splitlines", "low
               "strftime", "sub", "subn", "findall", "match", "search", "fullmatch", "group", "groups", "replace_no", "date", "time",
               "timestamp", "days", "seconds"}
 # a module's own attributes: only these are reachable (sys especially hands out the interpreter), and never these
-PY_MODULE_ALLOW = {"sys": {"version", "version_info", "platform", "argv", "maxsize", "byteorder", "float_info", "getsizeof"}}
-PY_MODULE_BAD = {"time": {"sleep"}, "itertools": {"count", "cycle", "repeat"}, "platform": {"popen"}}
+PY_MODULE_ALLOW = {"sys": {"version", "version_info", "platform", "argv", "maxsize", "byteorder", "float_info", "getsizeof"},
+                   "platform": {"python_version", "python_implementation", "python_version_tuple", "system", "release", "machine", "node"}}
+PY_MODULE_BAD = {"time": {"sleep"}, "itertools": {"count", "cycle", "repeat", "product", "permutations", "combinations",
+                                                  "combinations_with_replacement"},
+                 "math": {"factorial", "comb", "perm", "prod"}}
+SECRET_BARE = re.compile(r"(?i)^(?:id_(?:rsa|dsa|ecdsa|ed25519)\w*|credentials?|secrets?|\.?netrc|\.?pgpass|\.?npmrc|\.?pypirc|"
+                         r"authorized_keys|known_hosts|shadow|.*\.(?:pem|key|p12|pfx|kdbx)|.*token.*)$")
 PY_PAIRS = {"datetime.datetime", "datetime.date", "datetime.timedelta", "datetime.timezone", "collections.Counter",
             "collections.defaultdict", "collections.OrderedDict", "collections.deque", "json.JSONDecodeError"}
 ABS_PATH_LITERAL = re.compile(r"^(?:/|~|[A-Za-z]:[\\/]|\\\\)|(?:^|[\\/])\.\.(?:[\\/]|$)")
@@ -1353,17 +1363,27 @@ def python_inline_ok(code: str) -> bool:
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return False
     mods: set = set()
+    alias_of: dict = {}
     imported: set = set()
     assigned: set = set()
     direct_open: set = set()
     for node in ast.walk(tree):
         if not isinstance(node, allowed):
             return False
+        if isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.DictComp, ast.SetComp)) and len(node.generators) > 1:
+            return False
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+            for side in (node.left, node.right):
+                if isinstance(side, ast.BinOp) and isinstance(side.op, ast.Mult):
+                    return False
+                if isinstance(side, ast.Constant) and isinstance(side.value, int) and not isinstance(side.value, bool) and side.value > 1000:
+                    return False
         if isinstance(node, ast.Import):
             for a in node.names:
                 if a.name not in PY_MODULES:
                     return False
                 mods.add(a.asname or a.name)
+                alias_of[a.asname or a.name] = a.name
         elif isinstance(node, ast.ImportFrom):
             if node.level or node.module not in PY_MODULES or any(a.name == "*" for a in node.names):
                 return False
@@ -1391,16 +1411,17 @@ def python_inline_ok(code: str) -> bool:
                 return False
             v = node.value
             if isinstance(v, ast.Name) and v.id in mods:
-                mod = next((m for m in PY_MODULES if v.id == m or v.id.endswith(m)), v.id)
+                mod = alias_of.get(v.id, v.id)
                 if node.attr in PY_MODULE_BAD.get(mod, ()) or (mod in PY_MODULE_ALLOW and node.attr not in PY_MODULE_ALLOW[mod]):
                     return False
             elif isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id in mods and \
-                    f"{v.value.id}.{v.attr}" in PY_PAIRS:
+                    f"{alias_of.get(v.value.id, v.value.id)}.{v.attr}" in PY_PAIRS:
                 pass                                         # datetime.datetime.now, collections.Counter(...).most_common
             elif node.attr not in PY_METHODS:
                 return False
         elif isinstance(node, ast.Constant):
-            if isinstance(node.value, str) and ABS_PATH_LITERAL.search(node.value):
+            if isinstance(node.value, str) and (ABS_PATH_LITERAL.search(node.value) or SECRET_BARE.match(node.value.rsplit("/", 1)[-1])
+                                                or is_secret_path(node.value)):
                 return False
             if isinstance(node.value, (int, float)) and not isinstance(node.value, bool) and abs(node.value) > 10 ** 6:
                 return False
@@ -1421,6 +1442,8 @@ def python_inline_ok(code: str) -> bool:
                         return False
                 elif fn.id not in PY_BUILTINS and fn.id not in imported:
                     return False                             # a variable is never called
+                if fn.id == "range" and any(isinstance(a, ast.Constant) and isinstance(a.value, int) and abs(a.value) > 100000 for a in node.args):
+                    return False
                 if fn.id in ("map", "filter") and node.args and not (isinstance(node.args[0], ast.Name) and node.args[0].id in PY_BUILTINS):
                     return False
             elif not isinstance(fn, ast.Attribute):
@@ -2584,6 +2607,9 @@ class Shell:
                 st.modelled = False
                 return self.unk("local data is sent to the host over ssh (a pipe, a redirect or a here-document)")
             return self.remote(name, args, st)
+        if name in ("jq", "yq", "gojq") and any(re.search(r"\benv\b|\$ENV|\binput_filename\b|\$__loc__", a.t or "") for a in args):
+            st.modelled = False
+            return self.unk(f"{name} can print the environment")
         if name in READER or name in WRITER:
             return self.file_cmd(name, args, st, idx, pipe)
         if name in GENERIC_TOOLS or name in ("php", "ruby", "perl", "twine", "nuget", "gem"):
@@ -3468,6 +3494,9 @@ class Shell:
     def npm(self, name: str, args: list, st: Stage):
         t = [(a.t or "") for a in args]
         tl = [x.lower() for x in t]
+        if name in ("bun", "deno") and any(x in ("-e", "--eval", "-p", "--print", "eval") for x in tl[:4]):
+            st.modelled = False
+            return self.unk(f"{name} -e evaluates code")
         self.res(self.install_res(name, args))
         if any(x in ("-g", "--global", "--location=global") or x == "--location" and k + 1 < len(tl) and tl[k + 1] == "global"
                for k, x in enumerate(tl)):
@@ -3542,6 +3571,9 @@ class Shell:
         return best, k
 
     def npx(self, args: list, st: Stage):
+        if any((a.t or "") in ("-e", "--eval", "-p", "--print") for a in args):
+            st.modelled = False
+            return self.unk("npx with -e or -p evaluates code")
         rds, unresolved = self.readings(args, lower=False)
         best = None
         for w in rds:
@@ -3628,6 +3660,9 @@ class Shell:
             cands = [st.heredoc] if st.heredoc is not None else (self.expand(st.herestring) if st.herestring is not None else None)
         if not cands or len(cands) != 1 or cands[0] is None or len(cands[0]) > 4000:
             return self.unk("it runs inline code (-c, -e) built at run time or too long; put the code in a project file instead")
+        for lit in re.findall(r"['\"]([^'\"\n]{1,200})['\"]", cands[0]):
+            if SECRET_BARE.match(lit.replace("\\", "/").rsplit("/", 1)[-1]) or is_secret_path(lit):
+                self.res(R_SECRET)               # a private key or credential file named in a string, with or without a dot
         if INLINE_RISK.search(cands[0]) or not inline_imports_ok(cands[0]) or not self.inline_ast_ok(cands[0], st):
             return self.unk("inline code that reaches the network, a process, the environment, evaluates code or changes files; "
                             "put it in a project file instead")
@@ -3647,7 +3682,10 @@ class Shell:
             return self.unk(f"python -m {mod} is not modelled")
         if mod == "zipfile" or mod == "tarfile" or mod == "shutil":
             return self.scan(rest, "write")
-        return self.scan(rest, "write")
+        if mod in PY_M_OK or mod.split(".")[0] in PY_M_OK:
+            return self.scan(rest, "write")
+        st.modelled = False
+        return self.unk(f"python -m {mod[:40]} is not on the guard's list of everyday modules (it can run code or serve files)")
 
     def node(self, name: str, args: list, st: Stage, idx: int):
         i = 0
@@ -3846,6 +3884,9 @@ class Shell:
     def tool(self, name: str, args: list, st: Stage, idx: int):
         tl = [(a.t or "").lower() for a in args]
         self.res(self.install_res(name, args))
+        if name in ("erl", "elixir", "ghc", "ghci", "runghc", "swift", "lua", "julia", "rscript") and any(x in EVAL_FLAGS for x in tl):
+            st.modelled = False
+            return self.unk(f"{name} evaluates code given on the command line")
         if name in ("php", "ruby", "perl"):
             i = 0
             while i < len(args):
