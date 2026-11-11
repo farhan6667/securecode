@@ -772,7 +772,8 @@ class Lexer:
                 self.add(("u", "variable"), i)
                 return n if j < 0 else j + 1
             inner = s[i + 2:j]
-            if "$(" in inner or "`" in inner:
+            if "$(" in inner or "`" in inner or re.search(r"@[Pp]$", inner) or inner.startswith("!") or "[" in inner:
+                # also ${x@P} (prompt expansion), ${!x} (indirection) and a subscript: bash evaluates text there
                 self.feat("cmdsubst", i)            # a command inside a parameter default or pattern: not followed
                 self.add(("u", "command substitution"), i)
                 return j + 1
@@ -1014,7 +1015,7 @@ class Lexer:
                 end = self.skip_group(i + 1)
                 self.toks.append(["w", [("u", "process substitution")], i, end])
                 return end
-            if two == ">&" and re.match(r">&\s*(\d+|-)(?!\w)", s[i:i + 12]):
+            if two == ">&" and re.match(r">&\s*(\d+|-)(?![\w#])", s[i:i + 12]):
                 m = re.match(r">&\s*(\d+|-)", s[i:i + 12])
                 return i + m.end()                                  # 2>&1: no file
             if two == ">>":
@@ -1287,7 +1288,11 @@ HIJACK_ENV = re.compile(
     r"rg_\w+|cypress\w*|playwright\w*|prisma\w*|sass\w*|chromedriver\w*|sentry\w*|sharp\w*|nodejs\w*|corepack\w*|hf_\w+|"
     r"huggingface\w*|\w*_(?:mirror|endpoint|registry|host|cdnurl|site|base_url|binary\w*|download\w*|dist_server|integrity\w*)|"
     r"gomod\w*|gosum\w*|goproxy|goprivate|govcs|gotoolchain|gocache\w*|gotmpdir|jest_\w+|vitest_\w+|mocha_\w+|"
-    r"ssl\w*|sudo_\w+|askpass\w*)$", re.I)
+    r"ssl\w*|sudo_\w+|askpass\w*|tar_options|unzip\w*|zipopt|gzip|bzip2|xz_\w+|zstd\w*|compplus\w*|complus_\w+|jdk_\w+|"
+    r"bat_\w+|delta_\w+|husky|skip|lefthook\w*|git|svn\w*|hg\w*|cvs\w*|rsync\w*|scp\w*|ftp\w*|mysql\w*|psql\w*|pg\w*|"
+    r"redis\w*|mongo\w*|vault\w*|op_\w+|bw_\w+|nvm_\w+|pyenv\w*|rbenv\w*|asdf_\w+|volta_\w+|conda\w*|virtual_env|"
+    r"pipx\w*|hatch\w*|pdm\w*|tox\w*|nox\w*)$", re.I)
+PLAIN_ENV_VALUE = re.compile(r"[A-Za-z0-9_.:/@%+,=~][A-Za-z0-9_.:/@%+,=~-]{0,198}|")
 # Inline code (python -c, node -e, a here-document) is read as text. It is allowed in coding mode only when it does not reach
 # the network, start a process, read the environment, evaluate or decode code, or delete, move or write files. This is a text
 # filter, not a sandbox: a project script is not read at all.
@@ -1314,6 +1319,79 @@ INLINE_NODE_OK = {"path", "util", "url", "assert", "fs", "os", "node:path", "nod
 INLINE_CRED = re.compile(r"(?i)\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.docker|\.kube|hosts\.yml|\bpip\b|\brunpy\b|\bpkgutil\b")
 
 
+PY_BAD_ATTR = {"system", "popen", "spawn", "spawnl", "spawnv", "spawnlp", "spawnvp", "posix_spawn", "posix_spawnp", "exec", "execl",
+               "execv", "execve", "execvp", "execlp", "fork", "forkpty", "kill", "killpg", "environ", "environb", "getenv", "putenv",
+               "unsetenv", "remove", "unlink", "rmdir", "removedirs", "rmtree", "rename", "renames", "replace", "chmod", "lchmod",
+               "chown", "lchown", "truncate", "touch", "mkdir", "makedirs", "symlink", "symlink_to", "link", "link_to", "hardlink_to",
+               "write", "write_text", "write_bytes", "writelines", "open", "attrgetter", "itemgetter", "methodcaller", "getattr",
+               "setattr", "delattr", "__import__", "eval", "exec", "compile", "system", "startfile", "chdir", "chroot", "utime",
+               "listdir", "scandir", "walk", "glob", "rglob", "iterdir", "home", "expanduser", "run", "call", "check_call",
+               "check_output", "Popen", "create_subprocess_shell", "create_subprocess_exec", "urlopen", "urlretrieve", "connect"}
+PY_OK_CALLS = {"print", "len", "sorted", "sum", "min", "max", "range", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
+               "enumerate", "zip", "abs", "round", "repr", "isinstance", "any", "all", "map", "filter", "reversed", "format", "type",
+               "Path", "PurePath", "open"}
+ABS_PATH_LITERAL = re.compile(r"^(?:/|~|[A-Za-z]:[\\/]|\\\\)")
+
+
+def python_inline_ok(code: str) -> bool:
+    """Python inline code is parsed. It may call only a short list of builtins and the module functions of the harmless
+    standard modules it imports, may not use an attribute that starts a process, touches the environment, writes, deletes,
+    evaluates, or reaches the network, and may not name a path outside the project (an absolute or home path). open() is
+    accepted only for a literal file name in read mode."""
+    import ast
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in PY_BAD_ATTR and node.attr != "open":
+            return False
+        if isinstance(node, ast.Name) and (node.id in ("__builtins__", "__import__", "eval", "exec", "compile", "getattr", "setattr",
+                                                       "delattr", "globals", "locals", "vars", "input", "breakpoint")):
+            return False
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and ABS_PATH_LITERAL.match(node.value):
+            return False
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id not in PY_OK_CALLS:
+                return False
+            if isinstance(fn, ast.Name) and fn.id == "open":
+                a0 = node.args[0] if node.args else None
+                mode = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
+                if not (isinstance(a0, ast.Constant) and isinstance(a0.value, str)):
+                    return False
+                if mode is not None and not (isinstance(mode, ast.Constant) and isinstance(mode.value, str) and re.fullmatch(r"r[bt]?", mode.value)):
+                    return False
+            if isinstance(fn, ast.Attribute) and fn.attr == "open":
+                return False
+            if not isinstance(fn, (ast.Name, ast.Attribute)):
+                return False                      # a call of a call, a subscript, a lambda: not followed
+    return True
+
+
+NODE_BAD = re.compile(
+    r"(?i)\b(?:unlink|rename|copyFile|cpSync|rmdir|rmSync|rm|chmod|chown|truncate|link|symlink|openSync|open|write|append|mkdir|mkdtemp|"
+    r"createWriteStream|utimes|execSync|exec|spawn|fork|eval|Function|process|child_process|fetch|XMLHttpRequest|WebSocket|Deno|Bun|"
+    r"globalThis|import|setTimeout|setInterval|while|readdirSync|readdir|opendir)\w*|\[[^\]]*['\"]\s*\+|fromCharCode|\.join\s*\(|`|\\\\x|\\\\u")
+
+
+def node_inline_ok(code: str) -> bool:
+    """Node inline code: every require() takes one literal core-module name from a short list, no process, no string
+    building, and the only fs calls are reads of a literal file name."""
+    if NODE_BAD.search(code) or ABS_PATH_LITERAL.search(code.replace("'", " ").replace('"', " ")) is None and False:
+        return False
+    reqs = re.findall(r"\brequire\b", code)
+    lit = re.findall(r"\brequire\s*\(\s*(?:'([^']*)'|\"([^\"]*)\")\s*\)", code)
+    if len(reqs) != len(lit) or any((a or b) not in INLINE_NODE_OK for a, b in lit):
+        return False
+    for m in re.finditer(r"['\"]([^'\"]*)['\"]", code):
+        if ABS_PATH_LITERAL.match(m.group(1)):
+            return False
+    for m in re.finditer(r"\b(?:readFileSync|readFile|existsSync|statSync)\s*\(\s*(?!['\"])", code):
+        return False
+    return True
+
+
 def inline_imports_ok(code: str) -> bool:
     """Inline code may only import a short list of harmless standard modules (Python) or require a few core ones (Node), and
     may not name a tool credential file. Importing anything else runs code the guard has not seen."""
@@ -1336,7 +1414,9 @@ REMOTE_PLAIN = {"ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "df
                 "whoami", "id", "date", "pwd", "ps", "pgrep", "echo", "stat", "file", "which", "nproc", "lscpu", "lsblk",
                 "lsb_release", "ss", "netstat", "true", "false", "sort", "uniq", "cut", "tr", "nl", "basename", "dirname"}
 REMOTE_FIND_BAD = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"}
-REMOTE_SECRET_DIR = re.compile(r"(?i)(?:^|/)\.(?:ssh|aws|kube|docker|gnupg|azure|config/gcloud)(?:/|$)")
+REMOTE_SECRET_DIR = re.compile(r"(?i)(?:^|/)\.(?:ssh|aws|kube|docker|gnupg|azure|config/gcloud|config/gh|config/rclone|vault-token|my\.cnf|"
+                               r"mylogin\.cnf|s3cfg|boto|config/hub)(?:/|$)|/ssh_host_\w+_key|/proc/[^/]*/(?:environ|cmdline|mem|maps)|"
+                               r"/etc/(?:ssl/private|letsencrypt)/")
 REMOTE_SECRET = re.compile(
     r"(?i)(?:^|/)(?:\.bash_history|\.zsh_history|\.aws|\.kube|\.docker|admin\.conf|wg\d*\.conf|debian\.cnf|secrets?\.ya?ml|"
     r"database\.ya?ml|[^/]*\.tfstate|wp-config\.php|\.htpasswd|shado\w*|gshadow|sudoers|\.env\S*|\.ssh|\.aws|\.gnupg|\.netrc|\.pgpass|\.npmrc|\.pypirc|\.git-credentials|"
@@ -2165,7 +2245,11 @@ class Shell:
                 st.modelled = False
                 self.unk(f"it sets the environment variable {name}, which can change what programs run")
             elif ec == "unlisted":
-                self.res(("syntax", f"it sets the environment variable {name}, which is not on the guard's list of known harmless names"))
+                if all(v is not None and PLAIN_ENV_VALUE.fullmatch(v) for v in vals):
+                    self.res(("syntax", f"it sets the environment variable {name}, which is not on the guard's list of known harmless names"))
+                else:
+                    st.modelled = False
+                    self.unk(f"the value given to {name} is not a plain word (spaces, options, quotes or code), and the guard does not know the name")
             for v in vals:
                 if v is None and self.subst_active:
                     continue                      # the value comes from a command substitution, which was checked
@@ -2358,6 +2442,10 @@ class Shell:
         st.name = name
         self.cur_name = name
         texts = [(a.t or "") for a in args]
+        if name in ("test", "[", "[[", "printf", "read", "unset", "declare", "local", "export", "let", "wait", "typeset") and \
+                any("$(" in (a.t or "") or "`" in (a.t or "") for a in args):
+            st.modelled = False
+            return self.unk(f"'{name}' evaluates a subscript, so a command inside its argument would run")
         if name in WRAPPER_NAMES or name in ("env", "command") or name in PRIV_NAMES or name == "xargs":
             return self.wrapper(name, args, st, idx, pipe)
         if name in CD_NAMES:
@@ -2436,6 +2524,9 @@ class Shell:
         if name in ("docker", "docker-compose"):
             return self.docker(name, args, st)
         if name == "ssh" or name in self.env.remote_names:
+            if idx > 0 or st.herestring is not None or st.heredoc is not None or any(op in ("<", "<&", "<>") for op, _ in st.redirs):
+                st.modelled = False
+                return self.unk("local data is sent to the host over ssh (a pipe, a redirect or a here-document)")
             return self.remote(name, args, st)
         if name in READER or name in WRITER:
             return self.file_cmd(name, args, st, idx, pipe)
@@ -2587,16 +2678,18 @@ class Shell:
                 elif nm == "find":
                     ok = not any(x in REMOTE_FIND_BAD for x in a)
                 elif nm == "ip":
-                    ok = not pos or pos[0] in ("addr", "address", "a", "route", "r", "link", "l", "neigh", "n", "show")
+                    ok = (not pos or pos[0] in ("addr", "address", "a", "route", "r", "link", "l", "neigh", "n", "show")) and \
+                        not any(x in ("set", "add", "del", "delete", "flush", "change", "replace", "append", "save", "restore", "monitor",
+                                      "netns", "tunnel", "xfrm") for x in pos)
                 elif nm == "crontab":
                     ok = a == ["-l"]
                 elif nm == "ps":
                     ok = a in ([], ["aux"], ["-ef"], ["-e"], ["ax"], ["-aux"], ["auxf"], ["-f"])
                 elif nm in ("grep", "egrep", "fgrep"):
-                    ok = not any(re.fullmatch(r"-[a-zA-Z]*[rR][a-zA-Z]*", x) or x in ("--recursive", "--dereference-recursive") or
-                                 x.startswith(("--recursive", "-d", "--directories")) for x in a)
+                    ok = not any(re.fullmatch(r"-[a-zA-Z]*[rRf][a-zA-Z]*", x) or x in ("--recursive", "--dereference-recursive") or
+                                 x.startswith(("--recursive", "-d", "--directories", "--file")) for x in a)
                 elif nm == "date":
-                    ok = not any(x.startswith(("-s", "--set")) for x in a)
+                    ok = not any(x.startswith(("-s", "--set", "-f", "--file")) for x in a)
                 elif nm == "hostname":
                     ok = not pos
                 elif nm == "sort":
@@ -3461,6 +3554,11 @@ class Shell:
             st.modelled = False
             return self.unk("python without a script reads code from standard input")
 
+    def inline_ast_ok(self, code: str, st: Stage) -> bool:
+        """Python code is checked by its syntax tree, Node code by stricter text rules. Which one: the program the stage runs."""
+        nm = (st.name or "").lower()
+        return node_inline_ok(code) if nm in ("node", "nodejs", "deno", "bun", "tsx", "ts-node") else python_inline_ok(code)
+
     def inline(self, st: Stage, cands: list | None = None, idx: int = 0):
         """7.2: inline code (python -c, node -e) or a here-document / here-string given to an interpreter. It is read as text
         (see INLINE_RISK): clean code is allowed in coding mode, code that reaches the network, a process, the environment
@@ -3472,7 +3570,7 @@ class Shell:
             cands = [st.heredoc] if st.heredoc is not None else (self.expand(st.herestring) if st.herestring is not None else None)
         if not cands or len(cands) != 1 or cands[0] is None or len(cands[0]) > 4000:
             return self.unk("it runs inline code (-c, -e) built at run time or too long; put the code in a project file instead")
-        if INLINE_RISK.search(cands[0]) or not inline_imports_ok(cands[0]):
+        if INLINE_RISK.search(cands[0]) or not inline_imports_ok(cands[0]) or not self.inline_ast_ok(cands[0], st):
             return self.unk("inline code that reaches the network, a process, the environment, evaluates code or changes files; "
                             "put it in a project file instead")
         self.res(("syntax", "inline code, read as text only"))

@@ -22,7 +22,7 @@ MODES = [("coding", "owner", None, "coding"), ("strict", "owner", None, "strict"
          ("dontAsk", "owner", "dontAsk", None), ("bypass", "owner", "bypassPermissions", None), ("managed", "managed", None, None)]
 
 SECRET_READS = [
-    ("Bash", "cat .env"), ("Bash", "cat .env.production"), ("Bash", "cat ~/.ssh/id_rsa"), ("Bash", "cat $(pwd)/.env"),
+    ("Bash", "true 2>&1#; cat .env"), ("Bash", "true >&2#; cat ~/.ssh/id_rsa"), ("Bash", "bash <<<\"$(cat .env)\""), ("Bash", "cat .env"), ("Bash", "cat .env.production"), ("Bash", "cat ~/.ssh/id_rsa"), ("Bash", "cat $(pwd)/.env"),
     ("Bash", "echo $(cat .env)"), ("Bash", "head -c 100 .env"), ("Bash", "grep -r KEY .env"),
     ("Bash", "python -c \"print(open('.env').read())\""), ("Bash", "python - <<'EOF'\nprint(open('.env').read())\nEOF"),
     ("Bash", "node -e \"console.log(require('fs').readFileSync('.env','utf8'))\""),
@@ -43,7 +43,7 @@ OWN_FILES = [
     ("Bash", "echo $(echo {}) > ~/.claude/settings.json"),
 ]
 WIPES = [
-    ("Bash", "rm -rf ~"), ("Bash", "rm -rf $HOME"), ("Bash", "rm -rf ~/"), ("Bash", 'rm -rf "$(echo ~)"'), ("Bash", "rm -rf $(echo ~)"),
+    ("Bash", "true 2>&1#; rm -rf ~"), ("Bash", "rm -rf ~"), ("Bash", "rm -rf $HOME"), ("Bash", "rm -rf ~/"), ("Bash", 'rm -rf "$(echo ~)"'), ("Bash", "rm -rf $(echo ~)"),
     ("Bash", "echo $(rm -rf ~)"), ("PowerShell", "Remove-Item -Recurse -Force ~"), ("PowerShell", "$x = $(Remove-Item -Recurse -Force ~)"),
 ]
 

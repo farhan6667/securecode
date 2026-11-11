@@ -1397,6 +1397,51 @@
       "check": "none yet",
       "status": "open",
       "fix": "open"
+    },
+    {
+      "id": "V72-16",
+      "severity": "high",
+      "where": "agent_guard.py Lexer.op",
+      "what": "A comment character right after a file-descriptor redirect (`true 2>&1#; cat .env`) hid the rest of the command in every mode (present since 7.0).",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "# after a descriptor duplication is part of a word, as in bash"
+    },
+    {
+      "id": "V72-17",
+      "severity": "high",
+      "where": "agent_guard.py Lexer.dollar, dispatch",
+      "what": "`${x@P}`, `${!x}` and a subscript in test, printf -v, read and unset evaluate a command held in a quoted string (present since 7.0).",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "these forms are treated as a command substitution that is not followed"
+    },
+    {
+      "id": "V72-18",
+      "severity": "high",
+      "where": "agent_guard.py env_class",
+      "what": "An unlisted variable name with an option-like value (`TAR_OPTIONS=--checkpoint-action=exec=...`, `UNZIP=...`) was allowed in coding mode.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "an unlisted name is quiet only with a plain word value, and more loader names are on the list"
+    },
+    {
+      "id": "V72-19",
+      "severity": "high",
+      "where": "agent_guard.py inline code",
+      "what": "The text filter for inline code was beaten by string concatenation, attrgetter, Sync-suffixed fs calls and reads outside the project.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "Python is parsed (python_inline_ok), Node uses stricter text rules (node_inline_ok); absolute and home paths are refused"
+    },
+    {
+      "id": "V72-20",
+      "severity": "high",
+      "where": "agent_guard.py Shell.remote",
+      "what": "ssh accepted `ip link set`, more secret names, and sent local data (a pipe, a redirect) to any host.",
+      "check": "pytest tests/test_guard_review72.py",
+      "status": "fixed",
+      "fix": "ip verbs limited to reads, more secret names, no stdin or here-document to ssh"
     }
   ]
 }
