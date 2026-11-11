@@ -19,11 +19,11 @@ def _project(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
 
-def dec(cmd, mode="owner", pm=None):
+def dec(cmd, mode="owner", pm=None, gm=None):
     e = {"tool_name": "PowerShell", "tool_input": {"command": cmd}, "cwd": str(ROOT)}
     if pm:
         e["permission_mode"] = pm
-    r = G.decide(e, mode)
+    r = G.decide(e, mode, gm)
     return r[0] if r else "allow"
 
 
@@ -57,10 +57,17 @@ def test_everyday_glued_assignments_are_not_asked(cmd):
 
 @pytest.mark.parametrize("cmd", ['$env:PATH="x"', '$env:NODE_OPTIONS="--require ./e.js"; node x.js', '$env:LD_PRELOAD="x"; git status',
                                  '$env:PYTHONSTARTUP="x.py"', '$env:GIT_SSH_COMMAND="x"; git push', '$env:BASH_ENV="x"',
-                                 '$x="$(rm -rf /)"', "$x=@(1,2)", "$f=Get-Content a.txt", "$x=(Get-Date)", '$x="a"; $(rm x)'])
+                                 "$x=@(1,2)", "$f=Get-Content a.txt", "$x=(Get-Date)", '$x="a"; $(rm x)'])
 def test_what_can_change_what_programs_run_or_runs_code_still_asks(cmd):
-    assert dec(cmd) == "ask", cmd
+    # strict mode (the 7.1 reading); coding mode lets the syntax-only shapes through, see test_guard_adaptive_mode.py
+    assert dec(cmd, gm="strict") == "ask", cmd
     assert dec(cmd, "owner", "auto") == "deny", cmd
+
+
+def test_a_command_substitution_in_an_assignment_is_checked_inside():
+    # 7.2: the inner command is judged itself; a destructive one is refused outright instead of only asked about
+    assert dec('$x="$(rm -rf /)"') in ("ask", "deny")
+    assert dec('$x="$(rm -rf /)"', "owner", "auto") == "deny"
 
 
 def test_a_glued_assignment_cannot_hide_a_following_command():
@@ -85,11 +92,13 @@ BAREWORDS = [r"$x=calc", r"$x=C:\evil\a.exe", r"$x=.\evil.ps1", "$x=./evil.sh", 
 
 @pytest.mark.parametrize("cmd", BAREWORDS)
 def test_a_bare_word_after_the_equals_sign_is_a_command_and_never_a_plain_assignment(cmd):
-    assert dec(cmd) in ("ask", "deny"), cmd
+    # 7.2: the right side is run through the model as a command of its own, so in coding mode the verdict is the bare
+    # command's own (a harmless bare command is allowed alone too); strict mode and auto mode always stop
+    assert dec(cmd, gm="strict") in ("ask", "deny"), cmd
     assert dec(cmd, "owner", "auto") == "deny", cmd
     spaced = cmd.replace("=", " = ", 1)
     if "\n" not in cmd:
-        assert dec(spaced) in ("ask", "deny"), spaced              # the spaced form had the same hole on 7.0.0
+        assert dec(spaced, gm="strict") in ("ask", "deny"), spaced              # the spaced form had the same hole on 7.0.0
         assert dec(spaced, "owner", "auto") == "deny", spaced
 
 

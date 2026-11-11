@@ -35,12 +35,12 @@ def _clean_env(monkeypatch):
 
 
 def run(cmd, tool="Bash", mode="owner", cwd=None):
-    r = G.check({"tool_name": tool, "tool_input": {"command": cmd}, "cwd": str(cwd or ROOT)}, mode)
+    r = G.check({"tool_name": tool, "tool_input": {"command": cmd}, "cwd": str(cwd or ROOT)}, mode, "strict")
     return (r[0] if r else "allow"), (r[1] if r else "")
 
 
 def ftool(tool, ti, mode="owner", cwd=None):
-    r = G.check({"tool_name": tool, "tool_input": ti, "cwd": str(cwd or ROOT)}, mode)
+    r = G.check({"tool_name": tool, "tool_input": ti, "cwd": str(cwd or ROOT)}, mode, "strict")
     return (r[0] if r else "allow"), (r[1] if r else "")
 
 
@@ -156,7 +156,7 @@ def test_everyday_corpus_prompt_rate_is_under_one_percent():
 def test_plain_read_only_sed_grep_head_never_prompt():
     # A real false positive of 6.2.2: the \| inside a quoted grep pattern split the command and "\" looked like the root.
     proj = ROOT
-    cmd = f"cd {proj.as_posix()} && sed -n 280,296p README.md; grep -n \"^## \\|^### \" SECURITY-CONTEXT.md | head -30"
+    cmd = f"cd \"{proj.as_posix()}\" && sed -n 280,296p README.md; grep -n \"^## \\|^### \" SECURITY-CONTEXT.md | head -30"
     for mode in ("owner", "managed"):
         assert run(cmd, "Bash", mode)[0] == "allow"
     for c in ("grep -n '\\|' a.txt", "grep -E 'a|b' src/x.py | head -5", "sed -n '/^## /p' README.md", "head -30 x.md"):

@@ -25,7 +25,7 @@ Exit 2 blocks the call and shows stderr to the agent. "ask" is returned as PreTo
 Policy modes (config/guard-policy.json next to this runtime, see load_policy): "owner" or "managed".
 """
 from __future__ import annotations
-import fnmatch, json, os, re, shutil, stat, sys, tempfile, time
+import fnmatch, hashlib, json, os, re, shutil, stat, sys, tempfile, time
 from pathlib import Path, PurePath
 from urllib.parse import unquote
 
@@ -377,6 +377,28 @@ class GuardEnv:
                 if n and self.root_ok(n) and n.lower() not in self.roots:
                     self.roots.append(n.lower())
         self.npaths = 0
+        self.ws: list[str] = []
+        self.remote_names: set = set()
+        if self.owner_policy():
+            for w in policy_list("workspace_roots", 8):
+                n = split_norm(os.path.abspath(w), None) if os.path.isabs(w) else None
+                if n and self.root_ok(n) and n.lower() not in self.ws:
+                    self.ws.append(n.lower())
+            self.remote_names = {x for x in policy_list("remote_wrappers", 8) if re.fullmatch(r"[A-Za-z][\w.-]{0,30}", x)}
+
+    def owner_policy(self) -> bool:
+        try:
+            return load_policy()[0] == "owner"
+        except Exception:
+            return False
+
+    def in_workspace(self, p: str) -> bool:
+        lp = p.lower().rstrip("/")
+        return any(lp == r.rstrip("/") or lp.startswith(r.rstrip("/") + "/") for r in self.ws)
+
+    def readable(self, p: str, role: str) -> bool:
+        """Inside the project, or (for a read or a listing) inside a workspace folder the owner listed in the policy."""
+        return self.inside_roots(p) or (role in ("read", "meta") and self.in_workspace(p))
 
     def root_ok(self, n: str) -> bool:
         s = segs_of(n)
@@ -390,6 +412,23 @@ class GuardEnv:
     def inside_roots(self, p: str) -> bool:
         lp = p.lower().rstrip("/")
         return any(lp == r.rstrip("/") or lp.startswith(r.rstrip("/") + "/") for r in self.roots)
+
+
+def policy_list(key: str, limit: int = 8) -> list:
+    """A short list of strings from the owner's policy file (never from the project). Empty when the file is not a valid
+    owner policy."""
+    try:
+        p = policy_path()
+        st = os.lstat(p)
+        if not _plain_file(st) or st.st_size > POLICY_MAX:
+            return []
+        data = json.loads(p.read_bytes().decode("utf-8-sig"), object_pairs_hook=_no_dupes)
+        v = data.get(key) if isinstance(data, dict) else None
+        if not isinstance(v, list):
+            return []
+        return [x for x in v if isinstance(x, str) and 0 < len(x) < 1024][:limit]
+    except Exception:
+        return []
 
 
 def protected_hit(env: GuardEnv, segs: list[str], git: bool = False) -> str | None:
@@ -597,13 +636,36 @@ class Lexer:
                 self.expect_delim = None
             self.cur = None
 
-    def skip_group(self, i, open_c="(", close_c=")"):
-        """Index after the matching close, honouring quotes; linear."""
+    def skip_group(self, i, open_c="(", close_c=")", heredoc=False):
+        """Index after the matching close, honouring quotes; linear. heredoc: a here-document inside the group is skipped
+        as text (git commit -m "$(cat <<'EOF' ... don't ... EOF)")."""
         depth, s, n = 0, self.s, self.n
         while i < n:
             if i % 2048 == 0:
                 tick()
             c = s[i]
+            if heredoc and c == "<" and s.startswith("<<", i) and not s.startswith("<<<", i):
+                m = re.match(r"<<(-?)[ \t]*(?:'([^'\n]{1,64})'|\"([^\"\n]{1,64})\"|\\?([A-Za-z_]\w{0,63}))", s[i:i + 100])
+                if m:
+                    delim = m.group(2) or m.group(3) or m.group(4)
+                    nl = s.find("\n", i + m.end())
+                    if nl >= 0:
+                        pos = nl + 1
+                        while pos <= n:
+                            e = s.find("\n", pos)
+                            line = s[pos:] if e < 0 else s[pos:e]
+                            if (line.lstrip("\t") if m.group(1) else line) == delim:
+                                i = pos + len(line)
+                                break
+                            if e < 0:
+                                pos = n + 1
+                                break
+                            pos = e + 1
+                        else:
+                            i = n
+                        if pos > n:
+                            return n                       # a here-document with no end
+                        continue
             if c == "\\" and self.d == "bash":
                 i += 2
                 continue
@@ -668,6 +730,12 @@ class Lexer:
                 self.add(("q", c), i)
             return j + 1
         if nxt == "(":
+            if s[i + 2:i + 3] != "(":
+                end = self.skip_group(i + 1, heredoc=True)
+                if end <= n and end - 1 > i + 1 and s[end - 1] == ")" and end - i - 3 <= SUBST_MAX:
+                    # 7.2: the body is kept, so the shell checks the inner command itself (Shell.stage_subst)
+                    self.add(("u", "command substitution", s[i + 2:end - 1]), i)
+                    return end
             self.feat("arith" if s[i + 2:i + 3] == "(" else "cmdsubst", i)
             self.add(("u", "command substitution"), i)
             return self.skip_group(i + 1)
@@ -783,6 +851,18 @@ class Lexer:
                 self.add(("u", "powershell expression"), i)
                 i = self.skip_group(i + 1, s[i + 1], ")" if s[i + 1] == "(" else "}")
                 continue
+            if c == "(" and d == "ps" and self.cur is None:
+                end = self.skip_group(i)
+                if end <= n and end - i > 2 and s[end - 1] == ")" and end - i - 2 <= SUBST_MAX:
+                    self.add(("u", "command substitution", s[i + 1:end - 1]), i)
+                    i = end
+                    continue
+                if end >= n:
+                    # no closing parenthesis: the rest is one unknown, which also keeps the lexer linear
+                    self.feat("unbalanced parenthesis", i)
+                    self.add(("u", "powershell expression"), i)
+                    i = n
+                    continue
             if c == "$":
                 i = self.dollar(i)
                 continue
@@ -1126,7 +1206,7 @@ NONPATH_CMDS = {"echo", "printf", "true", "false", ":", "pwd", "date", "whoami",
                 "sleep", "wait", "clear", "cls", "seq", "expr", "tr", "basename", "dirname", "write-output", "write-host",
                 "measure-object", "measure", "select-object", "select", "sort-object", "format-table", "ft", "format-list", "fl",
                 "out-string", "out-host", "out-null", "convertfrom-json", "convertto-json", "get-date", "start-sleep", "get-command",
-                "gcm", "get-location", "gl", "get-process", "gps", "where-object", "?", "get-unique", "group-object", "compare-object",
+                "gcm", "get-location", "gl", "get-process", "gps", "join-path", "where-object", "?", "get-unique", "group-object", "compare-object",
                 "exit", "return", "test", "[", "[[", "set", "export", "unset", "local", "declare-no", "typeset-no", "readonly-no",
                 "shift", "getopts", "read", "printenv", "env-print", "locale", "tty", "arch", "uptime", "free", "ps", "top-no",
                 "get-psdrive", "get-host", "get-culture", "get-variable-no", "write-verbose", "write-debug", "write-warning",
@@ -1157,6 +1237,48 @@ PKG_CARGO = re.compile(r"[a-z0-9][\w-]*(?:@[\w.^~*=<>-]+)?", re.I)
 PKG_COMPOSER = re.compile(r"[a-z0-9][\w.-]*/[a-z0-9][\w.-]*(?::[\w.^~*@-]+)?", re.I)
 PKG_SIMPLE = re.compile(r"[a-z0-9][\w.-]*", re.I)
 PKG_MAX = 214
+SUBST_MAX = 8000
+# commands that only print a size or a listing of what they are given: an unknown path from a checked command is harmless
+COUNT_ONLY = {"wc", "ls", "dir", "vdir", "du", "stat", "tree", "test", "[", "[[", "file"}
+COUNT_ONLY |= {"get-childitem", "gci", "get-item", "gi", "test-path", "resolve-path", "rvpa", "split-path"}
+SUBST_OK = NONPATH_CMDS | COUNT_ONLY | {"(expr)"}
+# 7.2: an environment variable written before a command (A=b cmd) is fine unless it is one of these, which change what
+# programs load, run or trust. Not a complete list: a variable only matters when the program reads it, so a name that is
+# not here is judged by its value (a path-shaped value is judged as a path) and the command around it.
+HIJACK_ENV = re.compile(
+    r"^(?:path|pathext|ifs|bash_\w+|env|shellopts|bashopts|ps4|prompt_command|cdpath|globignore|home|userprofile|appdata|"
+    r"localappdata|comspec|shell|systemroot|windir|programfiles\w*|programdata|psmodulepath|psexecutionpolicypreference|"
+    r"temp|tmp|tmpdir|editor|visual|pager|browser|manpager|less\w*|man\w*|termcap|terminfo\w*|ssh_\w+|gnupghome|ld_\w+|"
+    r"dyld_\w+|gconv\w*|locpath|nlspath|hostaliases|tzdir|malloc_\w+|glibc_\w+|python\w*|pytest\w*|node_\w+|npm_\w+|"
+    r"yarn_\w+|pnpm_\w+|bun_\w+|deno_\w+|ts_node\w*|electron_\w+|vscode_\w+|git_\w+|\w*_proxy|proxy|ssl_\w+|openssl_\w+|"
+    r"curl_\w+|wget\w*|netrc|requests_ca_bundle|java_tool_options|_java_options|jdk_java_options|java_home|classpath|"
+    r"maven_\w+|mvn\w*|gradle\w*|sbt_\w+|ant_\w+|dotnet_\w+|cor_\w+|coreclr_\w+|nuget\w*|msbuild\w*|perl5?\w*|ruby\w*|"
+    r"gem_\w+|bundle\w*|pip_\w+|uv_\w+|poetry_\w+|cargo_\w+|rustc\w*|rustflags|goflags|goproxy|goroot|gopath|"
+    r"cc|cxx|ld|cflags|cxxflags|ldflags|make\w*|mflags|docker_\w+|kube\w*|aws_\w+|azure_\w+|gcloud\w*|google_\w+|"
+    r"xdg_\w+|php\w*|composer\w*|lua_\w+|tf_\w+|terraform\w*|helm_\w+|claude\w*|anthropic\w*|nexaforge\w*|"
+    r"securecode\w*|org_\w+|__\w+)$", re.I)
+# Inline code (python -c, node -e, a here-document) is read as text. It is allowed in coding mode only when it does not reach
+# the network, start a process, read the environment, evaluate or decode code, or delete, move or write files. This is a text
+# filter, not a sandbox: a project script is not read at all.
+INLINE_RISK = re.compile(
+    r"(?i)(?:\b(?:socket|urllib|urlopen|requests|httpx|aiohttp|http\.client|http\.server|ftplib|smtplib|telnetlib|paramiko|"
+    r"subprocess|ctypes|cffi|pty|importlib|eval|exec|compile|marshal|pickle|base64|codecs|webbrowser|multiprocessing|signal|"
+    r"getattr|setattr|delattr|globals|locals|vars|builtins|environ|getenv|child_process|dgram|fetch|XMLHttpRequest|WebSocket|"
+    r"writeFile\w*|appendFile\w*|write_text|write_bytes|rmtree|unlink|rmdir|rmSync|rename|chmod|chown|Deno|Bun|globalThis|"
+    r"Function|process\s*\.\s*(?:env|binding|dlopen|kill|exit|argv)|os\s*\.\s*(?:system|popen|exec\w*|spawn\w*|fork|remove|"
+    r"removedirs|replace|kill|environ|putenv)|shutil|fs\s*\.\s*(?:rm|write|append|copy|cp|mkdir|rename|chmod|open))\b"
+    r"|__\w+__|\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|\bopen\s*\([^)]*,\s*[\'\"][^\'\"]*[wax+]|\.write\s*\(|\brequire\s*\(\s*[^\'\"\s]"
+    r"|\bimport\s*\(|\bchr\s*\(|`)")
+# What ssh may run on the other machine without a question: read-only commands, checked word by word.
+REMOTE_SYSTEMCTL = {"status", "is-active", "is-enabled", "is-failed", "list-units", "list-unit-files", "list-timers"}
+REMOTE_DOCKER = {"ps", "logs", "stats", "images", "version", "info", "top", "port", "diff", "history"}
+REMOTE_PLAIN = {"ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "df", "du", "free", "uptime", "uname", "hostname",
+                "whoami", "id", "date", "pwd", "ps", "pgrep", "echo", "stat", "file", "which", "nproc", "lscpu", "lsblk",
+                "lsb_release", "ss", "netstat", "true", "false", "sort", "uniq", "cut", "tr", "nl", "basename", "dirname"}
+REMOTE_FIND_BAD = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"}
+REMOTE_SECRET = re.compile(
+    r"(?i)(?:^|/)(?:shadow|gshadow|sudoers|\.env\S*|\.ssh|\.aws|\.gnupg|\.netrc|\.pgpass|\.npmrc|\.pypirc|\.git-credentials|"
+    r"credentials|secrets?|id_\w+|authorized_keys|environ|[^/]*\.(?:pem|key|p12|pfx|kdbx|ovpn|keytab))$")
 # The words reach the guard lowercased, so these are the lowercase forms. Anything not listed here (an option with a
 # value, a registry or index option, a workspace, a proxy) makes the install "install_odd".
 SAFE_NPM_FLAGS = {"-d", "--save-dev", "-s", "--save", "-e", "--save-exact", "-o", "--save-optional", "-p", "--save-prod",
@@ -1517,10 +1639,15 @@ class Shell:
         self.meta_secret = self.meta_prot = False
         self.worst = None
         self.stage_unmodelled = False
+        self.hard_seen = 0                       # results that are more than "syntax", so a stage can tell what it raised
+        self.subst_active = False                # the stage being checked has a command substitution (checked) in it
+        self.cur_name = ""
 
     # ---- results
     def res(self, r):
         if r:
+            if r[0] != "syntax":
+                self.hard_seen += 1
             if r[0] == "ask" and self.ask_seen[0] is None:
                 self.ask_seen[0] = r[1]      # "ask" ranks below the classes, so stronger() would drop it
             self.worst = stronger(self.worst, r)
@@ -1628,6 +1755,9 @@ class Shell:
             self.unk("too many paths to check")
             return
         if cand is None:
+            if self.subst_active and role in ("read", "meta") and self.cur_name in COUNT_ONLY:
+                self.res(("syntax", "a path comes from a command substitution (only its size or listing is shown)"))
+                return
             self.unk("a path is built from a variable or command the guard cannot resolve")
             return
         s = cand.translate(DASHES) if cand.startswith("\u2013") else cand
@@ -1704,7 +1834,7 @@ class Shell:
                 self.res(R_GITINT)
         if hard_only:
             return
-        if not self.env.inside_roots(p):
+        if not self.env.readable(p, role):
             self.unk(f"it uses a path outside the project folder ({shown[:160]})")
             return
         glob_at = next((k for k, x in enumerate(segs) if GLOB_CHARS.search(x)), None)
@@ -1718,7 +1848,7 @@ class Shell:
                 real = None
             rn = split_norm(real, None) if real else None
             if rn and rn.lower() != lit.lower().rstrip("/") and rn.lower() != lit.lower():
-                if not self.env.inside_roots(rn):
+                if not self.env.readable(rn, role):
                     self.unk(f"a link inside the project points outside it ({shown[:120]})")
                 if role in ("read", "exec") and secret_hit(self.env, rn, segs_of(rn)) == "secret":
                     self.res(R_SECRET)                      # a link in the project to ~/.ssh/id_rsa
@@ -1878,6 +2008,40 @@ class Shell:
         return c[0] if c else None
 
     def stage(self, st: Stage, idx: int, pipe: list, text: str):
+        bodies = [e[2] for w in list(st.words) + [r[1] for r in st.redirs] for e in w
+                  if isinstance(e, tuple) and e[0] == "u" and len(e) > 2 and e[1] == "command substitution"]
+        if not bodies:
+            return self._stage(st, idx, pipe, text)
+        return self.stage_subst(st, idx, pipe, text, bodies)
+
+    def stage_subst(self, st: Stage, idx: int, pipe: list, text: str, bodies: list):
+        """7.2: a command substitution. Every inner command goes through the same positive model as a command of its own
+        (its secrets, writes and unknown programs count in full). What is left unknown is its output as text, which is only
+        harmless in a few places: an argument of echo and the like, a size or listing, a git read or commit. Anywhere else
+        (a program name, a path that is read, written or run, an interpreter, a download) it stays an unknown."""
+        st.modelled = False                       # the statement's text is still scanned for secret and protected names
+        for b in bodies:
+            if self.depth >= MAX_DEPTH:
+                return self.unk("commands nested too deeply")
+            c = self.child()
+            c.run(b)
+            self.res(c.worst)
+        before, was = self.hard_seen, self.subst_active
+        self.subst_active = True
+        try:
+            self._stage(st, idx, pipe, text)
+        finally:
+            self.subst_active = was
+        if self.hard_seen != before:
+            return                                # this stage already raised a stronger result on its own
+        name = st.name or ""
+        texts = ["".join(e if isinstance(e, str) else (e[1] if e[0] in ("q", "b") else "$") for e in w).lower() for w in st.words]
+        if name in SUBST_OK or (name == "git" and _find_verb(texts[1:], GIT_READ_SUBS - {""} | {"commit", "tag"}) >= 0) \
+                or name == "":
+            return self.res(("syntax", "it uses a command substitution; the command inside was checked, its output cannot be known"))
+        self.unk(f"the output of a command substitution is used by '{name}', which the guard does not model with an unknown argument")
+
+    def _stage(self, st: Stage, idx: int, pipe: list, text: str):
         for f in st.feats:
             st.modelled = False
             if f in ("function definition or expression",):
@@ -1904,17 +2068,15 @@ class Shell:
                     break
                 assigns.append((m.group(1), [c[m.end():] if c is not None else None for c in words[k]]))
                 k += 1
-        elif self.d == "ps" and len(st.words) == 1 and not st.redirs and len(st.words[0]) >= 2 and \
+        elif self.d == "ps" and st.words and not st.redirs and len(st.words[0]) >= 2 and \
                 isinstance(st.words[0][0], tuple) and st.words[0][0][0] == "v" and st.words[0][1] == "=":
             # the glued form `$x="a"` and `$env:X="v"`: one word that is a variable, an equals sign and the value. The
             # spaced form `$x = "a"` was always modelled; this reads both the same way. A value that is a command
             # substitution or an expression is not modelled, as in the spaced form.
             name = st.words[0][0][1]
             valw = st.words[0][2:]
-            if not ps_value_ok(valw):
-                st.modelled = False
-                self.unk("PowerShell assignments of command results are not modelled")
-                return
+            if len(st.words) > 1 or not ps_value_ok(valw):
+                return self.ps_assign_rhs(st, text, name)
             cands = self.expand(valw)
             val = cands[0] if cands else None
             key = name.lower() if name.lower().startswith("env:") else "ps:" + name.lower()
@@ -1933,15 +2095,15 @@ class Shell:
                 self.vars[key] = val
                 st.name = "="
                 return
-            st.modelled = False
-            self.unk("PowerShell assignments of command results are not modelled")
-            return
+            return self.ps_assign_rhs(st, text, st.words[0][0][1] if isinstance(st.words[0][0], tuple) and st.words[0][0][0] == "v" else None)
         self.stage_raw = text[st.start:st.end] if st.start is not None else ""
         for name, vals in assigns:
             if not self.safe_env(name):
                 st.modelled = False
                 self.unk(f"it sets the environment variable {name}, which can change what programs run")
             for v in vals:
+                if v is None and self.subst_active:
+                    continue                      # the value comes from a command substitution, which was checked
                 if v is None or path_shaped(v):
                     self.path(v, "write")
         for op, w in st.redirs:
@@ -1956,14 +2118,38 @@ class Shell:
             return
         self.command(words[k:], st, idx, pipe, [w for w in st.words[k:]], raw_texts[k:])
 
+    def ps_assign_rhs(self, st: Stage, text: str, name):
+        """7.2: `$f = Get-Content a.txt` and `$x=foo`. The right side is a command of its own: it goes through the model
+        (a bare word there is a program that runs). What is unknown is the value, so the variable is unknown afterwards."""
+        st.modelled = False
+        st.name = "="
+        raw = text[st.start:st.end] if st.start is not None else ""
+        rhs = raw[raw.find("=") + 1:].strip() if "=" in raw else ""
+        if not rhs or st.redirs or self.depth >= MAX_DEPTH:
+            return self.unk("PowerShell assignments of command results are not modelled")
+        c = self.child("ps")
+        c.run(rhs)
+        self.res(c.worst)
+        if isinstance(name, str):
+            key = name.lower() if name.lower().startswith("env:") else "ps:" + name.lower()
+            if name.lower().startswith("env:") and not self.safe_env(name[4:]):
+                self.unk(f"it changes the environment variable {name[4:]}")
+            self.vars[key] = None
+        self.res(("syntax", "a PowerShell assignment of a command's result; the command was checked, the value cannot be known"))
+
     def safe_env(self, name: str) -> bool:
         n = name.lower()
-        return n in SAFE_ENV_NAMES or bool(SAFE_ENV_RX.match(n))
+        return n in SAFE_ENV_NAMES or bool(SAFE_ENV_RX.match(n)) or not HIJACK_ENV.match(n)
 
     def command(self, words: list, st: Stage, idx: int, pipe: list, lexed: list, raw_texts: list):
         first = words[0]
         if self.d == "bash" and len(first) == 2 and None not in first and first[1].replace("\\", "") == first[0].replace("\\", ""):
             first = [first[0]]                              # c\url: bash runs curl; the literal-backslash reading is not a name
+        if self.d == "ps" and len(words) == 1 and lexed and lexed[0] and isinstance(lexed[0][0], tuple) and lexed[0][0][0] == "u" \
+                and len(lexed[0][0]) > 2 and all(isinstance(e, str) for e in lexed[0][1:]) \
+                and re.fullmatch(r"(?:\.[A-Za-z_]\w*)*", "".join(lexed[0][1:])):
+            st.name = "(expr)"                           # (Get-Item x).Length: the group was checked, a property is not a call
+            return
         if len(first) != 1 or first[0] is None:
             st.modelled = False
             st.name = "$"
@@ -2178,6 +2364,8 @@ class Shell:
             return
         if name in ("docker", "docker-compose"):
             return self.docker(name, args, st)
+        if name == "ssh" or name in self.env.remote_names:
+            return self.remote(name, args, st)
         if name in READER or name in WRITER:
             return self.file_cmd(name, args, st, idx, pipe)
         if name in GENERIC_TOOLS or name in ("php", "ruby", "perl", "twine", "nuget", "gem"):
@@ -2218,16 +2406,7 @@ class Shell:
             while i < len(args) and (args[i].t or "").startswith("-"):
                 i += 1
         elif name == "xargs":
-            st.modelled = False
-            self.unk("xargs builds commands from its input")
-            vals = {"-I", "-i", "-n", "-P", "-d", "-E", "-L", "-s", "-a", "--max-args", "--max-procs", "--delimiter", "--arg-file"}
-            while i < len(args) and (args[i].t or "").startswith("-"):
-                i += 2 if (args[i].t or "") in vals else 1
-            if i < len(args):
-                inner = cmd_name(args[i].t or "")
-                if inner in SINK_NAMES or PY_RX.match(inner):
-                    st.stdin_code = True
-            return
+            return self.xargs(args, st, idx, pipe)
         else:
             vals = {"nice": {"-n", "--adjustment"}, "ionice": {"-c", "-n", "-p"}, "stdbuf": {"-i", "-o", "-e"},
                     "timeout": {"-s", "--signal", "-k", "--kill-after"}}.get(name, set())
@@ -2243,6 +2422,141 @@ class Shell:
             return self.unk("the command name is built at run time")
         rest = [x.cands for x in args[i:]]
         self.command(rest, st, idx, pipe, [], [x.raw for x in args[i:]])
+
+    def remote(self, name: str, args: list, st: Stage):
+        """7.2: ssh host "command". Local options are limited to a few harmless ones; the command that runs on the other
+        machine must be read-only (systemctl status, journalctl, docker ps and logs, ls, cat, tail, grep, df...) with no
+        redirect, substitution or secret file name. A restart, a write, a key creation or anything unlisted asks."""
+        st.modelled = False
+        i, host = 0, None
+        while i < len(args):
+            t = args[i].t or ""
+            if not t or len(args[i].cands) != 1 or args[i].cands[0] is None:
+                return self.unk("an ssh argument is built at run time")
+            nxt = args[i + 1].cands[0] if i + 1 < len(args) and len(args[i + 1].cands) == 1 else None
+            if t in ("-q", "-T", "-n", "-4", "-6", "-x", "-a", "-C", "-v"):
+                i += 1
+            elif t == "-p" and nxt and re.fullmatch(r"\d{1,5}", nxt):
+                i += 2
+            elif t == "-l" and nxt and re.fullmatch(r"[\w.-]{1,32}", nxt):
+                i += 2
+            elif t == "-o" and nxt and re.fullmatch(r"(?i)(?:BatchMode|StrictHostKeyChecking|ConnectTimeout|ServerAliveInterval|"
+                                                    r"ServerAliveCountMax|LogLevel)=[\w.-]{1,20}", nxt):
+                i += 2
+            elif t == "-i" and nxt:
+                self.path(nxt, "use")
+                i += 2
+            elif t.startswith("-"):
+                return self.unk(f"the ssh option {t[:20]} is not modelled")
+            else:
+                host = t
+                i += 1
+                break
+        if not host or not re.fullmatch(r"(?:[\w.-]{1,64}@)?[A-Za-z0-9][\w.-]{0,253}", host):
+            return self.unk("an ssh host that is not a plain name")
+        rest = args[i:]
+        if not rest:
+            return self.unk("an interactive ssh session")
+        if any(len(a.cands) != 1 or a.cands[0] is None for a in rest):
+            return self.unk("the command sent over ssh is built at run time")
+        text = " ".join(a.cands[0] for a in rest)
+        why = self.remote_check(text)
+        if why:
+            return self.unk(why)
+        self.res(("syntax", "a read-only command run on another machine over ssh"))
+
+    def remote_check(self, text: str):
+        """None when the command text only reads, else why it is not accepted. Secret names are refused outright."""
+        if len(text) > 2000:
+            return "a command sent over ssh is too long to check"
+        prot, sec, start = self.mentions(text)
+        if sec:
+            self.res(R_SECRET)
+        toks = Lexer(text, "bash").run()
+        for pipe in parse(toks, "bash"):
+            for st in pipe:
+                if st.feats or st.sub is not None or st.redirs or st.heredoc is not None or st.herestring is not None or st.call:
+                    return "the command sent over ssh uses shell syntax that is not read-only (redirect, substitution, heredoc)"
+                ws = []
+                for w in st.words:
+                    if not all(isinstance(e, str) or (isinstance(e, tuple) and e[0] in ("q", "b")) for e in w):
+                        return "the command sent over ssh uses a variable or substitution"
+                    ws.append("".join(e if isinstance(e, str) else e[1] for e in w))
+                if not ws:
+                    continue
+                if re.match(r"^[A-Za-z_]\w*=", ws[0]):
+                    return "the command sent over ssh sets a variable"
+                nm = ws[0].rsplit("/", 1)[-1]
+                a = [x.lower() for x in ws[1:]]
+                if any(REMOTE_SECRET.search(x) for x in ws[1:]):
+                    self.res(R_SECRET)
+                    return "the command sent over ssh names a secret file"
+                pos = [x for x in a if not x.startswith("-")]
+                ok = False
+                if nm == "systemctl":
+                    ok = bool(pos) and pos[0] in REMOTE_SYSTEMCTL and not any(x in ("--user-no",) for x in a)
+                elif nm == "journalctl":
+                    ok = not any(x.startswith(("--vacuum", "--rotate", "--flush", "--sync", "--setup-keys", "--relinquish",
+                                               "--smart-relinquish", "--update-catalog", "--rotate")) for x in a)
+                elif nm == "docker":
+                    ok = bool(pos) and (pos[0] in REMOTE_DOCKER or (pos[0] == "compose" and len(pos) > 1 and
+                                                                    pos[1] in ("ps", "logs", "ls", "top", "images")))
+                elif nm == "git":
+                    ok = bool(pos) and pos[0] in GIT_READ_SUBS - {""}
+                elif nm == "find":
+                    ok = not any(x in REMOTE_FIND_BAD for x in a)
+                elif nm == "ip":
+                    ok = not pos or pos[0] in ("addr", "address", "a", "route", "r", "link", "l", "neigh", "n", "show")
+                elif nm == "crontab":
+                    ok = a == ["-l"]
+                elif nm == "date":
+                    ok = not any(x.startswith(("-s", "--set")) for x in a)
+                elif nm == "hostname":
+                    ok = not pos
+                elif nm == "sort":
+                    ok = not any(x.startswith(("-o", "--output")) for x in a)
+                elif nm == "uniq":
+                    ok = len(pos) <= 1
+                elif nm == "ss":
+                    ok = not any(x in ("-k", "--kill") for x in a)
+                elif nm in REMOTE_PLAIN:
+                    ok = True
+                if not ok:
+                    return f"the command '{nm} {' '.join(a[:2])}' sent over ssh changes the machine or is not a known read-only command"
+        return None
+
+    def xargs(self, args: list, st: Stage, idx: int, pipe: list):
+        """7.2: xargs runs a command on names read from its input. The command is judged with one unknown argument added
+        (so a reader of file contents, a writer, a remover and an interpreter stay unknown) and is accepted only for a
+        command that prints a size or a listing, echo, or a git read."""
+        st.modelled = False
+        vals = {"-n", "-P", "-d", "-E", "-L", "-s", "-a", "--max-args", "--max-procs", "--delimiter", "--arg-file", "-I", "-i",
+                "-J", "--replace", "-l", "--max-lines", "--eof", "-R"}
+        repl, i = False, 0
+        while i < len(args) and (args[i].t or "").startswith("-"):
+            t = args[i].t or ""
+            if t in ("-I", "-J", "--replace", "-R") or t.startswith(("-I", "-J", "--replace=", "-i", "-R")) and not t.startswith("-n"):
+                repl = True
+            i += 2 if t in vals else 1
+        if i >= len(args):
+            return self.res(("syntax", "xargs with no command prints what it reads"))
+        inner = args[i]
+        if len(inner.cands) != 1 or inner.cands[0] is None:
+            return self.unk("the command name is built at run time")
+        if cmd_name(inner.cands[0]) in WRAPPER_NAMES | PRIV_NAMES | {"env", "command", "xargs"}:
+            return self.unk("xargs in front of another wrapper is not modelled")
+        before, was = self.hard_seen, self.subst_active
+        self.subst_active = True
+        try:
+            self.command([x.cands for x in args[i:]] + [[None]], st, idx, pipe, [], [x.raw for x in args[i:]] + ["$"])
+        finally:
+            self.subst_active = was
+        if self.hard_seen != before:
+            return
+        texts = [(x.t or "").lower() for x in args[i:]]
+        if repl or not (st.name in SUBST_OK or (st.name == "git" and _find_verb(texts[1:], GIT_READ_SUBS - {""}) >= 0)):
+            return self.unk(f"xargs runs '{st.name}' on names read from its input, which the guard cannot follow")
+        self.res(("syntax", "xargs; the command is read-only and the names come from its input"))
 
     def cd(self, name: str, args: list):
         if name in ("popd", "pop-location"):
@@ -2615,6 +2929,7 @@ class Shell:
     # ---- network
     def downloader(self, name: str, args: list, st: Stage):
         st.feed = True
+        self.env.fetched = True                  # a download: session_risk reads it for a while afterwards
         t = [(a.t or "") for a in args]
         tl = [x.lower() for x in t]
         if name in ("curl",):
@@ -3023,14 +3338,16 @@ class Shell:
         while i < len(args):
             tx = args[i].t or ""
             if tx == "-c" or re.fullmatch(r"-[a-zA-Z]*c", tx):
-                return self.inline(st)
+                return self.inline(st, args[i + 1].cands if i + 1 < len(args) else [None])
             if tx.startswith("-c") and len(tx) > 2:
-                return self.inline(st)
+                return self.inline(st, [c[2:] if c else None for c in args[i].cands])
             if tx == "-m" or (tx.startswith("-m") and len(tx) > 2):
                 mod = (tx[2:] if len(tx) > 2 else (args[i + 1].t if i + 1 < len(args) else "")) or ""
                 rest = args[i + (1 if len(tx) > 2 else 2):]
                 return self.py_module(mod.lower(), rest, st)
             if tx == "-":
+                if (st.heredoc is not None or st.herestring is not None) and idx == 0:
+                    return self.inline(st, None, idx)
                 st.stdin_code = True
                 st.modelled = False
                 return self.unk("python reads code from standard input")
@@ -3044,14 +3361,28 @@ class Shell:
                 i += 1
                 continue
             return self.run_script(args[i], args[i + 1:], st)
+        if (st.heredoc is not None or st.herestring is not None) and idx == 0:
+            return self.inline(st, None, idx)
         if st.herestring is not None or st.heredoc is not None or idx > 0 or True:
             st.stdin_code = True
             st.modelled = False
             return self.unk("python without a script reads code from standard input")
 
-    def inline(self, st: Stage):
+    def inline(self, st: Stage, cands: list | None = None, idx: int = 0):
+        """7.2: inline code (python -c, node -e) or a here-document / here-string given to an interpreter. It is read as text
+        (see INLINE_RISK): clean code is allowed in coding mode, code that reaches the network, a process, the environment
+        or the files stays unknown. The whole statement is also scanned for secret and protected names (backstop)."""
         st.modelled = False
-        self.unk("it runs inline code (-c, -e); put the code in a project file instead")
+        if cands is None:
+            if idx != 0:
+                return self.unk("an interpreter reads code from a pipe")
+            cands = [st.heredoc] if st.heredoc is not None else (self.expand(st.herestring) if st.herestring is not None else None)
+        if not cands or len(cands) != 1 or cands[0] is None or len(cands[0]) > 4000:
+            return self.unk("it runs inline code (-c, -e) built at run time or too long; put the code in a project file instead")
+        if INLINE_RISK.search(cands[0]):
+            return self.unk("inline code that reaches the network, a process, the environment, evaluates code or changes files; "
+                            "put it in a project file instead")
+        self.res(("syntax", "inline code, read as text only"))
 
     def py_module(self, mod: str, rest: list, st: Stage):
         if not mod:
@@ -3094,7 +3425,9 @@ class Shell:
             tx = args[i].t or ""
             key = tx.split("=", 1)[0]
             if key in ("-e", "--eval", "-p", "--print") or re.fullmatch(r"-[a-zA-Z]*[ep]", tx):
-                return self.inline(st)
+                if "=" in tx and key in ("--eval", "--print"):
+                    return self.inline(st, [c.partition("=")[2] if c else None for c in args[i].cands])
+                return self.inline(st, args[i + 1].cands if i + 1 < len(args) else [None])
             if key in vals:
                 r = vals[key]
                 if "=" in tx:
@@ -3492,16 +3825,26 @@ def deglob(text: str) -> str:
 
 # ------------------------------------------------------------------------------------------- policy
 
-CLASSES = ("destructive", "exposure", "install", "install_odd", "unknown")
+# syntax: shell syntax the guard cannot follow (a command substitution, a parenthesised PowerShell expression, ...) whose
+# inner commands it did check. Strict mode asks about it like an unknown command; coding mode allows it and audits it.
+CLASSES = ("destructive", "exposure", "install", "install_odd", "unknown", "syntax")
 MODES = ("owner", "managed")
 # install_odd is an install that is not a plain registry package by name. It is asked about exactly like install in
 # both modes (so nothing changes for a person or for managed mode); only auto mode treats it differently.
-POLICY_TABLE = {"owner": {"destructive": "ask", "exposure": "ask", "install": "ask", "install_odd": "ask", "unknown": "ask"},
-                "managed": {"destructive": "deny", "exposure": "deny", "install": "ask", "install_odd": "ask", "unknown": "deny"}}
+POLICY_TABLE = {"owner": {"destructive": "ask", "exposure": "ask", "install": "ask", "install_odd": "ask", "unknown": "ask",
+                          "syntax": "ask"},
+                "managed": {"destructive": "deny", "exposure": "deny", "install": "ask", "install_odd": "ask", "unknown": "deny",
+                            "syntax": "deny"}}
 POLICY_NAME = "guard-policy.json"
 POLICY_MAX = 4096
-POLICY_KEYS = {"mode", "version", "note", "guard"}
-RANK = {"deny": 5, "destructive": 3, "exposure": 3, "unknown": 3, "install_odd": 2.5, "install": 2, "ask": 1}
+POLICY_KEYS = {"mode", "version", "note", "guard", "adaptive", "workspace_roots", "remote_wrappers"}
+# Guard mode (7.2). "adaptive" (default): coding while the session looks normal, strict after a risk signal. "coding" and
+# "strict" pin it (a managed policy can pin strict). Coding mode lets "syntax" results through and audits them; every hard
+# deny and every ask for an irreversible, exposing or unknown action is the same in both.
+GMODES = ("adaptive", "coding", "strict")
+ESC_ASKS, ESC_WINDOW, FETCH_WINDOW, STATE_KEEP = 3, 600, 900, 40
+_LAST = {"fetch": False}
+RANK = {"deny": 5, "destructive": 3, "exposure": 3, "unknown": 3, "syntax": 2.8, "install_odd": 2.5, "install": 2, "ask": 1}
 SHOW_MAX = 2000
 AUDIT_NAME = "guard-audit.jsonl"
 AGENTS = ("claude", "cursor", "codex", "gemini", "antigravity", "other")   # the AI tool, as a fixed list in the audit
@@ -3559,7 +3902,8 @@ def load_policy(path: Path | None = None, markers: list[str] | None = None) -> t
         return "managed", "no policy file"
     except Exception:
         return "managed", "policy file unreadable or malformed"
-    if not isinstance(data, dict) or set(data) - POLICY_KEYS or data.get("mode") not in MODES:
+    if not isinstance(data, dict) or set(data) - POLICY_KEYS or data.get("mode") not in MODES \
+            or data.get("adaptive", "adaptive") not in GMODES:
         return "managed", "policy file malformed"
     mode = data["mode"]
     if mode == "owner":
@@ -3610,10 +3954,12 @@ UNATTENDED_NOTE = (" The agent is running without anyone to ask (auto or don't-a
                    " asked. Run it yourself, or work another way.")
 
 
-def apply_policy(result, mode: str, cmd: str, style: str = "attended"):
+def apply_policy(result, mode: str, cmd: str, style: str = "attended", gmode: str = "strict"):
     if not result or result[0] not in CLASSES:
         return result
     cls, why = result
+    if cls == "syntax" and mode == "owner" and style == "attended" and gmode == "coding":
+        return None                              # coding mode: allowed, and decide() writes it to the audit
     final = POLICY_TABLE.get(mode, POLICY_TABLE["managed"]).get(cls, "deny")
     if final == "ask" and mode == "owner" and style != "attended":
         # Owner mode only. A managed install keeps its policy whatever mode the developer picked.
@@ -3627,9 +3973,10 @@ def apply_policy(result, mode: str, cmd: str, style: str = "attended"):
         shown = show_command(cmd)
         if shown is None:
             return "deny", f"{why} The command is too long to show for approval; split it into shorter commands."
-        lead = "This is not on the guard's list of everyday development actions: " if cls == "unknown" else ""
+        lead = "This is not on the guard's list of everyday development actions: " if cls == "unknown" else \
+            ("The guard checked the commands inside but cannot follow the shell syntax around them: " if cls == "syntax" else "")
         return "ask", f"({mode} mode, {cls}) {lead}{why} Approve only if you asked for exactly this command: {shown}"
-    if cls == "unknown":
+    if cls in ("unknown", "syntax"):
         return "deny", (f"This is not on the guard's list of everyday development actions: {why} Not allowed from the agent "
                         "under the managed policy; run it yourself if it is intended.")
     return "deny", f"{why} Not allowed from the agent under the managed policy; run it yourself if it is intended."
@@ -3655,7 +4002,7 @@ def redact(text: str, limit: int = AUDIT_TEXT) -> str:
     return t[:limit] + ("..." if len(t) > limit else "")
 
 
-def audit_ask(event: dict, reason: str, mode: str, decision: str = "ask") -> bool:
+def audit_ask(event: dict, reason: str, mode: str, decision: str = "ask", gmode: str = "strict") -> bool:
     """Append one line to <project>/.security/guard-audit.jsonl for every "ask", and for an ask that bypass or
     auto mode answered without a person (decision then says which). Best effort; refuses links."""
     try:
@@ -3692,7 +4039,7 @@ def audit_ask(event: dict, reason: str, mode: str, decision: str = "ask") -> boo
         ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
         what = ti.get("command") if isinstance(ti.get("command"), str) else \
             next((v for k, v in ti.items() if isinstance(v, str) and re.search(r"path|file", str(k), re.I)), "")
-        line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "mode": mode, "agent": audit_agent(event), "decision": decision,
+        line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "mode": mode, "guard_mode": gmode, "agent": audit_agent(event), "decision": decision,
                 "tool": redact(event.get("tool_name") or "", 80), "command": redact(what), "reason": redact(reason.split(" Approve only")[0], 200)}
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
         fd = os.open(f, flags, 0o600)
@@ -3867,11 +4214,13 @@ def judge_tool_path(tool, key, s, p, env, writes, reads, is_mcp):
     return out
 
 
-def check(event: dict, mode: str | None = None):
-    """The decision for one tool event, or None to allow."""
+def check(event: dict, mode: str | None = None, gmode: str | None = None):
+    """The decision for one tool event, or None to allow. gmode: "coding" or "strict" (default: from the policy and the
+    session, see guard_mode)."""
     _DEADLINE[0] = time.monotonic() + DEADLINE_SECONDS
+    _LAST["fetch"] = False
     try:
-        return _check(event, mode)
+        return _check(event, mode, gmode)
     except GuardTimeout:
         r = ("unknown", "the guard could not finish checking this in time.")
         m = mode if mode is not None else load_policy()[0]
@@ -3891,7 +4240,7 @@ def _display(event: dict) -> str:
     return f"{event.get('tool_name') or ''} {p}".strip()
 
 
-def _check(event: dict, mode: str | None):
+def _check(event: dict, mode: str | None, gmode: str | None = None):
     tool = event.get("tool_name") or ""
     if not isinstance(tool, str):
         return "deny", "the tool name could not be read, so this action cannot be checked safely."
@@ -3899,9 +4248,13 @@ def _check(event: dict, mode: str | None):
     if not isinstance(ti, dict):
         return "deny", "the tool input could not be read, so this action cannot be checked safely."
     env = GuardEnv(event)
-    env.owner = (mode if mode is not None else load_policy()[0]) == "owner"
+    pol = mode if mode is not None else load_policy()[0]
+    env.owner = pol == "owner"
+    gm = gmode if gmode in ("coding", "strict") else guard_mode(event, pol)
     project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or os.getcwd()
     worst = None
+    if tool in ("WebFetch", "WebSearch"):
+        _LAST["fetch"] = True
 
     if tool == "Grep":
         g = str(ti.get("glob") or "")
@@ -3932,6 +4285,8 @@ def _check(event: dict, mode: str | None):
                 r = stronger(r, ("deny", "the command defines a function or alias, or writes a script and runs it, and names a "
                                          "protected or secret place."))
         worst = stronger(worst, r)
+        if getattr(env, "fetched", False):
+            _LAST["fetch"] = True
         if worst and worst[0] == "deny":
             return worst
         if sh.ask_seen[0] and run_style(event) == "unattended" and \
@@ -3941,7 +4296,7 @@ def _check(event: dict, mode: str | None):
 
     if worst and worst[0] in CLASSES:
         m = mode if mode is not None else load_policy()[0]
-        worst = apply_policy(worst, m, _display(event), run_style(event))
+        worst = apply_policy(worst, m, _display(event), run_style(event), gm)
         if worst and worst[0] == "deny":
             return worst
 
@@ -3974,17 +4329,139 @@ def guard_is_off(path: Path | None = None, markers: list[str] | None = None) -> 
         return False
 
 
-def decide(event: dict, mode: str | None = None):
+def guard_pref(path: Path | None = None) -> str:
+    """The owner's choice in the policy file: adaptive (default), coding or strict. Anything unreadable is strict."""
+    try:
+        p = Path(path) if path is not None else policy_path()
+        st = os.lstat(p)
+        if not _plain_file(st) or st.st_size > POLICY_MAX:
+            return "strict"
+        data = json.loads(p.read_bytes().decode("utf-8-sig"), object_pairs_hook=_no_dupes)
+        v = data.get("adaptive", "adaptive") if isinstance(data, dict) else "strict"
+        return v if v in GMODES else "strict"
+    except FileNotFoundError:
+        return "adaptive"
+    except Exception:
+        return "strict"
+
+
+def _state_dir() -> Path:
+    d = os.environ.get("SECURECODE_CACHE_DIR")
+    return Path(d) if d and os.path.isabs(d) else Path(os.path.abspath(__file__)).parent.parent / "cache"
+
+
+def _state_file(event: dict) -> Path | None:
+    sid = event.get("session_id") if isinstance(event, dict) else None
+    if not isinstance(sid, str) or not sid or len(sid) > 200:
+        return None
+    return _state_dir() / ("guard-session-" + hashlib.sha256(sid.encode("utf-8", "replace")).hexdigest()[:24] + ".json")
+
+
+def _state_load(f: Path) -> list:
+    """The events of this session: [[time, kind], ...], kind deny, ask or fetch. Never raises."""
+    try:
+        st = os.lstat(f)
+        if not _plain_file(st) or st.st_nlink > 1 or st.st_size > 8192:
+            return []
+        v = json.loads(f.read_bytes().decode("utf-8"))
+        ev = v.get("e") if isinstance(v, dict) else None
+        return [[float(t), k] for t, k in ev if isinstance(k, str) and k in ("deny", "ask", "fetch")
+                and isinstance(t, (int, float)) and not isinstance(t, bool)][-STATE_KEEP:] if isinstance(ev, list) else []
+    except Exception:
+        return []
+
+
+def _state_add(event: dict, kind: str) -> None:
+    """Remember a block, a question or a download of this session, in the app cache (never in the project). Best effort."""
+    f = _state_file(event)
+    if f is None:
+        return
+    try:
+        d = f.parent
+        if os.path.lexists(d):
+            st = os.lstat(d)
+            if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
+                return
+        else:
+            d.mkdir(parents=True)
+        if os.path.lexists(f) and not _plain_file(os.lstat(f)):
+            return
+        now = time.time()
+        ev = [e for e in _state_load(f) if now - e[0] < 7200] + [[now, kind]]
+        tmp = d / (f.name + f".{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(json.dumps({"e": ev[-STATE_KEEP:]}).encode("utf-8"))
+        os.replace(tmp, f)
+    except Exception:
+        pass
+
+
+def session_risk(event: dict, now: float | None = None) -> str | None:
+    """Why this session should be read strictly, or None. Signals: a block (a secret read, pipe-to-shell, the agent's own
+    config) earlier in the session; three questions in ten minutes; a download in the last fifteen minutes."""
+    f = _state_file(event)
+    if f is None:
+        return None
+    now = time.time() if now is None else now
+    ev = [e for e in _state_load(f) if 0 <= now - e[0] < 7200]
+    if any(k == "deny" for _, k in ev):
+        return "a command was blocked earlier in this session"
+    if sum(1 for t, k in ev if k == "ask" and now - t < ESC_WINDOW) >= ESC_ASKS:
+        return "three questions in ten minutes"
+    if any(k == "fetch" and now - t < FETCH_WINDOW for t, k in ev):
+        return "something was downloaded in the last fifteen minutes"
+    return None
+
+
+def guard_mode(event: dict, mode: str | None = None) -> str:
+    """"coding" (the guard stays out of the way for shell syntax it cannot follow but whose commands it checked) or
+    "strict" (the 7.1 behaviour). Strict for a managed install, an auto, don't-ask or bypass run, a pinned strict policy and
+    an adaptive session with a risk signal. Never looser than the policy file says."""
+    try:
+        if (mode if mode is not None else load_policy()[0]) != "owner" or run_style(event) != "attended":
+            return "strict"
+        pref = guard_pref()
+        if pref == "strict":
+            return "strict"
+        if pref == "adaptive" and session_risk(event):
+            return "strict"
+        return "coding"
+    except Exception:
+        return "strict"
+
+
+def decide(event: dict, mode: str | None = None, gmode: str | None = None):
     if mode is None:
         if guard_is_off():
             return None
         mode = load_policy()[0]
     style = run_style(event)
-    result = check(event, mode)
+    gm = gmode if gmode in ("coding", "strict") else guard_mode(event, mode)
+    result = check(event, mode, gm)
+    fetched = _LAST["fetch"]
+    out = _decide_tail(event, mode, style, gm, result)
+    _state_note(event, out, fetched)
+    return out
+
+
+def _state_note(event, out, fetched):
+    """Feed the session's risk signals (see session_risk). A block and a question are remembered, and so is a download."""
+    if out and out[0] in ("deny", "ask"):
+        _state_add(event, out[0])
+    elif fetched:
+        _state_add(event, "fetch")
+
+
+def _decide_tail(event, mode, style, gm, result):
+    if mode == "owner" and style == "attended" and gm == "coding" and result is None:
+        strict = check(event, mode, "strict")
+        if strict and strict[0] == "ask":
+            audit_ask(event, strict[1], mode, "coding-allowed", gm)
     if mode == "owner" and style != "attended":
         # What the guard would have asked a person: the same check read the strict way. It is logged below with
         # what was done instead, so bypass and auto mode leave a trail of every ask they answered without you.
-        strict = check({k: v for k, v in event.items() if k != "permission_mode"}, mode)
+        strict = check({k: v for k, v in event.items() if k != "permission_mode"}, mode, "strict")
         if result and result[0] == "ask":
             # The direct asks (tool credential files, global Claude settings and rules) never reach apply_policy.
             if result[1] == GLOBAL_CFG_REASON:
@@ -3996,10 +4473,10 @@ def decide(event: dict, mode: str | None = None):
                 result = "deny", result[1].split(" Approve only")[0].split("; approve")[0].rstrip(".") + "." + UNATTENDED_NOTE
         if strict and strict[0] == "ask":
             audit_ask(event, strict[1], mode, "unattended-refused" if result else
-                      ("bypass-allowed" if style == "bypass" else "unattended-deferred"))
+                      ("bypass-allowed" if style == "bypass" else "unattended-deferred"), gm)
         return result
     if result and result[0] == "ask":
-        audit_ask(event, result[1], mode)
+        audit_ask(event, result[1], mode, "ask", gm)
     return result
 
 
