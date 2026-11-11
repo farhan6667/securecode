@@ -52,7 +52,8 @@ def test_a_managed_or_missing_policy_is_refused(tmp_path, pol):
         S.write_mode("strict", tmp_path / "missing.json", [], need_terminal=False)
 
 
-def test_workspace_add_and_clear(pol, tmp_path):
+def test_workspace_add_and_clear(pol, tmp_path, monkeypatch):
+    monkeypatch.setattr(G, "ws_ok", lambda n: True)         # the temp folder is under AppData, which is refused for real use
     d = tmp_path / "sibling-folder"
     d.mkdir()
     got = S.write_workspace("add", str(d), pol, [], need_terminal=False)

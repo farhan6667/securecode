@@ -382,7 +382,7 @@ class GuardEnv:
         if self.owner_policy():
             for w in policy_list("workspace_roots", 8):
                 n = split_norm(os.path.abspath(w), None) if os.path.isabs(w) else None
-                if n and self.root_ok(n) and n.lower() not in self.ws:
+                if n and self.root_ok(n) and ws_ok(n) and n.lower() not in self.ws:
                     self.ws.append(n.lower())
             self.remote_names = {x for x in policy_list("remote_wrappers", 8) if re.fullmatch(r"[A-Za-z][\w.-]{0,30}", x)}
 
@@ -412,6 +412,29 @@ class GuardEnv:
     def inside_roots(self, p: str) -> bool:
         lp = p.lower().rstrip("/")
         return any(lp == r.rstrip("/") or lp.startswith(r.rstrip("/") + "/") for r in self.roots)
+
+
+WS_BAD = re.compile(r"(?i)/appdata/|/library/(?:application support|keychains|cookies|safari)|/\.(?:gemini|mozilla|thunderbird|"
+                    r"password-store|gnome-keyring|kde|var)(?:/|$)|/\.config/(?:google-chrome|chromium|brave|microsoft-edge|"
+                    r"BraveSoftware|Mozilla|1Password)|/\.local/share/(?:keyrings|Trash)|^/(?:etc|var|usr|proc|sys|boot|dev|root|bin|sbin|lib)"
+                    r"(?:/|$)|^[a-z]:/(?:windows|program files|programdata|users/public|users/default)(?:/|$)")
+
+
+def ws_ok(n: str) -> bool:
+    """A workspace folder is an ordinary place for code: not the app-data, browser, key or system folders. Applied when the
+    folder is added (guard_switch.py) and again when the guard reads the policy."""
+    return not WS_BAD.search(n.replace("\\", "/") + "/")
+
+
+def _opts_ok(words: list, allowed: set) -> bool:
+    """Every option word is on the list (the name before any =); values and positional words are not options. An option that
+    takes a value is followed by it, which is then a plain word."""
+    for x in words:
+        if x.startswith("-") and x != "-":
+            key = x.split("=", 1)[0].lower()
+            if key not in allowed and not (re.fullmatch(r"-\d+", x)):
+                return False
+    return True
 
 
 def policy_list(key: str, limit: int = 8) -> list:
@@ -749,6 +772,10 @@ class Lexer:
                 self.add(("u", "variable"), i)
                 return n if j < 0 else j + 1
             inner = s[i + 2:j]
+            if "$(" in inner or "`" in inner:
+                self.feat("cmdsubst", i)            # a command inside a parameter default or pattern: not followed
+                self.add(("u", "command substitution"), i)
+                return j + 1
             m = re.fullmatch(r"(?:env:)?(\w+)(?:(:?[-=?+])(.*))?", inner, re.I | re.S)
             if not m:
                 self.add(("u", "variable expansion"), i)
@@ -1256,7 +1283,11 @@ HIJACK_ENV = re.compile(
     r"gem_\w+|bundle\w*|pip_\w+|uv_\w+|poetry_\w+|cargo_\w+|rustc\w*|rustflags|goflags|goproxy|goroot|gopath|"
     r"cc|cxx|ld|cflags|cxxflags|ldflags|make\w*|mflags|docker_\w+|kube\w*|aws_\w+|azure_\w+|gcloud\w*|google_\w+|"
     r"xdg_\w+|php\w*|composer\w*|lua_\w+|tf_\w+|terraform\w*|helm_\w+|claude\w*|anthropic\w*|nexaforge\w*|"
-    r"securecode\w*|org_\w+|__\w+)$", re.I)
+    r"securecode\w*|org_\w+|__\w+|gnu\w*|go\w*|rust\w*|ar|as|cpp|cmake\w*|gh_\w+|puppeteer\w*|esbuild\w*|swc\w*|ripgrep\w*|"
+    r"rg_\w+|cypress\w*|playwright\w*|prisma\w*|sass\w*|chromedriver\w*|sentry\w*|sharp\w*|nodejs\w*|corepack\w*|hf_\w+|"
+    r"huggingface\w*|\w*_(?:mirror|endpoint|registry|host|cdnurl|site|base_url|binary\w*|download\w*|dist_server|integrity\w*)|"
+    r"gomod\w*|gosum\w*|goproxy|goprivate|govcs|gotoolchain|gocache\w*|gotmpdir|jest_\w+|vitest_\w+|mocha_\w+|"
+    r"ssl\w*|sudo_\w+|askpass\w*)$", re.I)
 # Inline code (python -c, node -e, a here-document) is read as text. It is allowed in coding mode only when it does not reach
 # the network, start a process, read the environment, evaluate or decode code, or delete, move or write files. This is a text
 # filter, not a sandbox: a project script is not read at all.
@@ -1267,8 +1298,37 @@ INLINE_RISK = re.compile(
     r"writeFile\w*|appendFile\w*|write_text|write_bytes|rmtree|unlink|rmdir|rmSync|rename|chmod|chown|Deno|Bun|globalThis|"
     r"Function|process\s*\.\s*(?:env|binding|dlopen|kill|exit|argv)|os\s*\.\s*(?:system|popen|exec\w*|spawn\w*|fork|remove|"
     r"removedirs|replace|kill|environ|putenv)|shutil|fs\s*\.\s*(?:rm|write|append|copy|cp|mkdir|rename|chmod|open))\b"
-    r"|__\w+__|\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|\bopen\s*\([^)]*,\s*[\'\"][^\'\"]*[wax+]|\.write\s*\(|\brequire\s*\(\s*[^\'\"\s]"
+    r"|\bfrom\s+os\b|\bimport\s+os\s+as\b|\bsystem\b|\bpopen\b|\bspawn\w*|\bstartfile\b|\basyncio\b|\bssl\b|\burllib3?\b|\bimaplib\b|"
+    r"\bxmlrpc\b|_socket|_posix\w*|_winapi|\bpydoc\b|\bpip\b|\btruncate\b|\btouch\b|\bmkdir\w*|\bmakedirs\b|\blink\b|\bsymlink\b|"
+    r"\butime\b|\bmkfifo\b|\bchdir\b|\bshelve\b|\bsqlite3\b|\bdbm\b|\blogging\b|\bzipfile\b|\btarfile\b|\bvenv\b|\bensurepip\b|"
+    r"\blistdir\b|\bscandir\b|\bwalk\b|\brglob\b|\biterdir\b|\bhome\s*\(|\binput\s*\(|\.format\s*\(|\.join\s*\(|\[\s*:\s*:\s*-1|"
+    r"\bbytes\s*\(|\bbytearray\b|fromCharCode|\bwhile\b|\bsleep\b|setInterval|setTimeout|for\s*\(\s*;|process\s*\[|\{\s*env\b|"
+    r"\.open\s*\(|\bopen\s*\(\s*(?![\'\"][\w./-]+[\'\"]\s*[,)])|readFileSync\s*\(\s*(?![\'\"])|readFile\s*\(\s*(?![\'\"])|"
+    r"__\w+__|\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|\bopen\s*\([^)]*,\s*[\'\"][^\'\"]*[wax+]|\.write\s*\(|\brequire\s*\(\s*[^\'\"\s]"
     r"|\bimport\s*\(|\bchr\s*\(|`)")
+INLINE_PY_OK = {"json", "sys", "re", "math", "datetime", "time", "pathlib", "collections", "itertools", "functools", "textwrap",
+                "string", "statistics", "decimal", "fractions", "random", "uuid", "platform", "argparse", "typing", "csv", "glob",
+                "fnmatch", "hashlib", "html", "difflib", "pprint", "operator", "enum", "dataclasses", "ast", "tomllib", "configparser",
+                "xml.etree.elementtree", "importlib.metadata", "sysconfig", "os"}
+INLINE_NODE_OK = {"path", "util", "url", "assert", "fs", "os", "node:path", "node:util", "node:url", "node:assert", "node:fs", "node:os"}
+INLINE_CRED = re.compile(r"(?i)\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.docker|\.kube|hosts\.yml|\bpip\b|\brunpy\b|\bpkgutil\b")
+
+
+def inline_imports_ok(code: str) -> bool:
+    """Inline code may only import a short list of harmless standard modules (Python) or require a few core ones (Node), and
+    may not name a tool credential file. Importing anything else runs code the guard has not seen."""
+    if INLINE_CRED.search(code):
+        return False
+    for m in re.finditer(r"(?:^|[;\n(])\s*(?:import|from)\s+([\w.]+(?:\s*,\s*[\w.]+)*)", code):
+        for name in re.split(r"\s*,\s*", m.group(1)):
+            if name not in INLINE_PY_OK and name.split(".")[0] not in {x.split(".")[0] for x in INLINE_PY_OK if "." not in x}:
+                return False
+    for m in re.finditer(r"require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", code):
+        if m.group(1) not in INLINE_NODE_OK:
+            return False
+    return True
+
+
 # What ssh may run on the other machine without a question: read-only commands, checked word by word.
 REMOTE_SYSTEMCTL = {"status", "is-active", "is-enabled", "is-failed", "list-units", "list-unit-files", "list-timers"}
 REMOTE_DOCKER = {"ps", "logs", "stats", "images", "version", "info", "top", "port", "diff", "history"}
@@ -1276,8 +1336,10 @@ REMOTE_PLAIN = {"ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "df
                 "whoami", "id", "date", "pwd", "ps", "pgrep", "echo", "stat", "file", "which", "nproc", "lscpu", "lsblk",
                 "lsb_release", "ss", "netstat", "true", "false", "sort", "uniq", "cut", "tr", "nl", "basename", "dirname"}
 REMOTE_FIND_BAD = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"}
+REMOTE_SECRET_DIR = re.compile(r"(?i)(?:^|/)\.(?:ssh|aws|kube|docker|gnupg|azure|config/gcloud)(?:/|$)")
 REMOTE_SECRET = re.compile(
-    r"(?i)(?:^|/)(?:shadow|gshadow|sudoers|\.env\S*|\.ssh|\.aws|\.gnupg|\.netrc|\.pgpass|\.npmrc|\.pypirc|\.git-credentials|"
+    r"(?i)(?:^|/)(?:\.bash_history|\.zsh_history|\.aws|\.kube|\.docker|admin\.conf|wg\d*\.conf|debian\.cnf|secrets?\.ya?ml|"
+    r"database\.ya?ml|[^/]*\.tfstate|wp-config\.php|\.htpasswd|shado\w*|gshadow|sudoers|\.env\S*|\.ssh|\.aws|\.gnupg|\.netrc|\.pgpass|\.npmrc|\.pypirc|\.git-credentials|"
     r"credentials|secrets?|id_\w+|authorized_keys|environ|[^/]*\.(?:pem|key|p12|pfx|kdbx|ovpn|keytab))$")
 # The words reach the guard lowercased, so these are the lowercase forms. Anything not listed here (an option with a
 # value, a registry or index option, a workspace, a proxy) makes the install "install_odd".
@@ -2008,7 +2070,7 @@ class Shell:
         return c[0] if c else None
 
     def stage(self, st: Stage, idx: int, pipe: list, text: str):
-        bodies = [e[2] for w in list(st.words) + [r[1] for r in st.redirs] for e in w
+        bodies = [e[2] for w in list(st.words) + [r[1] for r in st.redirs] + ([st.herestring] if st.herestring else []) for e in w
                   if isinstance(e, tuple) and e[0] == "u" and len(e) > 2 and e[1] == "command substitution"]
         if not bodies:
             return self._stage(st, idx, pipe, text)
@@ -2098,9 +2160,12 @@ class Shell:
             return self.ps_assign_rhs(st, text, st.words[0][0][1] if isinstance(st.words[0][0], tuple) and st.words[0][0][0] == "v" else None)
         self.stage_raw = text[st.start:st.end] if st.start is not None else ""
         for name, vals in assigns:
-            if not self.safe_env(name):
+            ec = self.env_class(name)
+            if ec == "hijack":
                 st.modelled = False
                 self.unk(f"it sets the environment variable {name}, which can change what programs run")
+            elif ec == "unlisted":
+                self.res(("syntax", f"it sets the environment variable {name}, which is not on the guard's list of known harmless names"))
             for v in vals:
                 if v is None and self.subst_active:
                     continue                      # the value comes from a command substitution, which was checked
@@ -2139,7 +2204,13 @@ class Shell:
 
     def safe_env(self, name: str) -> bool:
         n = name.lower()
-        return n in SAFE_ENV_NAMES or bool(SAFE_ENV_RX.match(n)) or not HIJACK_ENV.match(n)
+        return n in SAFE_ENV_NAMES or bool(SAFE_ENV_RX.match(n))
+
+    def env_class(self, name: str) -> str:
+        """safe (listed), hijack (a name that changes what programs load, run, fetch or trust) or unlisted."""
+        if self.safe_env(name):
+            return "safe"
+        return "hijack" if HIJACK_ENV.match(name.lower()) else "unlisted"
 
     def command(self, words: list, st: Stage, idx: int, pipe: list, lexed: list, raw_texts: list):
         first = words[0]
@@ -2389,10 +2460,10 @@ class Shell:
                     if not self.safe_env(m.group(1)):
                         self.unk(f"it sets the environment variable {m.group(1)}, which can change what programs run")
                     i += 1
-                elif t in ("-u", "--unset", "-C", "--chdir", "-S", "--split-string"):
-                    if t in ("-S", "--split-string", "-C", "--chdir"):
-                        st.modelled = False
-                        self.unk("env -S or -C is not modelled")
+                elif t.startswith(("-S", "-C", "--spl", "--ch")):
+                    st.modelled = False
+                    return self.unk("env -S and -C (also glued or abbreviated) run a command line or change the folder; not modelled")
+                elif t in ("-u", "--unset"):
                     i += 2
                 elif t.startswith("-"):
                     i += 1
@@ -2488,35 +2559,50 @@ class Shell:
                     return "the command sent over ssh sets a variable"
                 nm = ws[0].rsplit("/", 1)[-1]
                 a = [x.lower() for x in ws[1:]]
-                if any(REMOTE_SECRET.search(x) for x in ws[1:]):
+                if any(REMOTE_SECRET.search(x) or REMOTE_SECRET_DIR.search(x) for x in ws[1:]):
                     self.res(R_SECRET)
                     return "the command sent over ssh names a secret file"
                 pos = [x for x in a if not x.startswith("-")]
                 ok = False
+                if any(c in x for x in ws[1:] for c in "*?[") and nm != "ls":
+                    return f"the command '{nm}' sent over ssh uses a wildcard"
                 if nm == "systemctl":
-                    ok = bool(pos) and pos[0] in REMOTE_SYSTEMCTL and not any(x in ("--user-no",) for x in a)
+                    ok = bool(pos) and pos[0] in REMOTE_SYSTEMCTL and \
+                        all(x in ("--no-pager", "-l", "--full", "--all", "-a", "--failed", "--plain", "-q", "--quiet") or not x.startswith("-")
+                            for x in a)
                 elif nm == "journalctl":
-                    ok = not any(x.startswith(("--vacuum", "--rotate", "--flush", "--sync", "--setup-keys", "--relinquish",
-                                               "--smart-relinquish", "--update-catalog", "--rotate")) for x in a)
+                    ok = _opts_ok(ws[1:], {"-u", "-n", "-f", "-e", "-x", "-r", "-k", "-b", "-p", "-o", "--no-pager", "--since", "--until",
+                                           "--unit", "--lines", "--follow", "--boot", "--reverse", "--priority", "--output"})
                 elif nm == "docker":
                     ok = bool(pos) and (pos[0] in REMOTE_DOCKER or (pos[0] == "compose" and len(pos) > 1 and
-                                                                    pos[1] in ("ps", "logs", "ls", "top", "images")))
+                                                                    pos[1] in ("ps", "logs", "ls", "top", "images"))) and \
+                        _opts_ok(ws[1:], {"-a", "--all", "--no-trunc", "-n", "--tail", "--since", "--until", "-f", "--follow", "--format",
+                                          "--filter", "-t", "--timestamps", "--no-stream", "-q", "--quiet"})
                 elif nm == "git":
-                    ok = bool(pos) and pos[0] in GIT_READ_SUBS - {""}
+                    ok = bool(pos) and pos[0] in {"status", "log", "diff", "show", "rev-parse", "describe", "ls-files", "blame",
+                                                  "shortlog"} and \
+                        _opts_ok(ws[1:], {"--oneline", "--stat", "--short", "-s", "-b", "--since", "--until", "--author", "-n", "--max-count",
+                                          "--graph", "--decorate", "--name-only", "--name-status", "-a", "--all", "-v", "--abbrev-ref",
+                                          "--short", "--porcelain", "--format", "--pretty", "-1", "-5", "-10", "-20", "-p", "--cached"})
                 elif nm == "find":
                     ok = not any(x in REMOTE_FIND_BAD for x in a)
                 elif nm == "ip":
                     ok = not pos or pos[0] in ("addr", "address", "a", "route", "r", "link", "l", "neigh", "n", "show")
                 elif nm == "crontab":
                     ok = a == ["-l"]
+                elif nm == "ps":
+                    ok = a in ([], ["aux"], ["-ef"], ["-e"], ["ax"], ["-aux"], ["auxf"], ["-f"])
+                elif nm in ("grep", "egrep", "fgrep"):
+                    ok = not any(re.fullmatch(r"-[a-zA-Z]*[rR][a-zA-Z]*", x) or x in ("--recursive", "--dereference-recursive") or
+                                 x.startswith(("--recursive", "-d", "--directories")) for x in a)
                 elif nm == "date":
                     ok = not any(x.startswith(("-s", "--set")) for x in a)
                 elif nm == "hostname":
                     ok = not pos
                 elif nm == "sort":
-                    ok = not any(x.startswith(("-o", "--output")) for x in a)
+                    ok = all(re.fullmatch(r"-[nrbfdhVu]{1,6}", x) for x in ws[1:])
                 elif nm == "uniq":
-                    ok = len(pos) <= 1
+                    ok = all(x in ("-c", "-d", "-u", "-i") for x in ws[1:])
                 elif nm == "ss":
                     ok = not any(x in ("-k", "--kill") for x in a)
                 elif nm in REMOTE_PLAIN:
@@ -2535,6 +2621,12 @@ class Shell:
         repl, i = False, 0
         while i < len(args) and (args[i].t or "").startswith("-"):
             t = args[i].t or ""
+            if t in ("-a", "--arg-file") and i + 1 < len(args):
+                for c in args[i + 1].cands:
+                    self.path(c, "read")
+            elif t.startswith("--arg-file=") or (t.startswith("-a") and len(t) > 2 and not t.startswith("-a-")):
+                for c in args[i].cands:
+                    self.path(c.split("=", 1)[1] if c and "=" in c else (c[2:] if c else None), "read")
             if t in ("-I", "-J", "--replace", "-R") or t.startswith(("-I", "-J", "--replace=", "-i", "-R")) and not t.startswith("-n"):
                 repl = True
             i += 2 if t in vals else 1
@@ -2583,7 +2675,8 @@ class Shell:
                     "resolve-path", "rvpa", "split-path", "get-childitem", "gci"):
             if name == "tree" and any(x.startswith("-o") or x.startswith("--output") for x in t):
                 return self.scan(args, "meta", {"-o": "write", "--output": "write", "-I": None, "-P": None, "-L": None})
-            return self.scan(args, "meta", {"-filter": None, "-include": None, "-exclude": None, "-depth": None, "-attributes": None,
+            return self.scan(args, "meta", {"-f": "read" if name == "file" else None, "--fromfile": "read", "--files0-from": "read",
+                                            "-filter": None, "-include": None, "-exclude": None, "-depth": None, "-attributes": None,
                                             "-path": "meta", "-literalpath": "meta", "-c": None, "--format": None, "-I": None,
                                             "-P": None, "-L": None, "--ignore": None, "--hide": None, "-w": None, "--block-size": None})
         if name in ("grep", "egrep", "fgrep", "rg", "ag", "ack"):
@@ -3379,7 +3472,7 @@ class Shell:
             cands = [st.heredoc] if st.heredoc is not None else (self.expand(st.herestring) if st.herestring is not None else None)
         if not cands or len(cands) != 1 or cands[0] is None or len(cands[0]) > 4000:
             return self.unk("it runs inline code (-c, -e) built at run time or too long; put the code in a project file instead")
-        if INLINE_RISK.search(cands[0]):
+        if INLINE_RISK.search(cands[0]) or not inline_imports_ok(cands[0]):
             return self.unk("inline code that reaches the network, a process, the environment, evaluates code or changes files; "
                             "put it in a project file instead")
         self.res(("syntax", "inline code, read as text only"))
@@ -3489,6 +3582,9 @@ class Shell:
             for c in self.expand(st.herestring):
                 if c is not None:
                     self.sub(c, "bash")
+                else:
+                    st.modelled = False
+                    self.unk("a shell that reads a command built at run time from a here-string")
             return
         st.stdin_code = True
         st.modelled = False
@@ -3844,7 +3940,11 @@ POLICY_KEYS = {"mode", "version", "note", "guard", "adaptive", "workspace_roots"
 GMODES = ("adaptive", "coding", "strict")
 ESC_ASKS, ESC_WINDOW, FETCH_WINDOW, STATE_KEEP = 3, 600, 900, 40
 _LAST = {"fetch": False}
-RANK = {"deny": 5, "destructive": 3, "exposure": 3, "unknown": 3, "syntax": 2.8, "install_odd": 2.5, "install": 2, "ask": 1}
+# Downloads besides curl and wget (which the shell model flags itself): the MCP fetch, scrape and browser tools, and a few
+# commands that pull code or images from a remote. git pull and git fetch are everyday and do not count.
+FETCH_TOOL = re.compile(r"(?i)fetch|scrape|navigate|crawl|browser|web_?search|download")
+FETCH_CMD = re.compile(r"(?i)\bgit\s+(?:-\S+\s+)*clone\b|\bpip3?\s+(?:\S+\s+)*download\b|\bdocker\s+(?:\S+\s+)*pull\b")
+RANK = {"deny": 5, "destructive": 3, "exposure": 3, "unknown": 3, "install_odd": 2.5, "install": 2, "ask": 1, "syntax": 0.5}
 SHOW_MAX = 2000
 AUDIT_NAME = "guard-audit.jsonl"
 AGENTS = ("claude", "cursor", "codex", "gemini", "antigravity", "other")   # the AI tool, as a fixed list in the audit
@@ -3859,6 +3959,7 @@ def audit_agent(event: dict) -> str:
     a = event.get("agent")
     return a if isinstance(a, str) and a in AGENTS else "other"
 AUDIT_MAX_BYTES = 5_000_000
+AUDIT_CODING_MAX = 1_000_000
 AUDIT_TEXT = 300
 
 
@@ -4036,6 +4137,8 @@ def audit_ask(event: dict, reason: str, mode: str, decision: str = "ask", gmode:
             st = os.lstat(f)
             if not _plain_file(st) or st.st_nlink > 1 or st.st_size > AUDIT_MAX_BYTES:
                 return False
+            if decision == "coding-allowed" and st.st_size > AUDIT_CODING_MAX:
+                return False                     # allowed lines stop first, so they cannot crowd out the real asks
         ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
         what = ti.get("command") if isinstance(ti.get("command"), str) else \
             next((v for k, v in ti.items() if isinstance(v, str) and re.search(r"path|file", str(k), re.I)), "")
@@ -4253,7 +4356,7 @@ def _check(event: dict, mode: str | None, gmode: str | None = None):
     gm = gmode if gmode in ("coding", "strict") else guard_mode(event, pol)
     project = os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or os.getcwd()
     worst = None
-    if tool in ("WebFetch", "WebSearch"):
+    if tool in ("WebFetch", "WebSearch") or (tool.startswith("mcp__") and FETCH_TOOL.search(tool)):
         _LAST["fetch"] = True
 
     if tool == "Grep":
@@ -4285,7 +4388,7 @@ def _check(event: dict, mode: str | None, gmode: str | None = None):
                 r = stronger(r, ("deny", "the command defines a function or alias, or writes a script and runs it, and names a "
                                          "protected or secret place."))
         worst = stronger(worst, r)
-        if getattr(env, "fetched", False):
+        if getattr(env, "fetched", False) or FETCH_CMD.search(cmd):
             _LAST["fetch"] = True
         if worst and worst[0] == "deny":
             return worst
@@ -4351,48 +4454,68 @@ def _state_dir() -> Path:
 
 
 def _state_file(event: dict) -> Path | None:
+    """The folder that holds this session's events (one empty file per event, named by time and kind)."""
     sid = event.get("session_id") if isinstance(event, dict) else None
     if not isinstance(sid, str) or not sid or len(sid) > 200:
         return None
-    return _state_dir() / ("guard-session-" + hashlib.sha256(sid.encode("utf-8", "replace")).hexdigest()[:24] + ".json")
+    return _state_dir() / ("guard-session-" + hashlib.sha256(sid.encode("utf-8", "replace")).hexdigest()[:24])
 
 
-def _state_load(f: Path) -> list:
-    """The events of this session: [[time, kind], ...], kind deny, ask or fetch. Never raises."""
+_EV_RX = re.compile(r"^(\d{15,20})-(deny|ask|fetch)-\d{1,10}$")
+
+
+def _state_entries(d: Path) -> list:
+    """[(time, kind, name)] sorted by time. A plain folder with plain files only; anything else is ignored. Never raises."""
+    out: list = []
     try:
-        st = os.lstat(f)
-        if not _plain_file(st) or st.st_nlink > 1 or st.st_size > 8192:
+        st = os.lstat(d)
+        if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
             return []
-        v = json.loads(f.read_bytes().decode("utf-8"))
-        ev = v.get("e") if isinstance(v, dict) else None
-        return [[float(t), k] for t, k in ev if isinstance(k, str) and k in ("deny", "ask", "fetch")
-                and isinstance(t, (int, float)) and not isinstance(t, bool)][-STATE_KEEP:] if isinstance(ev, list) else []
+        now = time.time()
+        with os.scandir(d) as it:
+            for _, e in zip(range(700), it):
+                m = _EV_RX.match(e.name)
+                if m and e.is_file(follow_symlinks=False) and int(m.group(1)) / 1e9 <= now + 60:
+                    out.append((int(m.group(1)) / 1e9, m.group(2), e.name))
     except Exception:
         return []
+    return sorted(out)
+
+
+def _state_load(d: Path) -> list:
+    """The events of this session: [[time, kind], ...], kind deny, ask or fetch. Never raises."""
+    return [[t, k] for t, k, _ in _state_entries(d)]
 
 
 def _state_add(event: dict, kind: str) -> None:
-    """Remember a block, a question or a download of this session, in the app cache (never in the project). Best effort."""
-    f = _state_file(event)
-    if f is None:
+    """Remember a block, a question or a download of this session, in the app cache (never in the project). Best effort.
+    One new file per event, so parallel hooks never overwrite each other, and when there are too many the oldest question
+    or download goes first, never a block."""
+    d = _state_file(event)
+    if d is None:
         return
     try:
-        d = f.parent
         if os.path.lexists(d):
             st = os.lstat(d)
             if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
                 return
         else:
-            d.mkdir(parents=True)
-        if os.path.lexists(f) and not _plain_file(os.lstat(f)):
-            return
+            d.mkdir(parents=True, exist_ok=True)
+        fd = os.open(d / f"{time.time_ns()}-{kind}-{os.getpid()}", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        os.close(fd)
+        ents = _state_entries(d)
         now = time.time()
-        ev = [e for e in _state_load(f) if now - e[0] < 7200] + [[now, kind]]
-        tmp = d / (f.name + f".{os.getpid()}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o600)
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(json.dumps({"e": ev[-STATE_KEEP:]}).encode("utf-8"))
-        os.replace(tmp, f)
+        for t, k, n in ents:
+            if now - t > 7200:
+                os.unlink(d / n)
+        ents = [x for x in ents if now - x[0] <= 7200]
+        extra = len(ents) - STATE_KEEP
+        for t, k, n in ents:
+            if extra <= 0:
+                break
+            if k != "deny":
+                os.unlink(d / n)
+                extra -= 1
     except Exception:
         pass
 

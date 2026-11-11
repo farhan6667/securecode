@@ -105,10 +105,11 @@ def test_a_burst_of_questions_makes_it_strict(env):
 
 
 def test_questions_spread_over_time_do_not_escalate(env):
-    f = G._state_file(ev(SYNTAX, env.proj))
+    d = G._state_file(ev(SYNTAX, env.proj))
     old = time.time() - 3000
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps({"e": [[old, "ask"], [old + 1, "ask"], [old + 2, "ask"]]}), encoding="utf-8")
+    d.mkdir(parents=True, exist_ok=True)
+    for i in range(3):
+        (d / f"{int((old + i) * 1e9)}-ask-1").write_text("")
     assert G.session_risk(ev(SYNTAX, env.proj)) is None
     assert verdict(ev(SYNTAX, env.proj)) == "allow"
 
@@ -149,19 +150,20 @@ def test_an_unlisted_program_still_asks_in_coding_mode(env):
 
 def test_the_state_file_is_in_the_app_cache_never_in_the_project(env):
     verdict(ev("cat .env", env.proj))
-    assert list(env.cache.glob("guard-session-*.json"))
+    assert list(env.cache.glob("guard-session-*"))
     assert not list(env.proj.rglob("guard-session-*"))
 
 
 def test_a_planted_or_oversized_state_file_is_ignored(env):
-    f = G._state_file(ev(SYNTAX, env.proj))
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text("x" * 20000, encoding="utf-8")
+    d = G._state_file(ev(SYNTAX, env.proj))
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "deny").write_text("x")
+    (d / "1-deny-1").write_text("")                              # not a valid name
+    (d / f"{int((time.time() + 9999) * 1e9)}-deny-1").write_text("")   # a time in the future
+    (d / f"{int(time.time() * 1e9)}-bogus-1").write_text("")
     assert G.session_risk(ev(SYNTAX, env.proj)) is None
-    f.write_text("not json", encoding="utf-8")
-    assert G.session_risk(ev(SYNTAX, env.proj)) is None
-    f.write_text(json.dumps({"e": [["x", "deny"], [1, 5]]}), encoding="utf-8")
-    assert G.session_risk(ev(SYNTAX, env.proj)) is None
+    (d.parent / "x").write_text("a file where the session folder should be")
+    assert G.session_risk(ev(SYNTAX, env.proj, session="x")) is None
 
 
 def test_a_bad_adaptive_value_makes_the_policy_malformed(env):

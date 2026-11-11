@@ -1,6 +1,6 @@
-NexaForge SecureCode (Org AI Secure AppSec Gate) 7.1
+NexaForge SecureCode (Org AI Secure AppSec Gate) 7.2
 ====================================================
-Version: 7.1.0
+Version: 7.2.0
 
 Code security (unchanged core, fixed)
 - Global Claude Code skill (org-appsec-security), /security-gate and /sec-review commands
@@ -147,7 +147,7 @@ Added after the 6.2 review
 - README.md
 - RELEASE-NOTES-V6.2.md
 - RELEASE-NOTES-V7.0.md
-- RELEASE-NOTES-V7.1.md
+- RELEASE-NOTES-V7.2.md
 - SECURITY-CONTEXT.md
 - SECURITY.md
 - api-security/README.md
@@ -327,10 +327,16 @@ Added after the 6.2 review
 - tests/test_ci_skip_check.py
 - tests/test_fuzz_guard.py
 - tests/test_gate.py
+- tests/test_guard_adapter_sessions.py
+- tests/test_guard_adaptive_mode.py
 - tests/test_guard_auto_mode.py
+- tests/test_guard_invariants.py
 - tests/test_guard_positive_model.py
 - tests/test_guard_replay_shapes.py
+- tests/test_guard_review72.py
+- tests/test_guard_space_paths.py
 - tests/test_guard_switch.py
+- tests/test_guard_switch_mode.py
 - tests/test_heuristics.py
 - tests/test_java_spring.py
 - tests/test_laravel_authz.py

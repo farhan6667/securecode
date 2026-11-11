@@ -84,7 +84,7 @@ def write_workspace(op: str, folder: str | None = None, path: Path | None = None
             raise SwitchRefused("give the full path of an existing folder")
         real = os.path.realpath(folder)
         n = G.split_norm(os.path.abspath(real), None)
-        if not n or not G.GuardEnv({"cwd": real}).root_ok(n):
+        if not n or not G.GuardEnv({"cwd": real}).root_ok(n) or not G.ws_ok(n):
             raise SwitchRefused("that folder is not allowed as a workspace (a drive root, your home folder, or a protected place)")
     elif op != "clear":
         raise SwitchRefused("workspace takes add <folder> or clear")
@@ -115,6 +115,8 @@ def _update(mutate, path: Path | None, markers: list[str] | None, need_terminal:
                               f"not used ({why}). Ask your administrator, or run install-global.py to repair the policy.")
     data = json.loads(p.read_bytes().decode("utf-8-sig"), object_pairs_hook=G._no_dupes)
     mutate(data)
+    if len(json.dumps(data, indent=2)) > G.POLICY_MAX - 200:
+        raise SwitchRefused("the policy file would get too large; clear some workspace folders first")
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".policy-", suffix=".tmp")
     try:

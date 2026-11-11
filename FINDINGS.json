@@ -1208,6 +1208,195 @@
       "what": "Found in review round 9, present since 7.0.0, not fixed in 7.1.0: the guard audit is a file in the project and only its direct path is protected. In auto or bypass mode an agent can delete it with a glob or pipeline (Remove-Item .security\\*, rm -r .s*, Get-ChildItem | Remove-Item), replace .security with a link or junction (New-Item -ItemType Junction, ln -s), or push it past the 5 MB limit, and audit_ask then returns False without a trace. 7.1 makes the audit more useful (it records what auto and bypass answered), so this matters more. Planned fix: a second copy in the app cache outside the project, keyed by the project path, and wildcard and link rules for .security. Until then the release notes and docs call the audit a convenience log, not evidence",
       "check": "review round 9 probes (scratchpad review9)",
       "status": "open"
+    },
+    {
+      "id": "V72-01",
+      "severity": "high",
+      "where": "agent_guard.py stronger()/RANK",
+      "what": "A syntax result (coding mode, allowed) outranked an install or credential-file ask in the same command, so `echo $(date); npm install evil` was allowed in coding mode.",
+      "check": "pytest tests/test_guard_review72.py -k test_a_syntax_stage_does_not_hide_an_install_or_credential_ask",
+      "status": "fixed",
+      "fix": "syntax now ranks below every other class"
+    },
+    {
+      "id": "V72-02",
+      "severity": "medium",
+      "where": "agent_guard.py Shell.inline",
+      "what": "Inline code that imports an unknown module, calls pip or runpy, or names a credential file passed the text filter.",
+      "check": "pytest tests/test_guard_review72.py -k test_inline_code_that_imports_or_names_a_credential_file_asks",
+      "status": "fixed",
+      "fix": "imports limited to a short list of harmless standard modules, credential names refused"
+    },
+    {
+      "id": "V72-03",
+      "severity": "medium",
+      "where": "agent_guard.py _state_add",
+      "what": "Session memory was read, modified and replaced without a lock; parallel hooks lost events, including a block.",
+      "check": "pytest tests/test_guard_review72.py -k test_parallel_events_are_all_kept_and_a_block_is_never_lost",
+      "status": "fixed",
+      "fix": "one new file per event, no read-modify-write"
+    },
+    {
+      "id": "V72-04",
+      "severity": "medium",
+      "where": "agent_guard.py STATE_KEEP",
+      "what": "Forty cheap events pushed an earlier block out of the memory.",
+      "check": "pytest tests/test_guard_review72.py -k test_forty_cheap_events_do_not_erase_an_earlier_block",
+      "status": "fixed",
+      "fix": "the cap removes the oldest question or download first, never a block"
+    },
+    {
+      "id": "V72-05",
+      "severity": "medium",
+      "where": "scripts/adapters/*.py",
+      "what": "Adapters dropped the session id, so they never escalated.",
+      "check": "pytest tests/test_guard_adapter_sessions.py",
+      "status": "fixed",
+      "fix": "adapters pass their tool's session id"
+    },
+    {
+      "id": "V72-06",
+      "severity": "low",
+      "where": "agent_guard.py _LAST fetch",
+      "what": "git clone, pip download, docker pull and the MCP fetch, scrape and browser tools did not count as a download.",
+      "check": "pytest tests/test_guard_review72.py -k test_these_commands_count_as_a_download",
+      "status": "fixed",
+      "fix": "recognised by name and by command"
+    },
+    {
+      "id": "V72-07",
+      "severity": "low",
+      "where": "agent_guard.py audit_ask",
+      "what": "Coding-allowed lines could fill the audit up to its cap and crowd out real asks.",
+      "check": "pytest tests/test_guard_review72.py -k test_coding_allowed_lines_stop_at_their_own_cap_and_real_asks_still_log",
+      "status": "fixed",
+      "fix": "coding-allowed lines stop at 1 MB"
+    },
+    {
+      "id": "V72-08",
+      "severity": "medium",
+      "where": "scripts/guard_switch.py, GuardEnv.ws",
+      "what": "A workspace folder could be a browser profile, DPAPI store, system folder or another agent's config.",
+      "check": "pytest tests/test_guard_review72.py -k test_credential_and_system_folders_are_not_workspaces",
+      "status": "fixed",
+      "fix": "ws_ok() refuses app-data, browser, key and system folders; policy size is checked"
+    },
+    {
+      "id": "V72-09",
+      "severity": "high",
+      "where": "agent_guard.py Shell.stage",
+      "what": "A command substitution inside a here-string was never checked (`bash <<<\"$(rm -rf ~)\"`).",
+      "check": "pytest tests/test_guard_review72.py -k test_a_secret_or_wipe_hidden_in_a_here_string_default_or_option_is_denied",
+      "status": "fixed",
+      "fix": "here-string words are scanned and run through the model"
+    },
+    {
+      "id": "V72-10",
+      "severity": "high",
+      "where": "agent_guard.py HIJACK_ENV",
+      "what": "A deny list of variable names let `GNUMAKEFLAGS`, `GOCACHEPROG`, download-mirror variables and others through in coding mode.",
+      "check": "pytest tests/test_guard_review72.py -k test_variables_that_move_a_program_or_a_download_still_ask",
+      "status": "fixed",
+      "fix": "an unlisted variable is only a syntax result (strict asks, coding allows after the extended deny list)"
+    },
+    {
+      "id": "V72-11",
+      "severity": "high",
+      "where": "agent_guard.py Shell.xargs",
+      "what": "`xargs -a .env echo` never judged the file given to -a or --arg-file.",
+      "check": "pytest tests/test_guard_review72.py -k test_a_secret_or_wipe_hidden_in_a_here_string_default_or_option_is_denied",
+      "status": "fixed",
+      "fix": "the file is judged as a path that is read"
+    },
+    {
+      "id": "V72-12",
+      "severity": "high",
+      "where": "agent_guard.py wrapper env",
+      "what": "`env --split-string=...`, `env --chdir=...` and their glued or abbreviated forms were skipped as plain flags (present since 7.0).",
+      "check": "pytest tests/test_guard_review72.py -k test_env_options_that_run_a_command_line_or_move_the_folder_are_not_followed",
+      "status": "fixed",
+      "fix": "any -S, -C, --spl, --ch form is not followed and asks"
+    },
+    {
+      "id": "V72-13",
+      "severity": "high",
+      "where": "agent_guard.py Lexer.dollar",
+      "what": "A command inside a parameter default or pattern (`${x:-$(cat .env)}`) was never inspected (present since 7.0).",
+      "check": "pytest tests/test_guard_review72.py -k test_a_secret_or_wipe_hidden_in_a_here_string_default_or_option_is_denied",
+      "status": "fixed",
+      "fix": "treated as a command substitution that is not followed; the text scan denies secrets"
+    },
+    {
+      "id": "V72-14",
+      "severity": "medium",
+      "where": "agent_guard.py file_cmd, Shell.remote_check",
+      "what": "`file -f .env` and `tree --fromfile .env` read a secret; the remote read-only list accepted abbreviated and long options that write or run a program, and missed secret names.",
+      "check": "pytest tests/test_guard_review72.py -k test_the_remote_read_only_list_is_option_aware",
+      "status": "fixed",
+      "fix": "option-aware lists, wildcards refused, more secret names"
+    },
+    {
+      "id": "V72-15",
+      "severity": "medium",
+      "where": "agent_guard.py INLINE_RISK",
+      "what": "The inline text filter missed process and network calls without a dotted name, computed paths and writes without .write.",
+      "check": "pytest tests/test_guard_review72.py -k test_inline_code_filter_round_two",
+      "status": "fixed",
+      "fix": "filter widened (non-literal open, join, format, listdir, while, sleep, os imports and more)"
+    },
+    {
+      "id": "V72-O1",
+      "severity": "high",
+      "where": "agent_guard.py statement()",
+      "what": "Pre-existing: a PowerShell listing piped to a reader or remover (`Get-ChildItem | Get-Content`, `| Remove-Item`) is not treated as unknown paths. In 7.2 `$x = Get-ChildItem | Get-Content` is also quiet in coding mode.",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: planned for 7.3"
+    },
+    {
+      "id": "V72-O2",
+      "severity": "medium",
+      "where": "agent_guard.py split_norm()",
+      "what": "Pre-existing: Windows device paths (`//./HarddiskVolume3/...`, `//./GLOBALROOT/...`) are not resolved, so `rm -rf` on one is allowed.",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: planned for 7.3"
+    },
+    {
+      "id": "V72-O3",
+      "severity": "low",
+      "where": "agent_guard.py",
+      "what": "Pre-existing: recursive search from the project folder reads .env (`grep -r KEY .`, `rg KEY`); also `echo $env:GITHUB_TOKEN` and `echo $(env)`.",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: planned for 7.3"
+    },
+    {
+      "id": "V72-O4",
+      "severity": "high",
+      "where": "config/guard-policy.json",
+      "what": "Pre-existing and documented: a script the agent writes and runs itself can edit the policy file (guard off, adaptive, workspace roots). The guard does not read script bodies. In 7.2 the file holds more settings.",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: a terminal check is not authentication"
+    },
+    {
+      "id": "V72-O5",
+      "severity": "low",
+      "where": "agent_guard.py judge()",
+      "what": "Pre-existing: in bypass mode a link that already exists outside the project and points at ~/.claude lets writes through.",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open"
+    },
+    {
+      "id": "V72-O6",
+      "severity": "low",
+      "where": "agent_guard.py audit_ask()",
+      "what": "Pre-existing: the audit can be disabled by replacing .security with a link (V71-GA05).",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open"
     }
   ]
 }
