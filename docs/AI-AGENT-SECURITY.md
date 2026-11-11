@@ -137,6 +137,34 @@ project (time, mode, tool, the command with token-like values removed, the reaso
 `verify-global.py` prints the mode the installed guard really uses. Change it with
 `py -I install-global.py --guard-mode owner|managed`.
 
+### Adaptive mode: coding and strict (7.2, owner mode only)
+
+The guard has two readings of the same command, and picks one per decision.
+
+- **Coding** (the default for an attended developer): shell syntax the guard cannot follow, but whose commands it did check,
+  is allowed and written to the audit as `coding-allowed`. These are the "syntax" results: `$( )` whose output is only used
+  by `echo`, a listing or size command (`ls`, `wc`, `du`) or a git read or commit; PowerShell `(expr)`, `(expr).Property` and
+  `$x = <command>`; `xargs` with one of those commands; `ssh host "<read-only command>"`; `python -c`, `node -e` and
+  here-documents whose text does not reach the network, a process, the environment or the files; reads (never writes) in a
+  folder listed with `guard_switch.py workspace add`.
+- **Strict**: the same shapes ask, as in 7.1.
+
+In adaptive mode (no `adaptive` key in the policy) the guard starts in coding and goes to strict for the rest of the session
+after a block (a secret read, pipe-to-shell, the agent's own files), after three questions in ten minutes, and for fifteen
+minutes after a download. The memory is `<app>/cache/guard-session-<hash of the session id>.json`, never in the project. An
+event without a session id cannot escalate (Claude Code, Codex, Gemini CLI, Cursor and Antigravity all send one and the
+adapters pass it on). Pin the mode with `guard_switch.py mode coding|strict|adaptive`; a pinned mode never changes by itself.
+Auto, don't-ask, bypass and managed are always strict. The policy file can also list `workspace_roots` and `remote_wrappers`
+(extra names that take `host command` like ssh), both read from the owner's policy file only.
+
+Never different between the two: the hard denies (secrets, pipe-to-shell and `curl | bash`, the guard's own folders and
+`guard-policy.json`, `~/.claude`, `rm -rf ~`), and the questions about an unknown program, `sudo`, a destructive or exposing
+command, an install, and a command that changes a server. `tests/test_guard_invariants.py` runs the denies in every mode.
+
+What coding mode does not do: the inner command of a modelled shape is checked, but the guard does not read a project script,
+and inline code is a text filter only. A variable in front of a command is judged by a deny list of names that change what
+programs load (`PATH`, `LD_*`, `PYTHON*`, `NODE_*`, `NPM_*`, `GIT_*`, `*_PROXY`, ...); a name that is not on it is accepted.
+
 ### Auto mode, don't-ask mode and bypass mode (owner mode only)
 
 An "ask" needs a person to answer it. When you run Claude Code in auto, don't-ask or bypass mode and walk away,
@@ -204,6 +232,9 @@ terminal, from the runtime folder (`%LOCALAPPDATA%\OrgAISecureAppSec\scripts` on
 py -I guard_switch.py status
 py -I guard_switch.py off
 py -I guard_switch.py on
+py -I guard_switch.py mode adaptive|coding|strict
+py -I guard_switch.py workspace add <folder>
+py -I guard_switch.py workspace clear
 ```
 
 Off switches off the `PreToolUse` command guard (`agent_guard.py`) and nothing else. The secure-coding rules, the check

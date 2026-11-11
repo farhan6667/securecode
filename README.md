@@ -26,11 +26,23 @@ APIs or Android apps with AI.
 </p>
 
 <p align="center">
-  New in 7.1: a quieter guard. <a href="https://github.com/farhan6667/securecode/releases/tag/v7.1.0">Release notes</a> ·
+  New in 7.2: a command guard that stays on and stays quiet. <a href="https://github.com/farhan6667/securecode/releases/tag/v7.2.0">Release notes</a> ·
   <a href="https://www.linkedin.com/feed/update/urn:li:activity:7523701753914245121/">the 7.0 launch post on LinkedIn</a>
 </p>
 
-## What's new in 7.1
+## What's new in 7.2
+
+- **A command guard you can leave on.** While you code, the guard follows the shell syntax that used to trigger a question
+  (`$( )`, PowerShell groups, a variable in front of a command, `xargs`, read-only `ssh`, inline Python and Node, folders next
+  to your project) and checks the command inside each one. After a risk signal in the session (something was blocked, three
+  questions in ten minutes, a download) it reads everything strictly again. Secrets, pipe-to-shell, the agent's own settings
+  and `rm -rf ~` stay refused in every mode. It is a convenience for an attended developer, not a sandbox.
+- **A path with a space is a path.** `"C:/Users/John Doe/proj/.venv/Scripts/python.exe" -m pytest` no longer asks.
+- **You choose the mode.** `guard_switch.py mode adaptive|coding|strict`, and `guard_switch.py workspace add <folder>` for
+  folders the agent may read. Every audit line says which mode it ran in. Details and the open limits are in
+  [RELEASE-NOTES-V7.2.md](RELEASE-NOTES-V7.2.md) and [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
+
+## What was new in 7.1
 
 - **Quiet by default while you code.** The edit hook says nothing when the file is clean, shows only High and Critical
   findings when it is not, and the security test offer waits for a feature's worth of work. You type "Run Security
@@ -43,8 +55,7 @@ APIs or Android apps with AI.
   The rules, the edit check, the stop gate, the secret shield and the security tests stay on.
 - **Fewer false alarms:** the Python that runs the guard by its full path and PowerShell assignments without spaces no
   longer ask. The guard's audit now records which AI tool asked, and the updater retries without a token when a public
-  repository answers a token with a refusal. Details and the open limits are in
-  [RELEASE-NOTES-V7.1.md](RELEASE-NOTES-V7.1.md) and [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
+  repository answers a token with a refusal. 7.1 was prepared but not tagged; it ships inside 7.2.0.
 
 ## What was new in 7.0
 
