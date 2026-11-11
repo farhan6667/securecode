@@ -1972,7 +1972,9 @@ class Shell:
             self.unk("the command name is built at run time")
             return
         nm_raw = first[0].translate(DASHES)
-        if re.search(r"\s", nm_raw):
+        # 7.2: a quoted path is one program name even when a folder in it has a space ("C:/Users/John Doe/p/.venv/Scripts/python.exe").
+        # Only a name whose last part (the program itself) has a space is a quoted command line, not a program name.
+        if re.search(r"\s", re.split(r"[/\\]", nm_raw)[-1]) or (re.search(r"\s", nm_raw) and "/" not in nm_raw and "\\" not in nm_raw):
             st.modelled = False
             self.unk("the command name contains spaces (a quoted command line, not a program name)")
             return
