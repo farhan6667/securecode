@@ -32,7 +32,12 @@ OrgAISecureAppSec app folder). Short version, always on:
    file and the other long checklists are for "Run Security Test". The most frequent pentest findings are in `docs/COMMON-FINDINGS.md` (or
    `docs/ORG-FINDINGS.md`): outdated jQuery/Bootstrap and other libraries come first. Upgrade, never suppress.
 9. Report residual risk; never claim "100% secure".
-10. When you finish substantial work (10+ code files or 300+ changed lines since your last offer) and no
+10. AI features, agents and MCP in the code you write: model output and anything the model reads (tool and MCP
+   output included) is untrusted data, not instructions; validate model output before SQL, shell, paths or `eval`; give
+   agents the fewest permissions; no secrets in prompts or logs; cap tokens, calls and loops; unfamiliar packages install
+   with scripts off first. Details and sources (OWASP 2025 lists, MCP security pages, npm docs) are in section 9 of
+   AGENTS.md and in `docs/SOURCE-CODE-REVIEW.md`; nothing here asks the user a question.
+11. When you finish substantial work (10+ code files or 300+ changed lines since your last offer) and no
    "Run Security Test" has run since, offer it in one short question, at most once per session. Run it only on
    a yes; a no stands for those changes. `SECURECODE_MODE=coding` turns the offer off.
 <!-- ORG-AI-APPSEC-GATE-END -->

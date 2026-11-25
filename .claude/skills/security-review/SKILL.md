@@ -103,6 +103,14 @@ until the developer agrees: produce the Advisory QA report (format below), then 
    - **Vulnerable and outdated components:** every library flagged by Trivy or `VULNERABLE_LIBRARY`
      is upgraded to a supported fixed version (do not suppress); framework on a supported release.
    - **Sensitive data:** secrets in code, PII in logs or responses, over-fetching API responses.
+   - **Supply chain and exceptional conditions (OWASP 2025 A03 and A10):** lockfile and bounded versions, install
+     scripts of unfamiliar packages, CI actions pinned, publish tokens; security checks that fail open on an error
+     or timeout, swallowed exceptions, missing limits. See the matching sections of `SOURCE-CODE-REVIEW.md`.
+   - **AI features, agents and MCP (OWASP LLM 2025, Agentic 2026, MCP security pages):** only when the project
+     calls an LLM, builds an agent or uses an MCP server. Check prompt injection through retrieved text, model output
+     used in SQL, shell or HTML, tool permissions and identities, secrets in prompts, token and loop limits, MCP token
+     handling. Use the section "AI features, agents and MCP in the code you write" of `SOURCE-CODE-REVIEW.md`, and
+     name the source version in the report. Report only; do not interrupt the developer with extra questions.
    - **Mobile:** follow the mobile section of `SECURITY-TEST-MATRIX.md`.
 
    **Authorization matrix (required).** Write `.security/authz-matrix.md` with one row per route and

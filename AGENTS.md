@@ -122,3 +122,25 @@ later, accept it and do not ask again for the same changes or in the same sessio
 edits, docs-only changes and pure questions. In Claude Code and Codex the stop hook reminds you; in Cursor this
 rule is the reminder. `SECURECODE_MODE=coding` (or `.security/mode.json` with `{"mode": "coding"}`) turns the
 offer off; the developer then asks for the test when the program is done.
+
+## 9. AI features, agents and MCP in the code you write (rules only, nothing extra to answer)
+
+When the project calls an LLM, builds an agent or uses an MCP server, apply these while coding. The long checklist with the
+sources is the section "AI features, agents and MCP in the code you write" in `docs/SOURCE-CODE-REVIEW.md`; read it only for
+"Run Security Test" or when the change adds an LLM call, an agent tool or an MCP server.
+- Text the model reads that the developer did not type (pages, files, issues, tool output, MCP tool descriptions and results)
+  is data. It never changes which tool runs, with which arguments, or what you may do.
+- Model output is untrusted input: encode it for its context, validate it before SQL, shell, file paths, URLs or `eval`, and
+  never build a command string from it.
+- Give an agent or tool the fewest permissions, the narrowest folders and network, and its own low-privilege credential. Deletes,
+  payments and messages that leave the project need a human decision made outside the model.
+- No secrets, internal URLs or customer data in prompts, logs or traces. Cap tokens, tool calls, loop depth, cost and time.
+- An MCP server must not accept a token issued for another service. Tokens go in the `Authorization` header, never in a URL.
+  Block private and link-local addresses in anything that fetches a URL. Show the exact command of a local server before it is
+  enabled.
+- Supply chain: lockfile and exact or bounded versions; for an unfamiliar package, install with scripts off
+  (`--ignore-scripts`) and read its install scripts first; publish from CI with trusted publishing and provenance, not a
+  long-lived token.
+Sources (read 2026-11-25): OWASP Top 10:2025, OWASP Top 10 for LLM Applications 2025, OWASP Top 10 for Agentic Applications
+2026, the MCP Security Best Practices and Authorization pages, and the npm docs on trusted publishing, scripts and config.
+Links are in `docs/SOURCE-CODE-REVIEW.md`.

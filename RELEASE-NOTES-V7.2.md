@@ -47,6 +47,17 @@ read-only command over ssh. 7.1 removed the first two. 7.2 removes the rest, wit
 - A quoted program path with a space in a folder (`"C:/Users/John Doe/proj/.venv/Scripts/python.exe" -m pytest`) is a path,
   not an unknown command. It asked on every call for anyone with a space in their home or project path.
 
+**Rules and checklists (text only, no new guard logic and no new questions for the developer)**
+- `AGENTS.md` has a new section 9 and the global rules file a new rule 10 for AI features, agents and MCP in the code the
+  agent writes: untrusted model output and tool text, least permissions, no secrets in prompts, limits on tokens and loops,
+  MCP token handling, and installing unfamiliar packages with scripts off first.
+- `docs/SOURCE-CODE-REVIEW.md` maps its sections to the OWASP Top 10:2025 list and gains sections on the software supply chain,
+  mishandling of exceptional conditions, and AI features, agents and MCP (OWASP Top 10 for LLM Applications 2025 and for
+  Agentic Applications 2026, the MCP Security Best Practices and Authorization pages, the npm docs on trusted publishing,
+  scripts and config, SLSA). Every source is listed with its URL and the date it was read (2026-11-25). The agentic bullets
+  are this project's own checks under OWASP's names, because only the names were read.
+- The security review skill lists the new checks for "Run Security Test" and "Run Advisory QA".
+
 **Carried over from 7.1**
 - A quiet edit hook, a stop gate that sends the agent back once per finding, a security test offer that waits for a
   feature's worth of work, and `SECURECODE_MODE=coding`.
