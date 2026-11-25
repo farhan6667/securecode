@@ -1577,6 +1577,24 @@
       "check": "pytest tests/test_guard_review72.py",
       "status": "fixed",
       "fix": "these evaluate flags are not followed"
+    },
+    {
+      "id": "V72-35",
+      "severity": "high",
+      "where": "agent_guard.py git, tool, downloader, dispatch, docker",
+      "what": "Round 7 (all present since 7.0): known commands whose option runs a program or reads or writes a file were only path-scanned. git --upload-pack, --receive-pack, clone -u and -c, grep -O, rebase -xCMD; perl -M and -I joined forms; curl --header @file and --write-out with @file or %output{}; date -f; file -m; man and info (any argument); nvidia-smi -f; go -toolexec, -exec, -vettool, env -w, run module@version; java -XX:OnOutOfMemoryError, -Xloggc, -Xlog; tar -F and --info-script and a host:archive name; dotnet colon options, user-secrets and nuget sources; cmake -E env, -P, -C; ctest --test-command; make SHELL= and --eval; mvn exec and compiler properties and -l and -t; docker --output, --build-context, --host; php -B -R and joined -d; yq load functions; pytest and semgrep -c; yarn plugin import.",
+      "check": "pytest tests/test_guard_review72.py -k known_tool_options",
+      "status": "fixed",
+      "fix": "each of these options is now refused or its value is judged as a path; everyday forms (git push -u, git clean -xdf, curl -H 'Accept: json', go build, java -jar, tar -czf, cmake -E copy) stay quiet and are tested"
+    },
+    {
+      "id": "V72-O8",
+      "severity": "high",
+      "where": "agent_guard.py Shell.tool, Shell.git",
+      "what": "Root cause of V72-35 is not closed: a known tool that can run programs is allowed unless one of its options is on a list of options the guard knows. Rounds 4 to 7 each found more options of this class (present since 7.0). Round 8 was not run. Expect further options in tools that were not listed (mvn, gradle, dotnet and others have many).",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: planned for 7.3: treat an option value with whitespace, a semicolon, a pipe or a command substitution as a command string for any tool that can run programs, or deny unlisted options on those tools"
     }
   ]
 }

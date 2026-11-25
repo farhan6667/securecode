@@ -1239,9 +1239,9 @@ NONPATH_CMDS = {"echo", "printf", "true", "false", ":", "pwd", "date", "whoami",
                 "exit", "return", "test", "[", "[[", "set", "export", "unset", "local", "declare-no", "typeset-no", "readonly-no",
                 "shift", "getopts", "read", "printenv", "env-print", "locale", "tty", "arch", "uptime", "free", "ps", "top-no",
                 "get-psdrive", "get-host", "get-culture", "get-variable-no", "write-verbose", "write-debug", "write-warning",
-                "write-error", "get-executionpolicy", "help", "man", "info", "nvm-no", "node-version-no", "history-no", "hash",
+                "write-error", "get-executionpolicy", "help", "nvm-no", "node-version-no", "history-no", "hash",
                 "jobs", "fg-no", "bg-no", "disown-no", "umask-no", "ulimit-no", "cal", "factor", "yes-no", "bc", "dc-no", "numfmt",
-                "base", "lsb_release", "sw_vers", "ver", "systeminfo-no", "nvidia-smi", "tasklist", "get-ciminstance-no", "tput"}
+                "base", "lsb_release", "sw_vers", "ver", "systeminfo-no", "tasklist", "get-ciminstance-no", "tput"}
 WRITER = {"touch", "mkdir", "md", "rmdir", "rd", "rm", "del", "erase", "remove-item", "ri", "cp", "copy", "copy-item", "cpi", "mv",
           "move", "move-item", "mi", "rename-item", "ren", "rni", "ln", "new-item", "ni", "set-content", "sc", "add-content", "ac",
           "out-file", "clear-content", "clc", "tee", "tee-object", "chmod", "install", "truncate", "dd", "patch", "tar", "bsdtar",
@@ -2561,6 +2561,9 @@ class Shell:
             return
         if name in ("unset", "shift", "getopts", "local", "read", "wait", "exit", "return", "true", "false", ":", "hash", "jobs"):
             return
+        if name == "date" and any(x.startswith(("-f", "--file", "-s", "--set", "--debug-no")) and len(x) > 1 for x in texts):
+            st.modelled = False
+            return self.unk("date -f reads a file and -s sets the clock")
         if name in NONPATH_CMDS:
             if name in ("test", "[", "[["):
                 for a in args:
@@ -2607,9 +2610,15 @@ class Shell:
                 st.modelled = False
                 return self.unk("local data is sent to the host over ssh (a pipe, a redirect or a here-document)")
             return self.remote(name, args, st)
-        if name in ("jq", "yq", "gojq") and any(re.search(r"\benv\b|\$ENV|\binput_filename\b|\$__loc__", a.t or "") for a in args):
+        if name in ("jq", "yq", "gojq") and any(re.search(r"\benv\b|\$ENV|\binput_filename\b|\$__loc__|\bload\w*|\bstrenv\b|\bgetpath\b|\binputs?\b", a.t or "") for a in args):
             st.modelled = False
             return self.unk(f"{name} can print the environment")
+        if name in ("tar", "bsdtar", "gtar") and any(
+                re.fullmatch(r"-[A-Za-z]*[FL][A-Za-z]*", x) or x.startswith(("--info-script", "--new-volume-script", "--rsh-command", "--to-command",
+                                                                                "--use-compress-program", "--checkpoint-action", "-I"))
+                or (re.match(r"^[\w.@-]{2,}:[^\\/]", x) and not re.match(r"^[A-Za-z]:", x)) for x in texts):
+            st.modelled = False
+            return self.unk("a tar option that runs a command or writes to another host is not modelled")
         if name in READER or name in WRITER:
             return self.file_cmd(name, args, st, idx, pipe)
         if name in GENERIC_TOOLS or name in ("php", "ruby", "perl", "twine", "nuget", "gem"):
@@ -2852,7 +2861,8 @@ class Shell:
                     "resolve-path", "rvpa", "split-path", "get-childitem", "gci"):
             if name == "tree" and any(x.startswith("-o") or x.startswith("--output") for x in t):
                 return self.scan(args, "meta", {"-o": "write", "--output": "write", "-I": None, "-P": None, "-L": None})
-            return self.scan(args, "meta", {"-f": "read" if name == "file" else None, "--fromfile": "read", "--files0-from": "read",
+            return self.scan(args, "meta", {"-m": "read" if name == "file" else None, "--magic-file": "read",
+                                            "-f": "read" if name == "file" else None, "--fromfile": "read", "--files0-from": "read",
                                             "-filter": None, "-include": None, "-exclude": None, "-depth": None, "-attributes": None,
                                             "-path": "meta", "-literalpath": "meta", "-c": None, "--format": None, "-I": None,
                                             "-P": None, "-L": None, "--ignore": None, "--hide": None, "-w": None, "--block-size": None})
@@ -3213,6 +3223,19 @@ class Shell:
                     any(x in ("-X", "--request") and k + 1 < len(t) and tl[k + 1] not in ("get", "head") for k, x in enumerate(t)):
                 st.modelled = False
                 return self.unk("curl requests other than GET are not modelled")
+            for k, x in enumerate(t):
+                key, eq, val = x.partition("=")
+                if not eq and key in ("-H", "--header", "--proxy-header", "-w", "--write-out") and k + 1 < len(t):
+                    val = t[k + 1]
+                elif not eq and re.match(r"-[Hw].", x):
+                    val = x[2:]
+                elif not (eq and key in ("--header", "--proxy-header", "--write-out")):
+                    continue
+                if val.startswith("@"):
+                    self.path(val[1:], "read")
+                if "%output" in val or "%{stderr}" in val:
+                    st.modelled = False
+                    return self.unk("curl --write-out with %output writes files")
             return self.scan(args, "read", {"-o": "write", "--output": "write", "-H": None, "--header": None, "-A": None,
                                             "--user-agent": None, "-u": None, "--user": None, "-e": None, "--referer": None,
                                             "-w": None, "--write-out": None, "--connect-timeout": None, "-m": None,
@@ -3248,6 +3271,16 @@ class Shell:
         gcwd = self.cwd
         i = 0
         norm_words = ["git"] + [(a.t or "").lower() for a in args]
+        vi = _find_verb(norm_words[1:], (GIT_READ_SUBS | GIT_WRITE_SUBS) - {""})
+        gsub = norm_words[1:][vi] if vi >= 0 else ""
+        if any(re.match(r"^--(?:upload-pack|receive-pack|exec|open-files-in-pager|exec-path|template|ext-diff|textconv|pager)(?:=|$)", x, re.I)
+               for x in texts) or \
+                (gsub in ("clone", "fetch", "pull", "ls-remote") and any(x.startswith("-u") for x in texts)) or \
+                (gsub == "rebase" and any(x.startswith("-x") and len(x) > 2 for x in texts)) or \
+                (gsub == "grep" and any(x.startswith("-O") for x in texts)) or \
+                (gsub == "clone" and any(x in ("-c", "--config") or x.startswith(("--config=", "-c")) and "=" in x for x in texts)):
+            st.modelled = False
+            return self.unk("a git option that runs a program (upload-pack, receive-pack, exec, pager, config) is not modelled")
         while i < len(args):
             t = texts[i]
             if t in ("-C",) and i + 1 < len(args):
@@ -3494,6 +3527,9 @@ class Shell:
     def npm(self, name: str, args: list, st: Stage):
         t = [(a.t or "") for a in args]
         tl = [x.lower() for x in t]
+        if name == "yarn" and "plugin" in tl and "import" in tl:
+            st.modelled = False
+            return self.unk("yarn plugin import runs code from a plugin")
         if name in ("bun", "deno") and any(x in ("-e", "--eval", "-p", "--print", "eval") for x in tl[:4]):
             st.modelled = False
             return self.unk(f"{name} -e evaluates code")
@@ -3872,6 +3908,10 @@ class Shell:
                 st.modelled = False
                 return self.unk("docker compose run with extra volumes is not modelled")
             return self.scan(args, "read", vals, nonpath_all=False)
+        if any(x.startswith(("--secret", "--ssh", "--output", "--build-context", "--host", "-h=", "--context")) or x in ("-o", "-H")
+               for x in t):
+            st.modelled = False
+            return self.unk("docker with secrets, outputs, build contexts or another host is not modelled")
         if sub not in safe or (sub in ("network", "volume", "system", "image", "container", "context", "buildx") and
                                (pos[1] if len(pos) > 1 else "") not in ("ls", "list", "inspect", "df", "prune", "build", "use", "show")):
             st.modelled = False
@@ -3887,13 +3927,73 @@ class Shell:
         if name in ("erl", "elixir", "ghc", "ghci", "runghc", "swift", "lua", "julia", "rscript") and any(x in EVAL_FLAGS for x in tl):
             st.modelled = False
             return self.unk(f"{name} evaluates code given on the command line")
+        for a in args:
+            tx = a.t or ""
+            if tx.startswith("-") and (":" in tx or "=" in tx):
+                v = tx.split("=", 1)[1] if "=" in tx else tx
+                right = v.split(":", 1)[-1] if ":" in v and not re.match(r"^[A-Za-z]:[\\/]", v) else v
+                for part in dict.fromkeys((v, right, tx.split(":", 1)[-1] if ":" in tx else v)):
+                    if part and path_shaped(part):
+                        self.path(part, "write")
+        gsub = next((x for x in tl if not x.startswith("-")), "")
+        if name == "go" and (any(re.match(r"^-{1,2}(?:toolexec|exec|vettool|compiler)(?:=|$)", x) for x in tl) or
+                             (gsub == "env" and any(x in ("-w", "-u") for x in tl)) or
+                             (gsub == "run" and any("@" in x and not x.startswith("-") for x in tl))):
+            st.modelled = False
+            return self.unk("a go option or module that runs a program or changes the go environment is not modelled")
+        if name == "java" and any(x.startswith(("-xx:on", "-xloggc", "-xlog", "-agent", "-javaagent", "-xx:startflight", "-xx:errorfile",
+                                                "-xx:heapdumppath", "-xx:logfile", "-xbootclasspath", "-djava.security", "-xx:+unlock")) for x in tl):
+            st.modelled = False
+            return self.unk("a java option that runs a command or writes a file is not modelled")
+        if name == "dotnet" and (gsub == "user-secrets" or (gsub == "nuget" and any(x in ("add", "push", "remove", "update", "setapikey",
+                                                                                          "enable", "disable", "locals") for x in tl))):
+            st.modelled = False
+            return self.unk("dotnet user-secrets and nuget source changes read or change stored credentials")
+        if name == "cmake":
+            ci = next((k for k, x in enumerate(tl) if x == "-e"), -1)
+            if ci >= 0 and (ci + 1 >= len(tl) or tl[ci + 1] not in ("copy", "copy_directory", "copy_if_different", "make_directory", "touch",
+                                                                    "echo", "remove", "remove_directory", "rename", "tar", "cat",
+                                                                    "sha256sum", "md5sum", "compare_files")):
+                st.modelled = False
+                return self.unk("cmake -E with this command can run a program")
+            for k, x in enumerate(tl):
+                if x in ("-p", "-c") and k + 1 < len(args):
+                    for c in args[k + 1].cands:
+                        self.path(c, "read")
+        if name == "ctest" and any(x.startswith(("--test-command", "--build-and-test", "--build-generator", "--build-makeprogram")) for x in tl):
+            st.modelled = False
+            return self.unk("ctest that runs a command given on the command line is not modelled")
+        if name in ("make", "gmake") and any(re.match(r"^(?:shell|cc|cxx|make|\.shellflags)=", x) or x.startswith(("--eval", "-e")) and
+                                             len(x) > 2 for x in tl):
+            st.modelled = False
+            return self.unk("make with SHELL, CC or --eval runs a command given on the command line")
+        if name in ("mvn", "mvnw", "gradle", "gradlew") and any(
+                x.startswith("-d") and re.search(r"exec|jvm|gpg|argline|executable|fork", x) for x in tl):
+            st.modelled = False
+            return self.unk(f"{name} with a property that names a program to run is not modelled")
+        if name in ("mvn", "mvnw"):
+            for k, x in enumerate(tl):
+                if x in ("-l", "-t") and k + 1 < len(args):
+                    for c in args[k + 1].cands:
+                        self.path(c, "write" if x == "-l" else "read")
+        if name == "yarn" and "plugin" in tl and "import" in tl:
+            st.modelled = False
+            return self.unk("yarn plugin import runs code from a plugin")
+        if name in ("php", "ruby", "perl") and args and all((a.t or "") in INFO_FLAGS for a in args):
+            return
         if name in ("php", "ruby", "perl"):
             i = 0
             while i < len(args):
                 tx = args[i].t or ""
                 if tx in ("-r", "-e", "-E", "-n-no") or re.fullmatch(r"-[a-zA-Z]*[eE]", tx) and name in ("ruby", "perl") or \
-                        (name == "php" and tx == "-r"):
+                        (name == "php" and tx in ("-r", "-B", "-R", "-E", "-F")):
                     return self.inline(st)
+                if name == "php" and re.match(r"-[dc].+", tx):
+                    st.modelled = False
+                    return self.unk("php -c or -d changes which code PHP loads")
+                if name in ("ruby", "perl") and re.match(r"-[MmI].+", tx):
+                    st.modelled = False
+                    return self.unk(f"{name} module options are not modelled")
                 if name == "php" and tx in ("-S", "-t", "-c", "-d") and i + 1 < len(args):
                     if tx in ("-t",):
                         for c in args[i + 1].cands:
@@ -3945,15 +4045,15 @@ class Shell:
         if name == "make" or name == "gmake":
             return self.scan(args, "write", {"-C": "read", "--directory": "read", "-f": "read", "--file": "read", "--makefile": "read",
                                              "-j": None, "--jobs": None, "-l": None, "-I": "read", "-o": None, "-W": None, "-O": None})
-        self.scan(args, "write", {"-o": "write", "--output": "write", "-p": None, "--project": "read", "-c": None, "--config": "read",
+        self.scan(args, "write", {"-o": "write", "--output": "write", "-p": None, "--project": "read", "-c": "read", "--config": "read",
                                   "-k": None, "-m": None, "-n": None, "-j": None, "--jobs": None, "-t": None, "--target": None,
-                                  "--tag": None, "-f": "read", "--file": "read", "-e": None, "--env": None, "-r": None,
-                                  "--reporter": None, "-g": None, "--grep": None, "--filter": None, "--framework": None,
+                                  "--tag": None, "-f": "read", "--file": "read", "-e": None, "--env": None, "-r": "write",
+                                  "--reporter": None, "-g": None, "--report-path": "write", "--grep": None, "--filter": None, "--framework": None,
                                   "--configuration": None, "--runtime": None, "--log-level": None, "--maxfail": None,
                                   "--durations": None, "--tb": None, "--cov": None, "--cov-report": None, "-x": None,
                                   "--features": None, "--bin": None, "--example": None, "--package": None, "--manifest-path": "read",
                                   "--testNamePattern": None, "-D": None, "--define": None, "-B": "write", "-S": "read",
-                                  "-G": None, "--build": "write", "--preset": None, "-P": None, "-T": None, "-l": None,
+                                  "-G": None, "--build": "write", "--preset": None, "-P": "read", "-T": None, "-l": None,
                                   "--select": None, "--ignore": None, "--line-length": None, "--target-version": None,
                                   "--exclude": None, "--extend-exclude": None, "--max-line-length": None, "-W": None,
                                   "--python": "read", "--with": None, "--from": None, "--group": None, "--extra": None,
