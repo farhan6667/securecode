@@ -51,6 +51,20 @@ MAX_ASKS_NOW = 0               # of the shapes in QUIET_NOW; the count may only 
 HARD_ACCEPTANCE = 8            # DI's bar: from 34 measured asks down to at most this many
 
 
+def _workspace_usable() -> bool:
+    """The sibling-folder shapes need the checkout's parent to be an acceptable workspace folder. It is not when the checkout sits
+    directly in the home folder (the home folder is never a workspace) or under a system or app-data folder."""
+    n = G.split_norm(str(ROOT.parent), None)
+    return bool(n and G.GuardEnv({"cwd": str(ROOT)}).root_ok(n) and G.ws_ok(n))
+
+
+SIBLING = "read in a sibling folder"
+
+
+def _quiet():
+    return {k: v for k, v in QUIET_NOW.items() if k != SIBLING or _workspace_usable()}
+
+
 @pytest.fixture(autouse=True)
 def _project(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(ROOT))
@@ -75,12 +89,14 @@ def asks_in(groups, **kw):
 
 @pytest.mark.parametrize("group", sorted(QUIET_NOW))
 def test_the_groups_do_not_ask_in_coding_mode(group):
+    if group == SIBLING and not _workspace_usable():
+        pytest.skip("the checkout's parent folder cannot be a workspace here (it is the home folder or a system folder)")
     for cmd, tool in QUIET_NOW[group]:
         assert verdict(cmd, tool, gm="coding") == "allow", (group, cmd)
 
 
 def test_the_number_of_asks_stays_under_the_bar():
-    asks = asks_in(QUIET_NOW, gm="coding")
+    asks = asks_in(_quiet(), gm="coding")
     assert len(asks) <= MAX_ASKS_NOW, f"the guard got noisier: {len(asks)} asks: {asks}"
     on_purpose = asks_in(ASKS_ON_PURPOSE, gm="coding")
     assert len(asks) + len(on_purpose) <= HARD_ACCEPTANCE
