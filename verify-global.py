@@ -111,7 +111,10 @@ def guard_mode(app):
         if not hasattr(g,"load_policy"):
             return {"mode":"managed","why":"installed guard is older than 7.0 (no owner mode); run the installer"}
         mode,why=g.load_policy()
-        return {"mode":mode,"why":why}
+        out={"mode":mode,"why":why}
+        if hasattr(g,"guard_is_off"):
+            out["command_guard"]="off" if g.guard_is_off() else "on"     # set by scripts/guard_switch.py
+        return out
     except Exception as e:
         return {"mode":"unknown","why":f"could not load the installed guard ({type(e).__name__})"}
 
@@ -205,7 +208,7 @@ for w in warnings:
     if w.startswith("WARNING"):
         try: print(w, file=sys.stderr)
         except UnicodeEncodeError: print(w.encode("ascii","replace").decode(), file=sys.stderr)
-summary=f"{product}: {'all checks passed' if all(checks.values()) else 'some checks FAILED'} (guard mode: {gm['mode']})"
+summary=f"{product}: {'all checks passed' if all(checks.values()) else 'some checks FAILED'} (guard mode: {gm['mode']}{', command guard OFF' if gm.get('command_guard')=='off' else ''})"
 try:
     print(summary)
 except UnicodeEncodeError:

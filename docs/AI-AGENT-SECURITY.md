@@ -137,6 +137,134 @@ project (time, mode, tool, the command with token-like values removed, the reaso
 `verify-global.py` prints the mode the installed guard really uses. Change it with
 `py -I install-global.py --guard-mode owner|managed`.
 
+### Adaptive mode: coding and strict (7.2, owner mode only)
+
+The guard has two readings of the same command, and picks one per decision.
+
+- **Coding** (the default for an attended developer): shell syntax the guard cannot follow, but whose commands it did check,
+  is allowed and written to the audit as `coding-allowed`. These are the "syntax" results: `$( )` whose output is only used
+  by `echo`, a listing or size command (`ls`, `wc`, `du`) or a git read or commit; PowerShell `(expr)`, `(expr).Property` and
+  `$x = <command>`; `xargs` with one of those commands; `ssh host "<read-only command>"`; `python -c`, `node -e` and
+  here-documents whose text does not reach the network, a process, the environment or the files; reads (never writes) in a
+  folder listed with `guard_switch.py workspace add`.
+- **Strict**: the same shapes ask, as in 7.1.
+
+In adaptive mode (no `adaptive` key in the policy) the guard starts in coding and goes to strict for the rest of the session
+after a block (a secret read, pipe-to-shell, the agent's own files), after three questions in ten minutes, and for fifteen
+minutes after a download. The memory is `<app>/cache/guard-session-<hash of the session id>.json`, never in the project. An
+event without a session id cannot escalate (Claude Code, Codex, Gemini CLI, Cursor and Antigravity all send one and the
+adapters pass it on). Pin the mode with `guard_switch.py mode coding|strict|adaptive`; a pinned mode never changes by itself.
+Bypass and managed are always strict. An auto or don't-ask run reads like an attended one (coding until a risk signal, and
+strict when the event has no session id), because coding mode asks nobody anyway. The policy file can also list
+`workspace_roots` and `remote_wrappers` (extra names that take `host command` like ssh), both read from the owner's policy
+file only.
+
+**A task you leave running.** Switch unattended mode on before you go: `py -I guard_switch.py unattended on` in your own
+terminal, or `SECURECODE_UNATTENDED=1` in the environment of that one run. Every question the guard would ask then becomes a
+refusal with the reason, so the session never waits on a prompt nobody answers, and the agent is told to carry on with the
+rest of the work. It never allows what a question would have stopped, in owner or managed mode. In the morning
+`py -I guard_switch.py held` lists what was refused or blocked, grouped with counts (`held clear` empties it), and a security
+test that became due overnight is on the same list instead of being asked to nobody. Unattended mode covers the guard's
+questions only: the AI tool's own permission prompts are its own, so use its auto or accept mode for an overnight run.
+
+Never different between the two: the hard denies (secrets, pipe-to-shell and `curl | bash`, the guard's own folders and
+`guard-policy.json`, `~/.claude`, `rm -rf ~`), and the questions about an unknown program, `sudo`, a destructive or exposing
+command, an install, and a command that changes a server. `tests/test_guard_invariants.py` runs the denies in every mode.
+
+What coding mode does not do: the inner command of a modelled shape is checked, but the guard does not read a project script,
+and inline code is a text filter only. A variable in front of a command is judged by a deny list of names that change what
+programs load (`PATH`, `LD_*`, `PYTHON*`, `NODE_*`, `NPM_*`, `GIT_*`, `*_PROXY`, ...); a name that is not on it is accepted.
+
+### Auto mode, don't-ask mode and bypass mode (owner mode only)
+
+An "ask" needs a person to answer it. When you run Claude Code in auto, don't-ask or bypass mode and walk away,
+a question stops the whole job until you come back. The guard reads the permission mode that Claude Code puts in
+the hook input and answers like this (managed mode never changes):
+
+| Class | Default, plan, acceptEdits | auto, dontAsk | bypassPermissions |
+|---|---|---|---|
+| secret, pipe-to-shell, agent config | deny | deny | deny |
+| destructive, exposure | ask | deny, with the reason | allowed |
+| plain install: the verb first, then only known value-less flags (`-D`, `--save-dev`, `-U`, `-q` ...) and plain registry package names with at most a plain version (`npm i -D x@18`, `pip install "x>=2"`, `cargo add x`). Run-at-once forms such as `npx x`, `pnpm dlx x` and `npm init x` follow the same rule | ask | goes on to Claude's own permission system | allowed |
+| odd install: any other install. A source or index option (also abbreviated or attached, also before the verb), a workspace or filter, a URL, git or file source, a GitHub shorthand, a `name@` that hides a source, an archive, an environment marker, `go get` (Go has no registry, every host is a source) | ask, as before | deny, with the reason | allowed |
+| unknown: anything else the guard has no model of (a program it has no entry for, loops, names built at run time, inline code such as `python -c`, a file written then run, `sudo`, a program given by path other than the very Python, node, npm, npx, pip, pytest, git or uv that PATH gives) | ask | deny, with the reason | allowed |
+| tool credential files | ask | deny, with the reason | allowed |
+| global Claude settings and rules (`~/.claude/settings.json`, `CLAUDE.md`) | ask | deny | deny |
+| the guard ran out of time | ask | deny | deny |
+
+A missing, unknown or malformed permission mode counts as the first column. In bypass mode you own the result,
+so the guard does not ask. Be clear about what that means: the guard then keeps only the direct hard denials
+(secret files, a plain `curl | sh`, its own config, `settings.json`). A command wrapped in a loop or built at run
+time is not followed by the guard and is allowed in bypass mode, so do not read bypass mode as a protected mode.
+
+In auto and don't-ask mode "goes on to Claude's own permission system" is broader than the install row. It also
+covers every command the guard simply has no objection to, because the guard returns no verdict for those and Claude
+then decides. That includes installs that run with no package name (`npm install`, `pip install -r requirements.txt`,
+`npm ci`), which read whatever `package.json` or `requirements.txt` says, so an agent that has edited those files first
+gets no question from the guard. A typo-squatted package name is not caught by the guard in any mode. Both stay with
+Claude's classifier and your own review.
+
+Two false positives that asked in every mode are fixed: the Python that runs the guard when it is called by its full
+path, and a plain quoted string statement in PowerShell (`"created"`). Both fixes apply in owner mode only; managed
+mode keeps asking. The full-path check only looks at a local drive or POSIX path, never at a network (UNC) path, so
+the guard does not reach out to a host the agent named.
+
+The rules, the edit hook, the stop gate, "Run Security Test" and "Run Advisory QA" do not depend on this and are not
+affected. Every ask that auto or bypass mode answered for you is written to `.security/guard-audit.jsonl` with the
+decision `unattended-deferred` (left to Claude's own permission system), `unattended-refused` or `bypass-allowed`.
+
+The audit file is a convenience log, not evidence. It lives in the project, and the guard only blocks the direct path to it: an
+agent that can run commands in auto or bypass mode can still delete it with a glob or a pipeline, replace `.security` with a
+link or a junction, or fill it past its size limit, and the guard then writes nothing. Do not rely on it to prove what an
+unattended run did.
+
+What changed for a person and for managed mode: nothing is looser. A differential run of the 7.0.0 guard against this
+one found only tightenings, all of them commands that 7.0.0 let through without any question and that now ask or
+are denied (managed mode too): installs that 7.0.0 did not classify (`uv tool install ...`, `pip install -r http://...`,
+`pip install -e git+https://...`, an install with only a registry option), an install with an option or a workspace
+before the verb (`pnpm --filter web add x`, `yarn workspace web add x`, `go -C sub get x`), `npx`, `dlx` and `npm exec`
+with a registry, config, prefix or package option or a brace word that hides one (`npx --registry=http://e jest`,
+`npx {-p,git+https://e/x} tsc`), `npx --call=...`, and a publish hidden behind an option and its value
+(`cargo --manifest-path a/Cargo.toml publish`, `pnpm --filter web publish`). Everyday forms such as `npx --silent jest`,
+`npm exec -- jest`, `pnpm -r exec jest` and `npm --silent run add foo` behave exactly as before.
+
+Not covered, in any mode: a package manager or verb the guard has no install model for (`npm update`, `pnpm update`,
+`pip download`, `pip wheel`, `composer create-project`, `poetry self add`, `yarn workspaces foreach add`),
+installing a local folder or archive by path (`npm i ./x.tgz`, `pip install ./x.whl`), and project-level
+`.claude/settings.json` and `.mcp.json` writes.
+
+### Turning only the command guard on or off
+
+If the guard gets in your way, you can switch off the command guard alone and keep everything else. In your own
+terminal, from the runtime folder (`%LOCALAPPDATA%\OrgAISecureAppSec\scripts` on Windows):
+
+```
+py -I guard_switch.py status
+py -I guard_switch.py off
+py -I guard_switch.py on
+py -I guard_switch.py mode adaptive|coding|strict
+py -I guard_switch.py workspace add <folder>
+py -I guard_switch.py workspace clear
+py -I guard_switch.py unattended on|off
+py -I guard_switch.py held
+```
+
+Off switches off the `PreToolUse` command guard (`agent_guard.py`) and nothing else. The secure-coding rules, the check
+after every edit, the stop gate, the secret shield, the injection watch, "Run Security Test", "Run Advisory QA", the
+scanners and the signed updates stay on. `verify-global.py` shows `command guard OFF` while it is off.
+
+- It is honoured in owner mode only. A managed install, a missing or broken policy file, a link, duplicate keys or an
+  oversized file mean managed mode and the switch is ignored.
+- Changing it needs a person at a terminal: the script refuses without one, also when another script imports it. While
+  the guard is on it also denies any command that names the runtime's `guard_switch.py`, in every mode (bypass too), and
+  it stops agents from editing the policy file. This stops accidents and simple prompt injection. It is not
+  authentication: a terminal check can be faked, and a script the agent writes and runs itself (`python x.py`, which the
+  guard cannot look inside, see OPEN-04) can edit the policy file or the settings directly. Treat the switch as a
+  convenience for the owner, not as a barrier against code the agent runs.
+- The setting lives in `config/guard-policy.json` and an update or repair keeps it, but only from a policy file that
+  passes the guard's own checks. While it is off the guard writes no audit line.
+- It switches the command guard in every agent that uses it: Claude Code, Cursor, Codex, Gemini CLI and Antigravity.
+
 ## Strict instruction-source mode
 
 For sensitive projects, copy `templates/strict-project/claude_docs/` into the repo. The guard then

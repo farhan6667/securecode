@@ -1,4 +1,4 @@
-# Architecture (gate design since 6.0, current release 7.0.0)
+# Architecture (gate design since 6.0, current release 7.1.0)
 
 Developer:
 Claude Code → global AppSec skill/policy → fast PostToolUse heuristic guard

@@ -7,3 +7,6 @@ dist/
 org-internal/
 .pytest_cache/
 .ai-media/
+
+# edit-hook cache when the scripts run from a checkout (the installed app keeps it in its own folder)
+cache/

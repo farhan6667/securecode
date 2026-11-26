@@ -1,8 +1,8 @@
 ---
 name: org-appsec-security
-description: Organization secure coding, deep source code security review and AppSec gate. Use for any web, API or mobile coding; run the full protocol when the user writes "Run Security Test" or "Run Advisory QA" (Roman Urdu "Security Test Karo" / "Advisory QA Karo" also work), runs /security-gate, or asks for a security check, source code review, IDOR check, pentest readiness or QA before handover.
+description: Organization deep source code security review and AppSec gate. Use when the user writes "Run Security Test", "Complete Security Test", "Full Security Test" or "Run Advisory QA" (Roman Urdu "Security Test Karo" / "Complete Security Test Karo" / "Advisory QA Karo" also work), runs /security-gate or /complete-security-test, or asks for a security check, source code review, IDOR check, pentest readiness or QA before handover. Not for ordinary coding: the rules in CLAUDE.md / AGENTS.md cover secure coding.
 ---
-# Org AppSec Security Review 7.0.0
+# Org AppSec Security Review 7.2.0
 
 The installed runtime lives in the per-user app folder, not in the project:
 Windows `%LOCALAPPDATA%\OrgAISecureAppSec`, macOS `~/Library/Application Support/OrgAISecureAppSec`,
@@ -13,31 +13,40 @@ brackets instead, use `py -3 -I` on Windows or `python3 -I` elsewhere. The gate 
 `<PY> "<APP>/scripts/secgate.py" . --mode ci --fail-on high --run-tests`, run from the project root.
 Checklists: `<APP>/docs/ORG-FINDINGS.md` if present (your organization's own findings), otherwise
 `<APP>/docs/COMMON-FINDINGS.md` (what pentests find most, and why retests fail; use it as the priority order), `<APP>/docs/SOURCE-CODE-REVIEW.md` (deep review, per vulnerability class, with fixes),
-`<APP>/docs/SECURITY-TEST-MATRIX.md` (web + mobile), `<APP>/docs/AI-AGENT-SECURITY.md`.
+`<APP>/docs/SECURITY-TEST-MATRIX.md` (web + mobile). Read a checklist section when you reach that class, not all
+of them up front.
 
-Goal: code that reaches the security team passes pentest in the first round. The security team still
-does runtime pentesting; this skill makes sure everything findable in source code is already fixed.
+Goal: work like a pentester who sits next to the developer. Secure the code while it is written, and at the end
+test the whole project, fix what is found and retest it, so the security team receives code whose source-level
+findings are already closed. The security team still does its own runtime pentest, and its result is the approval;
+this skill never says a project passed one.
 
 ## Modes
 
-**Mode A: always on (default).** Write code to the baseline in `CLAUDE.md` / `AGENTS.md`. Before you
-tell the developer a feature or fix is done, review your own diff against the classes in
-`SOURCE-CODE-REVIEW.md` that the change touches (a new endpoint: access control, IDOR, input,
-output, rate limit; an upload: the upload section; a query: injection; a dependency: versions) and
-fix what you find. The Stop hook runs the quick gate on changed files and will send you back if a
-High or Critical finding is still open.
+**Mode A: smart mode while coding (default).** Write code to the baseline in `CLAUDE.md` / `AGENTS.md` and
+keep going: no security phases or review rounds between edits, and do not read this skill's long checklists
+while coding. Before you tell the developer a feature or fix is done, check your own diff from memory for
+the classes it touches (a new endpoint: access control, IDOR, input, output, rate limit; an upload: upload
+rules; a query: injection; a dependency: versions) and fix what you see, in one short pass; for an endpoint,
+auth, session, authorization, upload, payment, crypto or deserialization change, read just that section of
+`SOURCE-CODE-REVIEW.md` first, because the hooks cannot see those classes. The edit hook
+is silent while code is clean; the Stop hook sends you back once for a new High or Critical finding.
 
-**End-of-task offer (all agents).** When a substantial task is finished (3 or more code files or 40 or
+**End-of-task offer (all agents).** When a substantial task is finished (10 or more code files or 300 or
 more changed lines since the last offer) and no "Run Security Test" has run since those changes, ask the
 developer once: "Do you want me to run a full security test now (Run Security Test)?" Start Mode B only
-after a yes. A no or "later" is respected for that change set; do not repeat it. Tiny edits, docs-only
-changes and questions get no offer. Claude Code and Codex: the Stop hook sends this reminder once and
-records it in `.security/pentest-offer.json` (`{"disabled": true}` there turns it off for a project).
-Cursor: follow this rule yourself.
+after a yes. A no or "later" is respected for that change set and for the rest of the session. Tiny edits,
+docs-only changes and questions get no offer. Claude Code and Codex: the Stop hook sends this reminder once
+and records it in `.security/pentest-offer.json` (`{"disabled": true}` there turns it off for a project;
+`SECURECODE_MODE=coding` or `.security/mode.json` `{"mode": "coding"}` turns it off too). Cursor: follow
+this rule yourself.
 
-**Mode B: "Run Security Test" (find, fix, re-test).** Triggered by that phrase or "Security Test Karo" (any casing), by
-`/security-gate`, or by a request for a security test before handover. Run the Deep Review Protocol
-below on the whole project, fix every finding that is safe to fix, re-run, and report.
+**Mode B: "Run Security Test" / "Complete Security Test" (find, fix, re-test).** Triggered by either
+phrase, "Full Security Test", "Security Test Karo" or "Complete Security Test Karo" (any casing), by `/security-gate`
+or `/complete-security-test`, or by a request for a security test before handover. Run the Deep Review Protocol
+below on the whole project (never only the latest diff), fix every finding that is safe to fix, re-run and report.
+If a built-in "security review" of pending changes is also available, this skill is the
+one these phrases mean.
 
 **Mode C: "Run Advisory QA" (readiness advisory).** Triggered by that phrase, "Advisory QA Karo", or a request for an
 advisory, readiness check or "will this pass pentest". Run the same protocol but do not change code
@@ -79,7 +88,9 @@ until the developer agrees: produce the Advisory QA report (format below), then 
      to PHP 8.5; fix them before the PHP upgrade so it does not break or reopen old code paths.
 2. **Run the gate:** `<PY> "<APP>/scripts/secgate.py" . --mode ci --fail-on high --run-tests`.
    `ci` refuses to pass if Semgrep, Trivy or Gitleaks is missing or errors; install the scanner
-   instead of falling back. Read every finding; verify it in context; do not dismiss without reason.
+   instead of falling back. Read `.security/findings-summary.txt` (sorted by severity, short); open
+   `.security/findings.json` only for the detail of a finding you are working on. Verify each finding in context;
+   do not dismiss without reason.
 3. **Deep source review, entry point by entry point.** For each route/handler from step 1, trace the
    request from input to sink and check every class in `SOURCE-CODE-REVIEW.md`, most of all:
    - **IDOR / BOLA:** is the object loaded through a query scoped to the current user/tenant, or by a
@@ -100,6 +111,14 @@ until the developer agrees: produce the Advisory QA report (format below), then 
    - **Vulnerable and outdated components:** every library flagged by Trivy or `VULNERABLE_LIBRARY`
      is upgraded to a supported fixed version (do not suppress); framework on a supported release.
    - **Sensitive data:** secrets in code, PII in logs or responses, over-fetching API responses.
+   - **Supply chain and exceptional conditions (OWASP 2025 A03 and A10):** lockfile and bounded versions, install
+     scripts of unfamiliar packages, CI actions pinned, publish tokens; security checks that fail open on an error
+     or timeout, swallowed exceptions, missing limits. See the matching sections of `SOURCE-CODE-REVIEW.md`.
+   - **AI features, agents and MCP (OWASP LLM 2025, Agentic 2026, MCP security pages):** only when the project
+     calls an LLM, builds an agent or uses an MCP server. Check prompt injection through retrieved text, model output
+     used in SQL, shell or HTML, tool permissions and identities, secrets in prompts, token and loop limits, MCP token
+     handling. Use the section "AI features, agents and MCP in the code you write" of `SOURCE-CODE-REVIEW.md`, and
+     name the source version in the report. Report only; do not interrupt the developer with extra questions.
    - **Mobile:** follow the mobile section of `SECURITY-TEST-MATRIX.md`.
 
    **Authorization matrix (required).** Write `.security/authz-matrix.md` with one row per route and
@@ -122,16 +141,24 @@ until the developer agrees: produce the Advisory QA report (format below), then 
    `authorize()` checks the user. A check in a helper method, in one branch only, or in middleware set
    in `bootstrap/app.php` is not seen: verify those rows by hand.
    A row without a passing test is open.
+
+   **Write down what the review found.** Scanners do not see most access-control and logic bugs, so a bug you find
+   by reading code goes into `.security/review-findings.json`, or it never reaches the report or the verdict:
+   `{"findings": [{"id": "R-01", "title": "...", "class": "idor", "severity": "HIGH", "file": "app/x.py", "line": 88,
+   "route": "GET /api/orders/{id}/export", "message": "what an attacker can do", "evidence": "the code line"}]}`.
+   It is retested like any other finding (its id in `retest.json`).
 4. **Fix (Mode B).** Root-cause fixes using the framework's own mechanism (policies/guards, scoped
    queries, parameter binding, auto-escaping, validated upload rules). Add a negative test per fix
    (user A cannot read user B's object; a script tag is escaped; an `.php` upload is refused).
    If a fix needs a product decision, stop and ask with the exact options.
    Before the first fix, copy `.security/findings.json` to `.security/findings-before.json`: the
    report lists what was found then and checks every retest against the latest run.
-5. **Re-run** the gate and the project tests. Repeat until the verdict is PASSED or only items that need
-   a decision remain.
+5. **Re-run** the gate and the project tests (the gate prints what changed since the last run). Repeat until the
+   verdict is PASSED or only items that need a decision remain, at most three fix rounds: after the third, stop and
+   report what is still open instead of looping.
 
-Steps 6 to 9 are the automated pentest at the end of Mode B. Mode C runs step 6 (if the developer
+Steps 6 to 9 are the automated testing at the end of Mode B. Write no extra documents for it: the report in step 8
+is made by a script from the result files, at no cost in tokens. Mode C runs step 6 (if the developer
 agrees) and step 8 without a retest, and never step 9.
 
 6. **Local DAST (optional, ask once).** Ask the developer one question: "Can the app run on this
@@ -143,7 +170,11 @@ agrees) and step 8 without a retest, and never step 9.
    passive baseline by default; add `--active` only if the developer agrees (it sends attack payloads to
    their local app). No Docker or ZAP: it prints a note and an install hint; carry on without DAST.
    Staging hosts stay on the existing explicit flow (`SECURITY_DAST_ALLOW=true` plus `SECURITY_DAST_URL`).
-7. **Retest with outcome labels.** Write `.security/retest.json` with one entry per id (`F-01`, `D-01`):
+7. **Retest with outcome labels.** Write `.security/retest.json` with one entry per finding, naming both its id and
+   its fingerprint (`{"id": "F-01", "fingerprint": "ab12cd34ef56", "outcome": ...}`). The fingerprints are in
+   `.security/report-state.json` (`fingerprints`) and next to each id under "Finding details" after a first
+   `report.py` run. An id is a position and can change between runs; a DAST finding, a finding that appeared after
+   the first run and a review finding with no id of its own are matched by fingerprint only. Outcomes:
    `Pass` only with evidence (the test or command that reached the sink and was refused, after trying
    at least one variant: other quoting, encoding, verb or field), `Fail`, `Partial`,
    `Compensating control`, or `Risk accepted` (only with `accepted_by` and `date` given by the
@@ -153,7 +184,8 @@ agrees) and step 8 without a retest, and never step 9.
    created in `.security/artifacts.json`.
 8. **Professional report.** Run `<PY> "<APP>/scripts/report.py" --pdf` (writes `.security/REPORT.md`,
    `REPORT.html`, and `REPORT.pdf` when Chrome or Edge is installed), then
-   `<PY> "<APP>/scripts/report_lint.py"`. Fix every lint error before handover.
+   `<PY> "<APP>/scripts/report_lint.py"`. Fix every lint error before handover. Do not read the report back or
+   rewrite it: tell the developer the verdict line the script prints and where the file is.
 9. **Offer a fix PR.** Ask whether to open a pull request with the fixes. If yes, run
    `<PY> "<APP>/scripts/fix_pr.py" --add <each new test file>` (a dry run) and show the plan; only
    after the developer agrees, run it again with `--open`. It never touches the default branch, never

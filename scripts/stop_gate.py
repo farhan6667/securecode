@@ -5,6 +5,11 @@ When the agent is about to finish, scan the files changed in this git working tr
 quick heuristics, agent-config and library checks. If a High or Critical finding is open, send
 the agent back once to fix it (or explain why it is a false positive).
 
+Smart mode (7.1): a finding the agent has already been shown in this session is not sent back again at every stop
+(it returns after SEEN_HOURS; the memory is in the app cache, never in the project), the offer needs a feature's
+worth of work (OFFER_FILES / OFFER_LINES) and comes once per session,
+and SECURECODE_MODE=coding or .security/mode.json {"mode": "coding"} turns the offer off.
+
 It also offers the developer a full security test at the end of substantial work: when the code
 changed since the last offer reaches OFFER_FILES code files or OFFER_LINES changed lines, and no
 full gate ("Run Security Test", secgate --mode ci or full) has run since those changes, the agent
@@ -27,10 +32,17 @@ MAX_FILE_BYTES = 2_000_000      # skip generated/minified giants
 MAX_TOTAL_BYTES = 20_000_000
 TIME_BUDGET = 45                # seconds; the hook timeout is 90, the session must never wait on us
 
-# Pentest offer threshold: tiny edits never trigger it.
-OFFER_FILES = 3                 # changed code files since the last offer, or
-OFFER_LINES = 40                # changed lines (added + deleted; an untracked file counts all its lines)
+# Pentest offer threshold (smart mode, 7.1): only a real feature's worth of work earns the question, once per
+# session. The old 3 files / 40 lines sent a vibe-coding session back to "run a full test?" every few minutes.
+OFFER_FILES = 10                # changed code files since the last offer, or
+OFFER_LINES = 300               # changed lines (added + deleted; an untracked file counts all its lines)
 OFFER_MARKER = "pentest-offer.json"
+SEEN_MARKER = "stop-gate-seen.json"   # in the app cache: High/Critical findings already shown in this session
+SEEN_HOURS = 12                 # a shown finding comes back after this, so an ignored one is not forgotten
+ANY_SESSION_HOURS = 2           # only with unattended mode set in the policy file: for this long a shown finding is not
+                                # shown again to another session of the project. A loop that starts a fresh session per
+                                # step paid one extra turn per step, for ever, for one false positive. An attended
+                                # session is always told, as before.
 MARKER_MAX = 1_000_000
 CODE_EXT = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".php", ".rb", ".go", ".java", ".kt",
             ".kts", ".scala", ".cs", ".fs", ".vb", ".rs", ".swift", ".m", ".mm", ".c", ".h", ".cc", ".cpp", ".hpp", ".dart",
@@ -126,8 +138,8 @@ def _read_marker(f: Path) -> dict:
         return {"_unusable": True}
 
 
-def _write_marker(root: Path, data: dict) -> bool:
-    """Write .security/pentest-offer.json, refusing links and junctions (a hostile repo must not redirect it)."""
+def _write_marker(root: Path, data: dict, name: str = OFFER_MARKER) -> bool:
+    """Write .security/<name>, refusing links and junctions (a hostile repo must not redirect it)."""
     try:
         d = root / ".security"
         if os.path.lexists(d):
@@ -136,12 +148,12 @@ def _write_marker(root: Path, data: dict) -> bool:
                 return False
         else:
             d.mkdir()
-        f = d / OFFER_MARKER
+        f = d / name
         if os.path.lexists(f):
             st = os.lstat(f)
             if not stat.S_ISREG(st.st_mode) or not _plain(st) or st.st_nlink > 1:
                 return False
-        tmp = d / (OFFER_MARKER + ".tmp")
+        tmp = d / (name + ".tmp")
         if os.path.lexists(tmp):
             os.unlink(tmp)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
@@ -166,11 +178,38 @@ def _security_test_since(root: Path, newest_change: float) -> bool:
         return False
 
 
-def pentest_offer(root: Path, files: list) -> str | None:
-    """The one-time offer text, or None. Records the offer before returning it."""
+def coding_mode(root: Path) -> bool:
+    """SECURECODE_MODE=coding (or .security/mode.json {"mode": "coding"}): write secure code, no test offers at all.
+    The High/Critical block still works; "Run Security Test" still runs on request."""
+    if os.environ.get("SECURECODE_MODE", "").strip().lower() == "coding":
+        return True
+    m = _read_marker(root / ".security" / "mode.json")
+    return m.get("mode") == "coding"
+
+
+def nobody_there(event: dict | None = None, env: bool = True) -> bool:
+    """True when the developer switched unattended mode on (guard_switch.py unattended on, or SECURECODE_UNATTENDED=1
+    when env is True). The permission mode is not a sign of it: a developer who sits in auto or bypass mode is there,
+    and still gets the security test offer. env=False reads only the policy file, which a person at a terminal sets;
+    it is used for anything that makes this gate quieter about a finding, because the variable can be set by a
+    project's own settings or by the agent."""
+    try:
+        from agent_guard import held_switch
+        return held_switch(env=env)
+    except Exception:
+        return False
+
+
+def pentest_offer(root: Path, files: list, session: str = "", record: bool = True) -> str | None:
+    """The one-time offer text, or None. Records the offer before returning it. record=False only says whether an
+    offer is due (an unattended run keeps it for the developer instead of asking nobody)."""
+    if coding_mode(root):
+        return None
     marker = _read_marker(root / ".security" / OFFER_MARKER)
     if marker.get("_unusable") or marker.get("disabled") is True:
         return None                     # an unreadable marker must not turn into an offer on every stop
+    if record and session and marker.get("session") == session:
+        return None                     # one offer per agent session at most
     snap = marker.get("snapshot") if isinstance(marker.get("snapshot"), dict) else {}
     code = []
     for fp in files:
@@ -193,17 +232,92 @@ def pentest_offer(root: Path, files: list) -> str | None:
     newest = max((root / rel).stat().st_mtime for rel in delta)
     if _security_test_since(root, newest):
         return None
+    if not record:
+        return (f"a full security test is due: {len(delta)} code file(s), about {delta_lines} lines changed since the "
+                "last one. Type \"Complete Security Test\" when you are back.")
     record = {"snapshot": current, "offered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-              "files": len(delta), "lines": delta_lines,
+              "files": len(delta), "lines": delta_lines, "session": session[:100],
               "note": "One offer per change set. Set \"disabled\": true to stop these offers in this project."}
     if not _write_marker(root, record):
         return None                     # if we cannot remember the offer, do not risk asking at every stop
     return ("Org AppSec: before you finish, offer the developer a full security test. This work changed "
             f"{len(delta)} code file(s) (about {delta_lines} lines) and no full security test has run since. Ask one "
-            "short question, for example: \"Do you want me to run a full security test now (Run Security Test)? It "
-            "reviews the changed code for access control, IDOR, injection and the other common pentest findings.\" "
+            "short question, for example: \"Do you want me to run a full security test now (Run Security Test)?\" "
             "If they say yes, run the org-appsec-security skill (Mode B). If they say no or later, accept it and "
             "finish; you will not be asked again for these changes. Do not start the test without their yes.")
+
+
+def _fp(root: Path, f: dict) -> str:
+    """A finding's identity that survives line shifts: rule, project-relative file and the code line itself."""
+    p = Path(f.get("file", ""))
+    try:
+        rel = p.resolve().relative_to(root).as_posix()
+    except (ValueError, OSError):
+        rel = p.name
+    text = ""
+    try:
+        n = int(f.get("line") or 0)
+        if n > 0 and p.is_file() and p.stat().st_size <= MAX_FILE_BYTES:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+            text = " ".join(lines[n - 1].split()) if n <= len(lines) else ""
+    except (OSError, ValueError):
+        text = ""
+    if not text:                        # no line (agent config, end-of-life library): the message tells them apart
+        text = "msg:" + str(f.get("message", ""))[:400]
+    return hashlib.sha256(f"{f.get('rule', '')}|{rel}|{text}".encode("utf-8", "replace")).hexdigest()[:20]
+
+
+def held_offer(root: Path, event: dict, text: str, session: str = "") -> None:
+    """Nobody is there: the offer goes on the held list (guard_switch.py held), once per session and project, and the
+    offer marker is left alone so the developer is still asked in the next attended session. Best effort."""
+    from global_hook import cache_dir, load_cache, save_cache
+    from agent_guard import held_add
+    f = cache_dir() / SEEN_MARKER
+    seen = load_cache(f)
+    key = hashlib.sha256(f"offer|{root}|{session}".encode("utf-8", "replace")).hexdigest()[:20]
+    t = seen.get(key, {}).get("t")
+    if isinstance(t, (int, float)) and not isinstance(t, bool) and 0 <= time.time() - t < SEEN_HOURS * 3600:
+        return
+    ev = {"cwd": str(root), "tool_name": "Stop", "tool_input": {}}
+    if "agent" in event:
+        ev["agent"] = event["agent"]
+    if held_add(ev, text, "offer"):
+        seen[key] = {"t": int(time.time()), "s": session[:100]}
+        save_cache(f, seen, cap=4000)
+
+
+SHOWN_MAX = 15                          # findings printed per block; only these are remembered as shown
+
+
+def new_serious(root: Path, serious: list, session: str = "", alone: bool = False) -> list:
+    """High/Critical findings to show now: the ones not shown in the last SEEN_HOURS. Shown once, the agent fixed
+    them or explained them; sending it back again for the same lines at every stop was the costly loop.
+
+    The memory lives in the app folder's cache, keyed by the project's real path, never in the project: a cloned
+    repository cannot ship a file that silences findings. Entries from another session, from the future or past
+    SEEN_HOURS do not count. Only the findings actually printed are remembered."""
+    from global_hook import cache_dir, load_cache, save_cache
+    f = cache_dir() / SEEN_MARKER
+    seen = load_cache(f)
+    proj = hashlib.sha256(str(root).encode("utf-8", "replace")).hexdigest()[:20]
+    now = time.time()
+
+    def valid(e):
+        t = e.get("t")
+        if not isinstance(t, (int, float)) or isinstance(t, bool) or not t <= now + 60:
+            return False
+        if alone and session and 0 <= now - t < ANY_SESSION_HOURS * 3600:
+            return True                 # a loop that starts a new session per step is not sent back at every step
+        return now - SEEN_HOURS * 3600 < t and (not session or e.get("s") == session)
+    fresh = [(x, proj + ":" + _fp(root, x)) for x in serious]
+    fresh = [(x, k) for x, k in fresh if not (k in seen and valid(seen[k]))]
+    shown = fresh[:SHOWN_MAX]
+    if not shown:
+        return []
+    for _, k in shown:
+        seen[k] = {"t": int(now), "s": session[:100]}
+    save_cache(f, seen, cap=4000)       # a failed save only means the finding is shown again next time
+    return [x for x, _ in fresh]
 
 
 def main() -> int:
@@ -212,6 +326,7 @@ def main() -> int:
         if event.get("stop_hook_active"):
             return 0
         root = Path(event.get("cwd") or os.getcwd()).resolve()
+        session = event.get("session_id") if isinstance(event.get("session_id"), str) else ""
         os.chdir(root)   # config_scan resolves web-root folders relative to the project
         findings, total, start = [], 0, time.time()
         files = changed_files(root)
@@ -225,14 +340,28 @@ def main() -> int:
             findings += local_scan(fp) + agent_scan(fp) + library_scan(fp) + config_scan(fp)
     except Exception:
         return 0
+    # No suppressions here, on purpose. The project's suppression file is something the agent can write, commit,
+    # git-ignore or point elsewhere, and this gate is the last local check before the agent stops. A suppressed false
+    # positive costs one line once per session; a self-suppressed real finding would cost the check.
+    away = nobody_there(event)                  # the offer is a question: nobody there, so it waits on the held list
+    alone = nobody_there(event, env=False)      # quieter about a finding: only on the word of a person at a terminal
     try:
-        offer = pentest_offer(root, files)
+        offer = pentest_offer(root, files, session, record=not away)
+        if away and offer:
+            held_offer(root, event, offer, session)
+            offer = None
     except Exception:
         offer = None
     serious = [f for f in findings if SEV.get(f["severity"], 9) <= SEV["HIGH"]]
+    try:
+        serious = new_serious(root, serious, session, alone)
+    except Exception:
+        pass                            # cannot remember: the old behaviour, every serious finding blocks
     parts = []
     if serious:
-        lines = [f"- [{f['severity']}] {f['rule']} {Path(f['file']).name}:{f.get('line', 0)}: {f['message'][:160]}" for f in serious[:15]]
+        lines = [f"- [{f['severity']}] {f['rule']} {Path(f['file']).name}:{f.get('line', 0)}: {f['message'][:160]}" for f in serious[:SHOWN_MAX]]
+        if len(serious) > SHOWN_MAX:
+            lines.append(f"- ... and {len(serious) - SHOWN_MAX} more; they come up at the next stop.")
         parts.append("Org AppSec stop gate: changed files still have High/Critical findings. Fix them (or explain "
                      "clearly why each is a false positive), then finish. Run 'Run Security Test' for the full gate.\n" + "\n".join(lines))
     if offer:

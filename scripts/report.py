@@ -33,7 +33,43 @@ SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 OUTCOMES = ["Pass", "Fail", "Partial", "Compensating control", "Risk accepted", "Not retested"]
 MAX_INPUT_BYTES = 50_000_000
 MAX_FINDINGS = 2000
+RAW_FINDINGS_MAX = 20_000               # entries read before the sort and the cut to MAX_FINDINGS
+EVIDENCE_MIN = 8                        # shorter than this is not evidence ("x", "ok", "done")
+TEXT_FIELD_MAX = 20_000                 # characters of one field the redaction patterns ever see
 EXCERPT_LEN = 160
+
+# The classes a deep review has to account for before a project is handed to the security team. The reviewer
+# records each one in .security/coverage.json as examined (with evidence), not applicable (with a reason) or
+# not examined (with a reason). A class that is missing from the file counts as not examined.
+COVERAGE_CLASSES = [
+    ("access-control", "Function-level access control (roles and permissions on every route)"),
+    ("idor", "Object-level access (IDOR/BOLA), cross-user and cross-tenant"),
+    ("mass-assignment", "Mass assignment and over-posting"),
+    ("injection", "Injection (SQL, NoSQL, command, template, LDAP, second-order)"),
+    ("xss", "Cross-site scripting (reflected, stored, DOM)"),
+    ("file-handling", "File upload, download and path traversal"),
+    # no "name: value" shapes in these labels: the report's own redaction reads "tokens: cookies" as a secret
+    ("authentication", "Login and account recovery (password storage, reset, OTP and 2FA, lockout)"),
+    ("session-tokens", "Sessions, cookies and JWT (expiry, logout)"),
+    ("sso-oauth", "OAuth, OIDC, SAML and other sign-in flows"),
+    ("csrf", "CSRF and state changes"),
+    ("cors-redirects", "CORS and open redirects"),
+    ("ssrf", "Server-side request forgery"),
+    ("deserialization-xxe", "Deserialization and XML external entities"),
+    ("business-logic", "Business logic, multi-step abuse and race conditions"),
+    ("rate-limiting", "Rate limits and abuse protection on sensitive routes"),
+    ("headers-config", "Security headers, debug mode and exposed admin or debug paths"),
+    ("sensitive-data", "Secrets, personal data in logs and responses, error messages"),
+    ("cryptography", "Cryptography and randomness"),
+    ("components", "Vulnerable and outdated components, software supply chain"),
+    ("error-handling", "Exceptional conditions (checks that fail open, swallowed errors, logging)"),
+    ("api-specific", "API specifics (GraphQL, WebSockets, webhooks, pagination and limits)"),
+    ("ai-agents", "AI features, agents and MCP"),
+    ("mobile", "Mobile client (storage, transport, deep links, WebView)"),
+    ("infrastructure", "Containers, CI and infrastructure as code in the repository"),
+]
+COVERAGE_STATUSES = ["examined", "not applicable", "not examined"]
+READINESS = ["READY FOR PENTEST REVIEW", "CONDITIONALLY READY", "NOT READY"]
 
 # --- sanitising -------------------------------------------------------------------------------------------
 
@@ -45,6 +81,7 @@ INVISIBLE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u00ad\u061c\u180e\u200b-\u2
 
 def visible(s) -> str:
     s = "" if s is None else str(s)
+    s = s.encode("utf-8", "replace").decode("utf-8")       # a lone surrogate can not be written to a file or a console
     s = s.replace("\r\n", " ").replace("\n", " ").replace("\r", " ").replace("\t", " ")
     return INVISIBLE.sub(lambda m: f"[U+{ord(m.group(0)):04X}]", s)
 
@@ -60,15 +97,42 @@ _SECRET_PATTERNS = [
     (re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}\b"), "[REDACTED]"),
     (re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}\b"), "[REDACTED]"),
     (re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"), "[REDACTED]"),
-    (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"), "[REDACTED JWT]"),
+    # the lookbehind, not \b: a word boundary sits after every "-", so "eyJ-eyJ-..." restarted the match at each one
+    # and 200 KB of it took a minute and a half
+    (re.compile(r"(?<![A-Za-z0-9_\-])eyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"), "[REDACTED JWT]"),
     # scheme://user:password@host keeps the user, hides the password
-    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]{1,20}://[^\s:/@'\"]{1,100}:)(?!\[REDACTED\]@)[^\s@'\"]{1,200}@"), r"\1[REDACTED]@"),
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.\-]{1,20}://[^\s:/@'\"]{0,100}:)(?!\[REDACTED\]@)[^\s@'\"]{1,200}@"), r"\1[REDACTED]@"),
     # key = "value", key: value, KEY=value for names that hold secrets
     (re.compile(r"(?i)((?:password|passwd|pwd|secret|token|api[_\-]?key|apikey|access[_\-]?key|private[_\-]?key|"
                 r"client[_\-]?secret|auth|bearer|credential|session[_\-]?id)[\w\-]{0,20}[\"']?\s*(?:=>|[:=])\s*)"
-                r"([\"'`]?)([^\s\"'`,;]{4,})\2"), r"\1\2[REDACTED]\2"),
+                # not the scheme word of "Authorization: Bearer <token>": taking it as the value hid the word and kept
+                # the token, and the two patterns below that know the shape never saw it
+                r"([\"'`]?)(?!(?:bearer|basic|token)\s)([^\s\"'`,;]{4,})\2"), r"\1\2[REDACTED]\2"),
     (re.compile(r"(?i)\b(authorization\s*:\s*(?:bearer|basic|token)\s+)[A-Za-z0-9._~+/=\-]{8,}"), r"\1[REDACTED]"),
     (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=\-]{16,}"), r"\1[REDACTED]"),
+    # 7.2 (added at the end: _STRONG below takes the first ten by position)
+    (re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/_\-]{10,}"), "https://hooks.slack.com/services/[REDACTED]"),
+    (re.compile(r"\bSG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}"), "[REDACTED]"),
+    (re.compile(r"\bnpm_[A-Za-z0-9]{20,}\b"), "[REDACTED]"),
+    (re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}"), "[REDACTED]"),
+    (re.compile(r"\bpypi-[A-Za-z0-9_\-]{20,}"), "[REDACTED]"),
+    (re.compile(r"(?i)\b(basic\s+)[A-Za-z0-9+/=]{12,}"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)\b(aws_secret_access_key|x-api-key|x-auth-token)(\s*[:=]\s*)[^\s\"',;]{8,}"), r"\1\2[REDACTED]"),
+    # a quoted value may hold a comma, a semicolon or a space, where the unquoted pattern above stops
+    (re.compile(r"(?i)((?:password|passwd|pwd|passphrase|secret|token|api[_\-]?key|apikey|access[_\-]?key|private[_\-]?key|"
+                r"client[_\-]?secret|credential|db_pass|accountkey)[\w\-]{0,20}[\"']?\s*(?:=>|[:=])\s*)([\"'`])(?!\[REDACTED)[^\"'`\n]{4,}\2"),
+     r"\1\2[REDACTED]\2"),
+    (re.compile(r"\b(?:hf|dop_v1|shpat|shpss)_[A-Za-z0-9]{20,}\b"), "[REDACTED]"),
+    # secrets as they appear in commands and headers pasted as evidence or into a runbook
+    # the value may be quoted: curl -u "admin:pw", --password 'pw', -b "PHPSESSID=..."
+    (re.compile(r"(?i)((?:^|\s)(?:-u|--user)[= ]\s*[\"']?[^\s:'\"]{1,80}:)[^\s'\"]{3,}"), r"\1[REDACTED]"),
+    # --password X, and -pX written together (mysql, sshpass). A separate "-p X" is left alone: it is mkdir -p build.
+    (re.compile(r"((?:^|\s)(?:--password|--pass)[= ]\s*[\"']?|(?:^|\s)-p(?=[^\s=\"']))(?!\[REDACTED)[^\s'\"]{3,}"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)(\b(?:docker\s+login|sshpass|mysql|mysqldump|psql|mongosh|redis-cli|sqlcmd)\b[^\n|;&]{0,200}?\s-[pPa]\s+[\"']?)"
+                r"(?!\[REDACTED)[^\s'\"]{3,}"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)\b((?:set-)?cookie\s*:\s*|(?:^|\s)(?:-b|--cookie)[= ]\s*[\"']?)[^\s;'\"=]{1,80}=[^\s;'\"]{4,}"), r"\1[REDACTED]"),
+    (re.compile(r"\b([A-Z][A-Z0-9_]{0,40}(?:KEY|PASS|PASSWORD|PASSWD|SECRET|TOKEN)\s*=\s*)(?!\[REDACTED)[^\s'\"]{6,}"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)\b(sig|signature|accountkey|sharedaccesskey)=[A-Za-z0-9%+/=]{16,}"), r"\1=[REDACTED]"),
 ]
 
 
@@ -96,7 +160,10 @@ def has_secret(s) -> bool:
 
 def clean(s, limit: int | None = None) -> str:
     """Redact, make invisible characters visible and cut to length. Not yet escaped for any output format."""
-    s = visible(redact(s)).strip()
+    s = "" if s is None else str(s)
+    s = visible(redact(s[:TEXT_FIELD_MAX])).strip()        # cut before the patterns run, never after
+    if has_secret(s):                   # the redaction missed a shape the detector knows: show nothing of it
+        s = "[withheld: looked like a secret]"
     if limit and len(s) > limit:
         s = s[:limit].rstrip() + "..."
     return s
@@ -126,21 +193,69 @@ def load_json(path: Path | None, default):
     try:
         if not path.is_file() or path.stat().st_size > MAX_INPUT_BYTES:
             return default
-        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError, RecursionError):
+        return decode_json(path.read_bytes())
+    except (OSError, ValueError, RecursionError, OverflowError, MemoryError):
         return default
 
 
-def norm_finding(f) -> dict | None:
+def unusable(path: Path | None, need_list: str | None = None) -> bool:
+    """True when a result file is there but can not be used: not JSON, not an object, or without the list it must
+    hold. A file like that is never "no findings": the report says it could not be read and is not ready."""
+    if not path:
+        return False
+    try:
+        if not os.path.lexists(path):
+            return False
+    except OSError:
+        return True
+    v = load_json(path, None)
+    if not isinstance(v, dict):
+        return True
+    if need_list is not None and need_list.endswith("?"):       # optional key: when it is there it must be a list
+        return need_list[:-1] in v and not isinstance(v[need_list[:-1]], list)
+    return need_list is not None and not isinstance(v.get(need_list), list)
+
+
+SEV_WORDS = {"ERROR": "HIGH", "WARNING": "MEDIUM", "WARN": "MEDIUM", "MODERATE": "MEDIUM", "NOTE": "LOW", "MINOR": "LOW",
+             "INFORMATIONAL": "INFO", "INFORMATION": "INFO", "NONE": "INFO", "UNKNOWN": "MEDIUM"}
+
+
+def decode_json(raw: bytes):
+    """Result files as tools and editors really save them: UTF-8 with or without a byte order mark, or UTF-16."""
+    def once(pairs):                    # {"findings": [<High>], "findings": []} must not read as "no findings"
+        keys = [k for k, _ in pairs]
+        if len(keys) != len(set(keys)):
+            raise ValueError("a key is repeated")
+        return dict(pairs)
+    return json.loads(decode_text(raw), object_pairs_hook=once)
+
+
+def decode_text(raw: bytes) -> str:
+    return raw.decode("utf-16", "replace") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig", "replace")
+
+
+def odd_entries(data, key: str = "findings") -> int:
+    """How many entries of a findings or results list are not objects. One line of text where a finding should be
+    ("R-03: HIGH IDOR in /api/admin") was dropped without a word."""
+    v = data.get(key) if isinstance(data, dict) else None
+    return sum(1 for x in v[:RAW_FINDINGS_MAX] if not isinstance(x, dict)) if isinstance(v, list) else 0
+
+
+def norm_finding(f, unknown_sev: str = "HIGH") -> dict | None:
     if not isinstance(f, dict):
         return None
-    sev = str(f.get("severity", "INFO")).upper()
+    sev = f.get("severity")
+    sev = sev.strip().upper() if isinstance(sev, str) else ""
     if sev not in SEV_ORDER:
-        sev = "INFO"
+        m = re.match(r"(CRITICAL|HIGH|MEDIUM|LOW|INFO)\b", sev)        # "High (Medium)" from a DAST tool is High
+        # other tools' words for the same levels; anything else (no label, a number, "BLOCKER") is taken as HIGH.
+        # Reading it as informational let an open finding with a label this report did not know pass as nothing.
+        sev = m.group(1) if m else SEV_WORDS.get(sev, "HIGH")
     try:
         line = int(f.get("line") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         line = 0
+    line = line if 0 <= line < 10_000_000 else 0
     return {"rule": str(f.get("rule") or "UNKNOWN")[:200], "severity": sev, "file": str(f.get("file") or "")[:500],
             "line": max(0, line), "message": str(f.get("message") or "")[:4000], "code": str(f.get("code") or "")[:2000],
             "engine": str(f.get("engine") or "")[:60], "cia": f.get("cia"), "url": str(f.get("url") or "")[:500],
@@ -148,24 +263,40 @@ def norm_finding(f) -> dict | None:
 
 
 def findings_of(report) -> list[dict]:
+    """The findings of a gate or DAST result, most severe first, at most MAX_FINDINGS. The cut is made after the
+    sort: cutting first let two thousand informational entries push a critical one out of the report."""
     raw = report.get("findings", []) if isinstance(report, dict) else []
-    out = [n for n in (norm_finding(f) for f in (raw if isinstance(raw, list) else [])[:MAX_FINDINGS]) if n]
-    return out
+    out = [n for n in (norm_finding(f) for f in (raw if isinstance(raw, list) else [])[:RAW_FINDINGS_MAX]) if n]
+    out.sort(key=lambda f: SEV_ORDER.index(f["severity"]))
+    return out[:MAX_FINDINGS]
+
+
+def raw_count(report) -> int:
+    raw = report.get("findings", []) if isinstance(report, dict) else []
+    return len(raw) if isinstance(raw, list) else 0
 
 
 def rel_path(p: str, root: Path) -> str:
+    """The path as the report shows it, relative to the project when it is inside it. String work only: the path
+    comes from a result file, and resolving it would touch the file system (and for \\\\host\\share the network)."""
     if not p:
         return ""
     try:
-        return Path(p).resolve().relative_to(root.resolve()).as_posix()
-    except (ValueError, OSError):
-        return p.replace("\\", "/")
+        base = os.path.normcase(os.path.normpath(str(root)))
+        full = os.path.normpath(p if os.path.isabs(p) else os.path.join(str(root), p))
+        if os.path.normcase(full).startswith(base + os.sep):
+            return full[len(base) + 1:].replace("\\", "/")
+    except (ValueError, TypeError):
+        pass
+    return p.replace("\\", "/")
 
 
 def fingerprint(f: dict, root: Path) -> str:
     """Stable across line shifts: rule, file and the normalised code line (or the URL for DAST)."""
     code = re.sub(r"\s+", " ", f.get("code") or "").strip()
     basis = "|".join([f["rule"], rel_path(f["file"], root), code or f.get("url") or str(f["line"])])
+    if f.get("engine") == "review":     # a reviewer's title and evidence are free text: the line tells two findings apart
+        basis += f"|{f['line']}|{f.get('url') or ''}"
     return hashlib.sha256(basis.encode("utf-8", "replace")).hexdigest()[:12]
 
 
@@ -266,9 +397,12 @@ def title_of(f: dict) -> str:
 
 
 def location_of(f: dict, root: Path) -> str:
-    if f.get("url"):
+    if f.get("url") and f.get("engine") != "review":
         return f["url"]
     p = rel_path(f["file"], root)
+    if f.get("engine") == "review":             # a review finding names the code and, when known, the route
+        place = f"{p}:{f['line']}" if p and f["line"] else p
+        return " ".join(x for x in (place, f"({f['url']})" if f.get("url") else "") if x) or "(project)"
     return f"{p}:{f['line']}" if p and f["line"] else (p or "(project)")
 
 
@@ -280,7 +414,7 @@ def evidence_of(f: dict) -> str:
 
 def route_key(f: dict, root: Path) -> str:
     """The place two findings must share to be chained: the URL path for DAST, otherwise the file."""
-    if f.get("url"):
+    if f.get("url") and f.get("engine") != "review":
         m = re.match(r"(?i)^[a-z]+://[^/]+(/[^?#]*)?", f["url"])
         return "route:" + ((m.group(1) if m else "") or "/").rstrip("/").lower()
     return "file:" + rel_path(f["file"], root).lower()
@@ -288,36 +422,74 @@ def route_key(f: dict, root: Path) -> str:
 
 # --- retest ------------------------------------------------------------------------------------------------
 
-def apply_retests(found: list[dict], retest, current_fps: set[str] | None) -> tuple[list[dict], list[str]]:
+def apply_retests(found: list[dict], retest, current_fps: set[str] | None, stable_ids: bool = True) -> tuple[list[dict], list[str]]:
     """Attach an outcome label to every finding. Returns the observations and a list of report notes."""
     notes: list[str] = []
     results = retest.get("results", []) if isinstance(retest, dict) else []
-    by_key = {}
-    for r in results if isinstance(results, list) else []:
+    by_id, by_fp = {}, {}
+    for r in (results if isinstance(results, list) else [])[:RAW_FINDINGS_MAX]:
         if isinstance(r, dict):
-            for k in (r.get("id"), r.get("fingerprint")):
-                if isinstance(k, str) and k:
-                    by_key[k] = r
+            if isinstance(r.get("id"), str) and r["id"]:
+                by_id[r["id"]] = r
+            if isinstance(r.get("fingerprint"), str) and r["fingerprint"]:
+                by_fp[r["fingerprint"]] = r
+    shared = {}
     for f in found:
-        r = by_key.get(f["id"]) or by_key.get(f["fp"]) or {}
-        outcome = str(r.get("outcome") or "Not retested").strip()
+        shared[f["fp"]] = shared.get(f["fp"], 0) + 1
+    for f in found:
+        # An id is a position in a sorted list, so it is trusted only where it can not move: not for a finding that
+        # appeared after the first run or whose id the report made up, and not when the entry names another
+        # fingerprint. A fingerprint that two findings share closes neither: one Pass must not close two findings.
+        # A DAST id moves too: there is one DAST file, and a rerun after a fix renumbers what is left, which gave the
+        # next finding the Pass of the fixed one.
+        # And with no first-run file every scanner id is a position in the latest run: an acceptance written for F-01
+        # passed to whatever became F-01 next.
+        by_print = bool(f.get("auto_id") or f.get("late") or f["id"].startswith("D-") or (not stable_ids and f["id"].startswith("F-")))
+        r = None if by_print else by_id.get(f["id"])
+        if r is not None and isinstance(r.get("fingerprint"), str) and r["fingerprint"] and r["fingerprint"] != f["fp"]:
+            r = None
+        if r is None and shared[f["fp"]] == 1:
+            r = by_fp.get(f["fp"])
+        if r is None and by_print and f["id"] in by_id and by_id[f["id"]].get("fingerprint") != f["fp"]:
+            # say so, or an honest entry is ignored without a word and the project stays NOT READY for no visible reason
+            notes.append(f"{f['id']}: the retest entry was not used. This finding is matched by its fingerprint, because "
+                         f"its number can change between runs: add \"fingerprint\": \"{f['fp']}\" to the entry")
+        r = r or {}
+        if shared[f["fp"]] > 1 and r.get("fingerprint") == f["fp"] and r.get("id") != f["id"]:
+            r = {}
+        if not r and by_print and shared[f["fp"]] > 1 and (f["fp"] in by_fp or f["id"] in by_id):
+            notes.append(f"{f['id']}: the retest entry was not used. {shared[f['fp']]} findings share this fingerprint "
+                         "(same rule, file and code), so one entry can not say which one it means; fix them together "
+                         "or tell them apart in the code")
+        outcome = str(r.get("outcome") or "Not retested").strip()[:60]
         match = next((o for o in OUTCOMES if o.lower() == outcome.lower()), None)
-        evidence = str(r.get("evidence") or "").strip()
-        f["retest"] = {"outcome": match or "Not retested", "evidence": evidence, "variant": str(r.get("variant") or ""),
-                       "note": str(r.get("note") or ""), "accepted_by": str(r.get("accepted_by") or ""),
-                       "date": str(r.get("date") or "")}
+        evidence = r.get("evidence")
+        evidence = evidence.strip()[:2000] if isinstance(evidence, str) else ""
+
+        def short(k, n=2000):           # every field is cut on the way in: a 20 MB note cost half a minute later
+            v = r.get(k)
+            return v[:n] if isinstance(v, str) else ""
+        f["retest"] = {"outcome": match or "Not retested", "evidence": evidence, "variant": short("variant"),
+                       "note": short("note"), "accepted_by": " ".join(short("accepted_by", 200).split()),
+                       "date": short("date", 20).strip()}
         rt = f["retest"]
         if match is None and r:
             rt["note"] = f"unknown outcome label '{outcome}' ignored. " + rt["note"]
             notes.append(f"{f['id']}: unknown outcome label replaced with Not retested")
-        if rt["outcome"] == "Pass" and not evidence:
+        if rt["outcome"] == "Pass" and len(evidence) < EVIDENCE_MIN:
             rt["outcome"] = "Not retested"
             rt["note"] = "a Pass needs evidence (the test or command that reached the sink and was refused). " + rt["note"]
             notes.append(f"{f['id']}: Pass without evidence was recorded as Not retested")
-        if rt["outcome"] == "Risk accepted" and not (rt["accepted_by"] and re.fullmatch(r"\d{4}-\d{2}-\d{2}", rt["date"])):
+        if rt["outcome"] in ("Risk accepted", "Compensating control") and \
+                not (rt["accepted_by"].strip() and re.fullmatch(r"\d{4}-\d{2}-\d{2}", rt["date"])):
+            what = rt["outcome"]
             rt["outcome"] = "Not retested"
-            rt["note"] = "Risk accepted needs a named person and a date (YYYY-MM-DD). " + rt["note"]
-            notes.append(f"{f['id']}: Risk accepted without a name and date was recorded as Not retested")
+            rt["note"] = f"{what} needs a named person and a date (YYYY-MM-DD). " + rt["note"]
+            notes.append(f"{f['id']}: {what} without a name and date was recorded as Not retested")
+        if rt["outcome"] == "Compensating control" and len(evidence) < EVIDENCE_MIN:
+            rt["outcome"] = "Not retested"
+            rt["note"] = "a compensating control needs evidence (where the control is and the test that shows it works). " + rt["note"]
+            notes.append(f"{f['id']}: Compensating control without evidence was recorded as Not retested")
         if rt["outcome"] == "Pass" and current_fps is not None and f["fp"] in current_fps:
             rt["outcome"] = "Fail"
             rt["note"] = "the latest gate run still reports the same construction at this place. " + rt["note"]
@@ -384,6 +556,137 @@ def verdict(found: list[dict], tool_status: dict, dast: dict) -> tuple[str, str]
     return "PASSED", "no critical or high finding is open in what was tested"
 
 
+def review_findings_of(data, root: Path) -> list[dict]:
+    """Findings the reviewer found by reading the code (.security/review-findings.json). They get R- ids, take part
+    in the retest and count for the verdict like any scanner finding. An id the reviewer chose (R-01) is kept when
+    it is well formed and not used twice, so retest.json can name it before the report exists."""
+    raw = data.get("findings", []) if isinstance(data, dict) else []
+    out, used = [], set()
+    for item in (raw if isinstance(raw, list) else [])[:RAW_FINDINGS_MAX]:
+        if not isinstance(item, dict):
+            continue
+        d = dict(item)
+        cls = str(d.get("class") or "").strip()[:60]
+        title = str(d.get("title") or "").strip()[:160]
+        d["rule"] = "REVIEW " + (title or cls or "finding")
+        d["code"] = d.get("code") or d.get("evidence") or ""
+        d["url"] = d.get("url") or d.get("route") or ""
+        d["engine"] = "review"
+        if not d.get("message"):
+            d["message"] = title
+        n = norm_finding(d, "HIGH")
+        if not n:
+            continue
+        n["cls"] = cls
+        rid = str(item.get("id") or "").strip()
+        n["want_id"] = rid if re.fullmatch(r"R-\d{2,4}", rid) and rid not in used else ""
+        used.add(n["want_id"])
+        out.append(n)
+    ordered = sorted(out, key=lambda f: (SEV_ORDER.index(f["severity"]), rel_path(f["file"], root), f["line"], f["rule"]))[:MAX_FINDINGS]
+    taken = {f["want_id"] for f in ordered if f["want_id"]}
+    i = 0
+    for f in ordered:
+        if f["want_id"]:
+            f["id"] = f["want_id"]
+        else:
+            i += 1
+            while f"R-{i:02d}" in taken:
+                i += 1
+            f["id"] = f"R-{i:02d}"
+            taken.add(f["id"])
+            f["auto_id"] = True         # a number the report made up: a retest must name it by fingerprint, not by a guess
+        f["fp"] = fingerprint(f, root)
+    return ordered
+
+
+def coverage_of(data) -> dict:
+    """The coverage table: one row per class in COVERAGE_CLASSES. A status the file does not give, an unknown
+    status, "examined" with no evidence, or "not applicable" with no reason is recorded as not examined."""
+    classes = data.get("classes") if isinstance(data, dict) else None
+    classes = classes if isinstance(classes, dict) else {}
+    rows = []
+    for key, label in COVERAGE_CLASSES:
+        c = classes.get(key)
+        c = c if isinstance(c, dict) else {}
+        def text(v):                    # only a real string counts: 1, true or a list is not evidence
+            return v.strip()[:600] if isinstance(v, str) else ""
+        status = c.get("status")
+        status = status.strip().lower() if isinstance(status, str) else ""
+        evidence, reason = text(c.get("evidence")), text(c.get("reason"))
+        note = ""
+        if status not in COVERAGE_STATUSES:
+            note = "no valid status recorded" if c else "not recorded"
+            status = "not examined"
+        elif status == "examined" and len(evidence) < EVIDENCE_MIN:
+            status, note = "not examined", "examined needs evidence (file:line, a test or a request)"
+        elif status == "not applicable" and len(reason) < EVIDENCE_MIN:
+            status, note = "not examined", "not applicable needs a reason"
+        rows.append({"key": key, "label": label, "status": status, "evidence": evidence if status == "examined" else "",
+                     "reason": note or reason})
+    surface = data.get("surface") if isinstance(data, dict) and isinstance(data.get("surface"), dict) else {}
+
+    def num(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 10_000_000 else None
+    found, reviewed = num(surface.get("entry_points_found")), num(surface.get("entry_points_reviewed"))
+    # a number that is there but is not a plain count ("all", 3.0, -1) is a blocker, not a missing detail
+    bad = [k for k in ("entry_points_found", "entry_points_reviewed") if k in surface and num(surface.get(k)) is None]
+    return {"recorded": isinstance(data, dict) and bool(classes), "rows": rows, "found": found, "reviewed": reviewed,
+            "bad_surface": bad, "open": [r["label"] for r in rows if r["status"] == "not examined"]}
+
+
+def readiness(v: str, found: list[dict], cov: dict, dast: dict, has_matrix: bool, retested: bool,
+              truncated: int = 0) -> tuple[str, list[str]]:
+    """Whether the project can go to the security team for review. The gate verdict says what the scanners saw;
+    this adds what a pentester asks next: was every class looked at, is every finding closed with proof, and what
+    was left to a person's decision. It is a statement about the review, not about the application."""
+    blockers, conditions = [], []
+    if v != "PASSED":
+        blockers.append(f"the gate verdict is {v}")
+    if not cov["recorded"]:
+        blockers.append("no review coverage was recorded (.security/coverage.json)")
+    elif cov["open"]:
+        blockers.append(f"{len(cov['open'])} review class(es) were not examined")
+    if cov.get("bad_surface"):
+        blockers.append("the entry point counts in coverage.json are not plain numbers")
+    elif cov["found"] is not None and cov["reviewed"] is None:
+        blockers.append(f"{cov['found']} entry points were found but the number reviewed was not recorded")
+    elif cov["found"] is not None and cov["reviewed"] < cov["found"]:
+        blockers.append(f"only {cov['reviewed']} of {cov['found']} entry points were reviewed")
+    elif cov["found"] == 0 and cov["recorded"]:
+        blockers.append("coverage.json says the project has no entry points")
+    if truncated:
+        blockers.append(f"{truncated} finding(s) did not fit in the report; it lists the most severe {MAX_FINDINGS}")
+    open_med = [f for f in found if f["severity"] == "MEDIUM" and f["retest"]["outcome"] in OPEN_OUTCOMES]
+    if open_med:
+        blockers.append(f"{len(open_med)} medium finding(s) are open with no fix, accepted risk or compensating control")
+    if found and not retested:
+        blockers.append("findings were reported but no retest was recorded")
+    held_hi = [f for f in found if f["severity"] in ("CRITICAL", "HIGH") and
+               f["retest"]["outcome"] in ("Risk accepted", "Compensating control")]
+    if held_hi:
+        blockers.append(f"{len(held_hi)} critical or high finding(s) were not fixed but accepted or covered by a "
+                        "compensating control; that decision belongs to the security team")
+    open_low = [f for f in found if f["severity"] in ("LOW", "INFO") and f["retest"]["outcome"] in OPEN_OUTCOMES]
+    if open_low:
+        conditions.append(f"{len(open_low)} low or informational finding(s) are open")
+    held = [f for f in found if f["retest"]["outcome"] in ("Risk accepted", "Compensating control", "Partial")
+            and f not in held_hi]
+    if held:
+        conditions.append(f"{len(held)} finding(s) rest on an accepted risk, a compensating control or a partial fix "
+                          "that the security team has to confirm")
+    if dast.get("status") != "ran":
+        conditions.append("no scan of the running application was made")
+    if not has_matrix:
+        conditions.append("no authorization matrix was written (.security/authz-matrix.md)")
+    if cov["recorded"] and cov["found"] is None:
+        conditions.append("the number of entry points found and reviewed was not recorded")
+    if blockers:
+        return "NOT READY", blockers + conditions
+    if conditions:
+        return "CONDITIONALLY READY", conditions
+    return "READY FOR PENTEST REVIEW", ["every class was examined or marked not applicable, and no finding is open"]
+
+
 def overall_risk(found: list[dict]) -> str:
     live = [f["severity"] for f in found if f["retest"]["outcome"] in OPEN_OUTCOMES]
     return min(live, key=SEV_ORDER.index) if live else "LOW"
@@ -392,35 +695,102 @@ def overall_risk(found: list[dict]) -> str:
 # --- building the report model -----------------------------------------------------------------------------
 
 def build(root: Path, findings_path: Path, before_path: Path | None, dast_path: Path | None,
-          retest_path: Path | None, artifacts_path: Path | None) -> dict:
+          retest_path: Path | None, artifacts_path: Path | None, review_path: Path | None = None,
+          coverage_path: Path | None = None) -> dict:
     current = load_json(findings_path, None)
     before = load_json(before_path, None) if before_path else None
     base = before if isinstance(before, dict) else current
     if not isinstance(base, dict):
         base = {"mode": "unknown", "tool_status": {}, "findings": []}
-    tool_status = base.get("tool_status") if isinstance(base.get("tool_status"), dict) else {}
+    # Whether the scan was complete is a fact about the latest gate run, never about an older copy of it.
+    # If the latest run can not be read there is no latest run: no scanner status, so the verdict is BLOCKED.
+    tool_status = current.get("tool_status") if isinstance(current, dict) and isinstance(current.get("tool_status"), dict) else {}
+    if not isinstance(tool_status.get("errors"), dict) and tool_status.get("errors"):
+        tool_status = dict(tool_status, errors={"scan": visible(str(tool_status["errors"]))[:200]})
+    if not isinstance(tool_status.get("notes"), list):
+        tool_status = dict(tool_status, notes=[])
+    # A DAST file that says a scan ran must hold its list of findings under the one name local_dast.py writes; under
+    # "alerts" or "Findings" a High in it was read as nothing.
+    d0 = load_json(dast_path, None) if dast_path else None
+    dast_need = "findings" if isinstance(d0, dict) and d0.get("status") == "ran" else "findings?"
+    unread = [n for n, pth, need in (("findings.json", findings_path, "findings"), ("findings-before.json", before_path, "findings"),
+                                     ("dast-findings.json", dast_path, dast_need), ("review-findings.json", review_path, "findings"),
+                                     ("coverage.json", coverage_path, None), ("retest.json", retest_path, "results?")) if unusable(pth, need)]
     found = assign_ids(findings_of(base), "F", root)
+    late: list[str] = []
+    raised: list[str] = []
+    if isinstance(before, dict) and isinstance(current, dict):
+        # A finding of the latest run that the first run did not list is a finding like any other, and open. Listing it
+        # only as an observation let an emptied or forged findings-before.json hide everything the scanners report now.
+        known = {f["fp"] for f in found}
+        now_all = findings_of(current)
+        # The same line can be rated higher by the latest run (other context, another rule set). The fingerprint has no
+        # severity in it, so the first run's lower rating used to stand and a Critical was listed as Low.
+        worst = {}
+        for f in now_all:
+            fp = fingerprint(f, root)
+            if fp not in worst or SEV_ORDER.index(f["severity"]) < SEV_ORDER.index(worst[fp]):
+                worst[fp] = f["severity"]
+        for f in found:
+            if f["fp"] in worst and SEV_ORDER.index(worst[f["fp"]]) < SEV_ORDER.index(f["severity"]):
+                raised.append(f"{f['id']}: rated {f['severity']} in the first run and {worst[f['fp']]} in the latest; the higher one is used")
+                f["severity"] = worst[f["fp"]]
+        extra = [f for f in now_all if fingerprint(f, root) not in known]
+        for i, f in enumerate(assign_ids(extra, "F", root)[:MAX_FINDINGS], len(found) + 1):
+            f["id"] = f"F-{i:02d}"
+            f["late"] = True
+            late.append(f["id"])
+        found += [f for f in extra if f.get("id") in late]
     dast = load_json(dast_path, {}) if dast_path else {}
     dast = dast if isinstance(dast, dict) else {}
     dfound = assign_ids(findings_of(dast), "D", root)
-    allf = found + dfound
-    current_fps = None
-    if isinstance(before, dict) and isinstance(current, dict):
-        current_fps = {fingerprint(f, root) for f in findings_of(current)}
+    review_data = load_json(review_path, {}) if review_path else {}
+    rfound = review_findings_of(review_data, root)
+    allf = found + dfound + rfound
+    truncated = sum(max(0, raw_count(x) - MAX_FINDINGS) for x in (base, dast, review_data)) + \
+        (max(0, raw_count(current) - MAX_FINDINGS) if current is not base else 0)
+    # A Pass is always checked against the latest gate run, with or without a findings-before.json.
+    current_fps = {fingerprint(f, root) for f in findings_of(current)} if isinstance(current, dict) else None
     retest = load_json(retest_path, {}) if retest_path else {}
-    observations, notes = apply_retests(allf, retest, current_fps)
-    if isinstance(before, dict) and isinstance(current, dict):
-        known = {f["fp"] for f in found}
-        for f in findings_of(current):
-            if fingerprint(f, root) not in known:
-                observations.append({"title": title_of(f), "location": location_of(f, root),
-                                     "note": f"{f['severity']}: reported by the latest gate run but not in the first one."})
+    observations, notes = apply_retests(allf, retest, current_fps, stable_ids=isinstance(before, dict))
+    if late:
+        notes.append(f"{', '.join(late[:20])}{' and more' if len(late) > 20 else ''}: reported by the latest gate run "
+                     "but not in the first one")
+    notes += raised[:50]
+    for name, data in (("findings.json", current), ("findings-before.json", before), ("dast-findings.json", dast),
+                       ("review-findings.json", review_data), ("retest.json", retest)):
+        n = odd_entries(data, "results" if name == "retest.json" else "findings")
+        if n and name not in unread:
+            unread.append(name)
+            notes.append(f"{name} holds {n} entr{'y' if n == 1 else 'ies'} that are not objects (a line of text where a "
+                         "finding should be); nothing may be left out, so the file counts as unreadable")
     artifacts = load_json(artifacts_path, []) if artifacts_path else []
     if isinstance(artifacts, dict):
         artifacts = artifacts.get("artifacts", [])
     artifacts = [a for a in (artifacts if isinstance(artifacts, list) else []) if isinstance(a, dict)][:200]
     v, why = verdict(allf, tool_status, dast)
-    return {"root": root, "date": datetime.date.today().isoformat(), "mode": str(base.get("mode", "unknown")),
+    if unread and v == "PASSED":
+        v, why = "BLOCKED", "result files could not be read: " + ", ".join(unread)
+    for n in unread:
+        notes.append(f"{n} is there but could not be read as the JSON it must hold (save it as UTF-8, an object); "
+                     "nothing in it was used")
+    cov = coverage_of(load_json(coverage_path, None) if coverage_path else None)
+    matrix = root / ".security" / "authz-matrix.md"
+    try:
+        mst = os.lstat(matrix)
+        has_matrix = os.path.isfile(matrix) and not matrix.is_symlink() and not (getattr(mst, "st_file_attributes", 0) & 0x400) \
+            and mst.st_size > 16        # more than an empty file or a bare header; not a byte count that changes with
+                                        # the line endings (a small real matrix is 39 bytes with LF, 42 with CRLF)
+    except OSError:
+        has_matrix = False
+    # "ran" with no target is a label, not a scan
+    scanned = dict(dast) if dast.get("status") == "ran" and isinstance(dast.get("target"), str) and dast["target"].strip() else {}
+    results = retest.get("results") if isinstance(retest, dict) else None
+    ready, ready_why = readiness(v, allf, cov, scanned, has_matrix, isinstance(results, list) and bool(results), truncated)
+    # Coverage and readiness are opt-in: they are shown only when a team keeps a .security/coverage.json. By default
+    # the agent writes no such file (it costs tokens on every test) and the report is the plain one, made by this script.
+    return {"coverage": cov, "coverage_on": bool(coverage_path), "readiness": ready, "readiness_why": ready_why,
+            "root": root, "date": datetime.date.today().isoformat(), "mode": str(base.get("mode", "unknown")),
             "tool_status": tool_status, "findings": allf, "dast": dast, "observations": observations,
             "notes": notes, "artifacts": artifacts, "chains": attack_chains(allf, root), "verdict": v, "why": why,
             "risk": overall_risk(allf), "retested": bool(retest), "project": root.name,
@@ -491,11 +861,25 @@ def render_md(m: dict) -> str:
     if m["chains"]:
         out.append(f"{len(m['chains'])} possible attack chain(s) combine findings at the same place; see Attack chains.")
     out.append("The verdict covers only what was tested; the Limits section lists what was not.")
+    if m["coverage_on"]:
+        out += ["", f"**Handover readiness: {m['readiness']}.** " + "; ".join(md(x, 200) for x in m["readiness_why"]) + ".",
+                "Readiness describes the review that was done. The security team's own test decides approval."]
     out += ["", "## Scope and method", "",
-            f"Target: the project folder `{md(m['project'], 80)}`. Gate mode: {md(m['mode'])}.", "",
+            f"Target: the project folder `{md(m['project'], 80)}`. Gate mode: `{md(m['mode'], 20)}`.", "",
             "| Tool | Status | Detail |", "|---|---|---|"]
     for t, s, d in tools_table(m):
         out.append(f"| {md(t)} | {md(s)} | {md(d, 300)} |")
+    cov = m["coverage"]
+    if m["coverage_on"]:
+        out += ["", "## Coverage", ""]
+        if cov["found"] is not None:
+            out.append(f"Entry points found: {cov['found']}. Reviewed: {cov['reviewed'] if cov['reviewed'] is not None else 'not recorded'}.")
+            out.append("")
+        if not cov["recorded"]:
+            out += ["No review coverage was recorded (`.security/coverage.json`), so every class below counts as not examined.", ""]
+        out += ["| Class | Status | Evidence or reason |", "|---|---|---|"]
+        for r in cov["rows"]:
+            out.append(f"| {md(r['label'])} | {r['status']} | {md(r['evidence'] or r['reason'], 300)} |")
     out += ["", "## Findings", "",
             "Each finding is rated on its own. CIA shows what it can break: Confidentiality, Integrity, Availability.", "",
             "| ID | Title | Severity | CIA | Location | Evidence | Fix (root cause first) | Retest |",
@@ -508,7 +892,7 @@ def render_md(m: dict) -> str:
         out.append("| - | No findings were reported by the tools that ran | - | - | - | - | - | Not retested |")
     out += ["", "### Finding details", ""]
     for f in f_all:
-        out.append(f"- **{f['id']}** ({f['severity']}, {md(f['rule'], 120)}): {md(f['message'], 600)}")
+        out.append(f"- **{f['id']}** ({f['severity']}, {md(f['rule'], 120)}, fingerprint `{f['fp']}`): {md(f['message'], 600)}")
     out += ["", "## Attack chains", ""]
     if m["chains"]:
         out += ["| Findings | Place | Combined severity | Path |", "|---|---|---|---|"]
@@ -531,8 +915,9 @@ def render_md(m: dict) -> str:
         out.append(f"- {md(n, 300)}")
     out += ["", "### Observations (not part of the retest)", ""]
     if m["observations"]:
-        for o in m["observations"]:
-            out.append(f"- {md(o.get('title'), 160)} at {md(o.get('location'), 160)}: {md(o.get('note'), 300)}")
+        for i, o in enumerate(m["observations"], 1):
+            # numbered like a finding detail line: what follows is the reviewer's own words, quoted, not the report's
+            out.append(f"- **O-{i:02d}** ({md(o.get('title'), 160)} at {md(o.get('location'), 160)}): {md(o.get('note'), 300)}")
     else:
         out.append("None.")
     out += ["", "## Artifacts", "",
@@ -544,10 +929,11 @@ def render_md(m: dict) -> str:
     else:
         out.append("No artifacts were recorded (list them in `.security/artifacts.json` when test users or files are created).")
     if m["outputs"]:
-        out += ["", "Report files in `.security/`: " + ", ".join(md(x, 80) for x in m["outputs"][:50]) + "."]
+        out += ["", "Report files in `.security/`: " + ", ".join(f"`{md(x, 80)}`" for x in m["outputs"][:50]) + "."]
     out += ["", "## Limits", ""]
     out += [f"- {x}" for x in LIMITS]
-    out += [f"- {md(t)} did not run: {md(d, 200)}." for t, s, d in tools_table(m) if s == "did not run"]
+    # the detail can come from a result file (a DAST note): shown as quoted text, never as the report's own words
+    out += [f"- {md(t)} did not run: `{md(d, 200)}`." for t, s, d in tools_table(m) if s == "did not run"]
     out.append("")
     return "\n".join(out)
 
@@ -595,11 +981,26 @@ def render_html(m: dict) -> str:
              "The verdict covers only what was tested; the Limits section lists what was not.</p>")
     if m["chains"]:
         e.append(f"<p>{len(m['chains'])} possible attack chain(s) combine findings at the same place.</p>")
+    if m["coverage_on"]:
+        e.append(f"<p><b>Handover readiness: {h(m['readiness'])}.</b> " + "; ".join(h(x, 200) for x in m["readiness_why"]) +
+                 ". Readiness describes the review that was done. The security team's own test decides approval.</p>")
     e.append(f"<h2>Scope and method</h2><p>Target: the project folder <code>{h(m['project'], 80)}</code>. Gate mode: {h(m['mode'])}.</p>")
     e.append("<table><colgroup><col style=\"width:28%\"><col style=\"width:14%\"><col></colgroup><tr><th>Tool</th><th>Status</th><th>Detail</th></tr>")
     for t, s, d in tools_table(m):
         e.append(f"<tr><td>{h(t)}</td><td>{h(s)}</td><td>{h(d, 300)}</td></tr>")
     e.append("</table>")
+    cov = m["coverage"]
+    if m["coverage_on"]:
+        e.append("<h2>Coverage</h2>")
+        if cov["found"] is not None:
+            e.append(f"<p>Entry points found: {cov['found']}. Reviewed: {cov['reviewed'] if cov['reviewed'] is not None else 'not recorded'}.</p>")
+        if not cov["recorded"]:
+            e.append("<p>No review coverage was recorded (<code>.security/coverage.json</code>), so every class below counts as not examined.</p>")
+        e.append("<table><colgroup><col style=\"width:38%\"><col style=\"width:14%\"><col></colgroup>"
+                 "<tr><th>Class</th><th>Status</th><th>Evidence or reason</th></tr>")
+        for r in cov["rows"]:
+            e.append(f"<tr><td>{h(r['label'])}</td><td>{h(r['status'])}</td><td>{h(r['evidence'] or r['reason'], 300)}</td></tr>")
+        e.append("</table>")
     e.append("<h2>Findings</h2><p>Each finding is rated on its own. CIA: Confidentiality, Integrity, Availability.</p>")
     e.append("<table><colgroup><col style=\"width:6%\"><col style=\"width:15%\"><col style=\"width:11%\"><col style=\"width:6%\">"
              "<col style=\"width:15%\"><col style=\"width:17%\"><col style=\"width:20%\"><col style=\"width:10%\"></colgroup>"
@@ -614,7 +1015,8 @@ def render_html(m: dict) -> str:
         e.append("<tr><td>-</td><td colspan=\"6\">No findings were reported by the tools that ran.</td><td>Not retested</td></tr>")
     e.append("</table><h3>Finding details</h3><ul>")
     for f in f_all:
-        e.append(f"<li><b>{f['id']}</b> ({f['severity']}, <code>{h(f['rule'], 120)}</code>): {h(f['message'], 600)}</li>")
+        e.append(f"<li><b>{f['id']}</b> ({f['severity']}, <code>{h(f['rule'], 120)}</code>, fingerprint <code>{f['fp']}</code>): "
+                 f"{h(f['message'], 600)}</li>")
     e.append("</ul><h2>Attack chains</h2>")
     if m["chains"]:
         e.append("<table><tr><th>Findings</th><th>Place</th><th>Combined severity</th><th>Path</th></tr>")
@@ -701,6 +1103,16 @@ def print_pdf(html_path: Path, pdf_path: Path, browser: str | None = None) -> tu
 
 # --- main --------------------------------------------------------------------------------------------------
 
+def safe_stdout() -> None:
+    """A project folder or a finding can hold characters the console's code page has no letter for (cp1252 on a piped
+    Windows console). Printing them must not end the run after the files were written."""
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def inside(root: Path, p: str | None, default: str | None) -> Path | None:
     v = p or default
     if not v:
@@ -721,9 +1133,12 @@ def main(argv=None) -> int:
     ap.add_argument("--dast", default=None)
     ap.add_argument("--retest", default=None)
     ap.add_argument("--artifacts", default=None)
+    ap.add_argument("--review", default=None, help="findings from the code review (default .security/review-findings.json)")
+    ap.add_argument("--coverage", default=None, help="review coverage per class (default .security/coverage.json)")
     ap.add_argument("--out", default=".security")
     ap.add_argument("--pdf", action="store_true", help="also print REPORT.pdf with a local headless Chromium or Edge")
     a = ap.parse_args(argv)
+    safe_stdout()
     root = Path(a.root).resolve()
     sec = root / ".security"
     findings = inside(root, a.findings, ".security/findings.json")
@@ -732,15 +1147,44 @@ def main(argv=None) -> int:
         return 3
     def opt(v, name):
         q = inside(root, v, None) if v else (sec / name)
-        return q if q and q.is_file() else None
-    model = build(root, findings, opt(a.before, "findings-before.json"), opt(a.dast, "dast-findings.json"),
-                  opt(a.retest, "retest.json"), opt(a.artifacts, "artifacts.json"))
+        return q if q and os.path.lexists(q) else None      # a folder with that name is "there but unreadable", not absent
     out = inside(root, a.out, ".security")
+    try:
+        model = build(root, findings, opt(a.before, "findings-before.json"), opt(a.dast, "dast-findings.json"),
+                      opt(a.retest, "retest.json"), opt(a.artifacts, "artifacts.json"),
+                      opt(a.review, "review-findings.json"), opt(a.coverage, "coverage.json"))
+        md_text, html_text = render_md(model), render_html(model)
+    except Exception as ex:             # result files are attacker-controlled: a message, never a traceback
+        print(f"NOTE: the report could not be built from the result files ({type(ex).__name__}); check that they are valid JSON")
+        return 3
     out.mkdir(parents=True, exist_ok=True)
-    (out / "REPORT.md").write_text(render_md(model), encoding="utf-8")
-    (out / "REPORT.html").write_text(render_html(model), encoding="utf-8")
+    state = {"verdict": model["verdict"], "why": visible(model["why"]), "readiness": model["readiness"],
+             "readiness_why": [visible(x) for x in model["readiness_why"]], "risk": model["risk"], "date": model["date"],
+             "counts": counts(model["findings"]), "not_examined": model["coverage"]["open"],
+             # what a retest entry names a finding by: the number can change between runs, the fingerprint does not
+             "fingerprints": {f["id"]: f["fp"] for f in model["findings"]}}
+
+    def put(name, text):                # a new file moved into place: a hard link or link planted at the name is
+        tmp = out / f"{name}.{os.getpid()}.tmp"      # replaced, never written through
+        try:
+            with open(tmp, "w", encoding="utf-8", errors="replace", newline="\n") as fh:
+                fh.write(text)
+            os.replace(tmp, out / name)
+        finally:
+            if os.path.lexists(tmp):
+                os.unlink(tmp)
+    try:
+        put("REPORT.md", md_text)
+        put("REPORT.html", html_text)
+        put("report-state.json", json.dumps(state, indent=1) + "\n")
+    except OSError as ex:               # a folder or a locked file where a report file goes
+        print(f"NOTE: the report could not be written in {out} ({type(ex).__name__}); remove or close what is at "
+              "REPORT.md, REPORT.html and report-state.json there")
+        return 3
     print(f"Wrote {out / 'REPORT.md'} and {out / 'REPORT.html'}")
     print(f"Verdict: {model['verdict']} ({visible(model['why'])}); findings: {counts(model['findings'])}")
+    if model["coverage_on"]:
+        print(f"Handover readiness: {model['readiness']} ({'; '.join(visible(x) for x in model['readiness_why'])})")
     if a.pdf:
         ok, msg = print_pdf(out / "REPORT.html", out / "REPORT.pdf")
         print(("" if ok else "NOTE: ") + msg)

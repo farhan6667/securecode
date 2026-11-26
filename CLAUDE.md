@@ -16,13 +16,18 @@ Security is mandatory for all AI-generated or AI-assisted code. This file is a d
 - Use explicit CORS and redirect allowlists where cross-origin/redirect behavior is required.
 - Keep dependencies pinned/lockfile-backed and investigate known vulnerabilities before adding packages.
 
-## After coding
-- Add normal tests plus negative/security tests for the changed behavior.
+## After coding a feature
+- Add normal tests plus negative/security tests for the changed behavior, and run the project's tests.
+- Fix any High/Critical the hooks reported. Do not suppress a finding merely to make a check pass.
+- Do not run the full gate, DAST or a deep review on your own between features: that is "Run Security Test",
+  CI, and release time (below), so coding keeps moving and credits are not spent twice.
+- Do not state that an automated scan proves the application is secure; report residual risk.
+
+## On "Run Security Test", in CI and before a release
 - Run the org gate from the project root: `python "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests`.
 - Run the project's build, lint, type-check and tests.
 - For an authorized non-production environment, set `SECURITY_DAST_URL` and `SECURITY_DAST_ALLOW=true` and run the DAST gate.
-- Fix Critical/High findings and re-test. Do not suppress a finding merely to make CI pass.
-- Do not state that an automated scan proves the application is secure; report residual risk.
+- Fix Critical/High findings and re-test.
 
 ## AI agent behavior
 When you modify code, you are responsible for both implementation and verification. If a security finding cannot be safely auto-fixed, stop and explain the exact manual decision required.

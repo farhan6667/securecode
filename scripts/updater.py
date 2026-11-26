@@ -221,6 +221,11 @@ def token():
     return None
 
 
+def retry_without_token(e) -> bool:
+    """401, 403 (not a rate limit) or 404 with a token: worth one more try without it."""
+    return isinstance(e, urllib.error.HTTPError) and e.code in (401, 403, 404) and not rate_limit_until(e)
+
+
 def api(url: str, tok: str, accept="application/vnd.github+json"):
     # Only GitHub's API over HTTPS: release JSON is remote data, so a URL in it must never point at
     # file://, another host, or plain HTTP (the token is sent with every request).
@@ -356,8 +361,19 @@ def check_and_update(cfg: dict, tok: str | None, *, fetch=None, workdir: Path | 
     try:
         if fetch is None:
             # tok may be None: fine for a public repo; a private repo then answers 404 and the check fails visibly.
-            with api(f"https://api.github.com/repos/{repo}/releases/latest", tok) as r:
-                rel = json.load(r)
+            url = f"https://api.github.com/repos/{repo}/releases/latest"
+            try:
+                with api(url, tok) as r:
+                    rel = json.load(r)
+            except urllib.error.HTTPError as e:
+                if not (tok and retry_without_token(e)):
+                    raise
+                # A public repo needs no token, and a gh login for another account, an expired token or an SSO rule
+                # answers 401, 403 or 404 for it. Ask once more as nobody; a private repo then fails visibly.
+                log(f"release check with the gh login answered HTTP {e.code}; trying once without a token")
+                tok = None
+                with api(url, None) as r:
+                    rel = json.load(r)
         else:
             rel = fetch("release", None, None)
     except urllib.error.HTTPError as e:
@@ -387,7 +403,14 @@ def check_and_update(cfg: dict, tok: str | None, *, fetch=None, workdir: Path | 
         zp, sp = tmp / asset, tmp / (asset + ".sig")
         for name, dest in ((asset, zp), (asset + ".sig", sp)):
             try:
-                (fetch or (lambda k, u, d: download(u, tok, d)))("asset", assets[name], dest)
+                try:
+                    (fetch or (lambda k, u, d: download(u, tok, d)))("asset", assets[name], dest)
+                except urllib.error.HTTPError as e:
+                    if not (tok and fetch is None and retry_without_token(e)):
+                        raise
+                    log(f"download of {name} with the gh login answered HTTP {e.code}; trying once without a token")
+                    tok = None
+                    download(assets[name], None, dest)
             except IncompleteDownload as e:
                 log(f"download of {name} incomplete: {e}")
                 return "download-incomplete"
