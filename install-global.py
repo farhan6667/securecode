@@ -215,7 +215,7 @@ def install_commands():
     src=PKG/".claude/commands"
     dst=claude_dir()/"commands"
     results={}
-    for name in ("security-gate.md","sec-review.md","advisory-qa.md"):
+    for name in ("security-gate.md","sec-review.md","advisory-qa.md","complete-security-test.md"):
         s=src/name
         if s.exists():
             results[name]=install_file(s,dst/name,overwrite=True)

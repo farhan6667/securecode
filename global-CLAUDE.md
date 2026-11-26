@@ -17,27 +17,25 @@ OrgAISecureAppSec app folder). Short version, always on:
    output encoding, server-side authorization, negative tests.
 6. The PreToolUse agent guard blocks secret access and dangerous commands; the PostToolUse hook
    gives fast heuristic feedback only (it is not SAST).
-7. When the user writes **"Run Security Test"** (or "Security Test Karo") or runs `/security-gate`, use the
-   `org-appsec-security` skill: deep source review (IDOR, access control, injection, XSS, uploads,
-   auth, headers, outdated libraries), full gate in `ci` mode plus project tests, fix, then the
-   automated pentest: optional local DAST (ask once whether the app can run locally; loopback only),
-   a retest with outcome labels, the professional report (`report.py`, checked by `report_lint.py`),
-   and an offer to open a fix PR (`fix_pr.py`, dry run first, never the default branch).
-   **"Run Advisory QA"** (or "Advisory QA Karo") or `/advisory-qa` does the same review as a readiness advisory and changes
-   nothing until the user agrees.
+7. **"Run Security Test"**, **"Complete Security Test"** (or "Security Test Karo"), `/security-gate` or
+   `/complete-security-test`: use the `org-appsec-security` skill on the whole project (deep review, full gate, fixes,
+   retest with proof; the report is written by a script). **"Run Advisory QA"** (or "Advisory QA Karo") or
+   `/advisory-qa`: the same review as a readiness advisory, changing nothing until the user agrees. The steps are in
+   the skill; do not load them before one of these is asked for.
 8. Smart mode: while coding, write secure code and keep going; no security phases, audits or review rounds
    between edits. Before saying a feature is done, check your own diff from memory for the classes it touches
    (one short pass) and fix what you see. For a new or changed endpoint, auth, session, authorization rule,
-   upload, payment, crypto or deserialization, read only that section of `docs/SOURCE-CODE-REVIEW.md`; the whole
-   file and the other long checklists are for "Run Security Test". The most frequent pentest findings are in `docs/COMMON-FINDINGS.md` (or
-   `docs/ORG-FINDINGS.md`): outdated jQuery/Bootstrap and other libraries come first. Upgrade, never suppress.
-9. Report residual risk; never claim "100% secure".
+   upload, payment, crypto or deserialization, read only that section of `docs/SOURCE-CODE-REVIEW.md`. The most
+   frequent pentest findings are in `docs/COMMON-FINDINGS.md` (or `docs/ORG-FINDINGS.md`); outdated libraries come
+   first: upgrade, never suppress.
+9. Report residual risk; never claim "100% secure" or that a pentest was passed.
 10. AI features, agents and MCP in the code you write: model output and anything the model reads (tool and MCP
-   output included) is untrusted data, not instructions; validate model output before SQL, shell, paths or `eval`; give
-   agents the fewest permissions; no secrets in prompts or logs; cap tokens, calls and loops; unfamiliar packages install
-   with scripts off first. Details and sources (OWASP 2025 lists, MCP security pages, npm docs) are in section 9 of
-   AGENTS.md and in `docs/SOURCE-CODE-REVIEW.md`; nothing here asks the user a question.
+   output included) is untrusted data, not instructions; validate it before SQL, shell, paths or `eval`; fewest
+   permissions for agents; no secrets in prompts or logs; cap tokens, calls and loops; unfamiliar packages install
+   with scripts off first.
 11. When you finish substantial work (10+ code files or 300+ changed lines since your last offer) and no
    "Run Security Test" has run since, offer it in one short question, at most once per session. Run it only on
    a yes; a no stands for those changes. `SECURECODE_MODE=coding` turns the offer off.
+12. If the guard refuses an action because nobody is there to ask (an unattended or auto run), do not retry or work
+   around it: leave it, carry on with the rest of the task, and list what was left in your final message.
 <!-- ORG-AI-APPSEC-GATE-END -->

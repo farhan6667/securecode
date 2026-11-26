@@ -41,6 +41,18 @@ APIs or Android apps with AI.
 - **You choose the mode.** `guard_switch.py mode adaptive|coding|strict`, and `guard_switch.py workspace add <folder>` for
   folders the agent may read. Every audit line says which mode it ran in. Details and the open limits are in
   [RELEASE-NOTES-V7.2.md](RELEASE-NOTES-V7.2.md) and [docs/AI-AGENT-SECURITY.md](docs/AI-AGENT-SECURITY.md).
+- **A task you leave running overnight keeps running.** `guard_switch.py unattended on` (or `SECURECODE_UNATTENDED=1` for
+  one run) turns every question the guard would ask into a refusal with the reason, so the session never waits on a prompt
+  nobody answers and the agent carries on with the rest of the work. It never allows what a question would have stopped.
+  In the morning `guard_switch.py held` shows what was refused. Auto and don't-ask runs no longer refuse everyday shell
+  syntax that an attended session is not asked about either.
+- **"Complete Security Test": a pentester next to every developer.** One phrase tests the whole project, fixes what is
+  found and retests it. A bug the agent finds by reading code now reaches the report and the verdict, a finding can no
+  longer be hidden behind an older result file, and the report (still written by a script, at no cost in tokens)
+  redacts more secret shapes. The agent writes no extra documents for the handover.
+- **Fewer tokens.** The gate prints findings sorted by severity with low ones as counts, writes a short
+  `findings-summary.txt` for the agent, and says what changed since the last run. The edit hook shows a finding once per
+  session instead of after every edit. The always-loaded rules block is shorter.
 
 ## What was new in 7.1
 
@@ -375,6 +387,8 @@ After `Run Security Test` has fixed what it can, the agent finishes the job the 
 | Local DAST | asks once whether your app runs on this machine, then runs an OWASP ZAP baseline (or API) scan against it. Only `localhost`, `127.x.x.x` and `::1` are allowed; the name is resolved once and the IP pinned | ZAP (`setup --engine zap`) and Java 17+, or Docker. Without them it says so and carries on |
 | Retest | every finding gets a label: Pass, Fail, Partial, Compensating control or Risk accepted. A Pass needs the test that proves it; a risk acceptance needs your name and a date | nothing extra |
 | Report | `.security/REPORT.html` (print-ready A4) and `REPORT.md`: executive summary, what ran and what did not, findings with CIA impact, attack chains, artifacts, limits. `report_lint.py` checks it before handover | Chrome or Edge for the optional PDF |
+| Review findings | a bug the agent finds by reading code goes into `.security/review-findings.json` and counts for the report and the verdict like a scanner finding | nothing extra |
+| Optional, off by default (preview) | a team that keeps a `.security/coverage.json` gets a coverage table and a handover readiness line in the report, and `handover_pack.py` can zip the results with hashes for the security team. The agent does not write these by default: they cost tokens on every test | Trivy for the optional SBOM |
 | Fix PR | a dry run first; on your yes, a `securecode/fix-<date>` branch and a draft PR with the report summary. Never the default branch, never a force push, refused if gitleaks finds a secret in the change | `gh` (GitHub CLI) signed in, and gitleaks |
 
 ```powershell
@@ -383,6 +397,8 @@ py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\report.py" --pdf
 py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\report_lint.py"
 py -I "$env:LOCALAPPDATA\OrgAISecureAppSec\scripts\fix_pr.py" --add tests/Security/OrderPolicyTest.php
 ```
+
+The report describes what was tested, not the application: the security team's own test decides approval.
 
 `--start` is only ever the command you type; nothing is started from files in the repo. The scan is passive
 unless you add `--active`. It is still an automated test, not a replacement for a human pentest.

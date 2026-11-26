@@ -154,8 +154,18 @@ after a block (a secret read, pipe-to-shell, the agent's own files), after three
 minutes after a download. The memory is `<app>/cache/guard-session-<hash of the session id>.json`, never in the project. An
 event without a session id cannot escalate (Claude Code, Codex, Gemini CLI, Cursor and Antigravity all send one and the
 adapters pass it on). Pin the mode with `guard_switch.py mode coding|strict|adaptive`; a pinned mode never changes by itself.
-Auto, don't-ask, bypass and managed are always strict. The policy file can also list `workspace_roots` and `remote_wrappers`
-(extra names that take `host command` like ssh), both read from the owner's policy file only.
+Bypass and managed are always strict. An auto or don't-ask run reads like an attended one (coding until a risk signal, and
+strict when the event has no session id), because coding mode asks nobody anyway. The policy file can also list
+`workspace_roots` and `remote_wrappers` (extra names that take `host command` like ssh), both read from the owner's policy
+file only.
+
+**A task you leave running.** Switch unattended mode on before you go: `py -I guard_switch.py unattended on` in your own
+terminal, or `SECURECODE_UNATTENDED=1` in the environment of that one run. Every question the guard would ask then becomes a
+refusal with the reason, so the session never waits on a prompt nobody answers, and the agent is told to carry on with the
+rest of the work. It never allows what a question would have stopped, in owner or managed mode. In the morning
+`py -I guard_switch.py held` lists what was refused or blocked, grouped with counts (`held clear` empties it), and a security
+test that became due overnight is on the same list instead of being asked to nobody. Unattended mode covers the guard's
+questions only: the AI tool's own permission prompts are its own, so use its auto or accept mode for an overnight run.
 
 Never different between the two: the hard denies (secrets, pipe-to-shell and `curl | bash`, the guard's own folders and
 `guard-policy.json`, `~/.claude`, `rm -rf ~`), and the questions about an unknown program, `sudo`, a destructive or exposing
@@ -235,6 +245,8 @@ py -I guard_switch.py on
 py -I guard_switch.py mode adaptive|coding|strict
 py -I guard_switch.py workspace add <folder>
 py -I guard_switch.py workspace clear
+py -I guard_switch.py unattended on|off
+py -I guard_switch.py held
 ```
 
 Off switches off the `PreToolUse` command guard (`agent_guard.py`) and nothing else. The secure-coding rules, the check

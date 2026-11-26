@@ -3,11 +3,13 @@
 
 Smart mode (7.1): it costs the agent nothing while code is clean. A clean result prints nothing (no context is
 added to the model) and clean content is not checked twice (a small cache in the app folder, never in the
-project); a High or Critical finding adds a short note with only those lines, every time that content is checked.
+project); a High or Critical finding adds a short note with only those lines. Within one session the same set of
+findings in the same file is shown in full once and then as one short line (7.2); another session always gets the
+full lines, and so does an event with no session id.
 Deep review belongs to "Run Security Test"; blocking belongs to the Stop gate and to CI.
 SECURECODE_HOOK_VERBOSE=1 restores the full report after every edit.
 """
-import hashlib, json, os, stat, subprocess, sys, time
+import hashlib, json, os, re, stat, subprocess, sys, time
 from pathlib import Path
 
 CACHE_MAX = 400                 # entries; the oldest go first
@@ -22,6 +24,11 @@ def cache_dir() -> Path:
 
 def cache_file() -> Path:
     return cache_dir() / "edit-hook.json"
+
+
+def seen_file() -> Path:
+    """What this session was already shown, per file. Same folder and rules as the clean cache, never the project."""
+    return cache_dir() / "edit-hook-seen.json"
 
 
 def _plain(p: Path) -> bool:
@@ -66,11 +73,22 @@ def save_cache(f: Path, data: dict, cap: int = CACHE_MAX) -> None:
         pass
 
 
-def serious_only(out: str) -> str:
+def serious_lines(out: str) -> list:
+    return [ln[:400] for ln in out.splitlines() if ln.startswith(("[CRITICAL]", "[HIGH]"))]
+
+
+def finding_set(out: str) -> str:
+    """A hash of the High and Critical lines with the line numbers taken out, so the same findings moved down by an
+    edit above them are the same set, and one more finding (even an identical one on another line) is a new set."""
+    lines = sorted(re.sub(r":\d+(?= |$)", "", ln, count=1) for ln in serious_lines(out))
+    return hashlib.sha256("\n".join(lines).encode("utf-8", "replace")).hexdigest()[:32]
+
+
+def serious_only(out: str, header: bool = True) -> str:
     """The gate's header, counts and result lines plus only the High and Critical findings."""
     lines = out.splitlines()
-    head = [ln for ln in lines if ln.startswith(("=== ", "Mode:", "Counts:"))][:3]
-    bad = [ln[:400] for ln in lines if ln.startswith(("[CRITICAL]", "[HIGH]"))]
+    head = [ln for ln in lines if ln.startswith(("=== ", "Mode:", "Counts:"))][:3] if header else []
+    bad = serious_lines(out)
     bad.sort(key=lambda ln: 0 if ln.startswith("[CRITICAL]") else 1)
     tail = [ln for ln in lines if ln.startswith("RESULT:")][-1:]
     more = [f"... and {len(bad) - 30} more High/Critical lines (run the full gate for all)"] if len(bad) > 30 else []
@@ -125,13 +143,21 @@ def main():
             digest = h.hexdigest()
     except OSError:
         digest = ""
+    # Per-session memory of what was already shown for this file. The key mixes the session id in, so another
+    # session never matches it; no session id means no memory at all (the full lines every time).
+    sid = event.get("session_id")
+    sid = sid if isinstance(sid, str) and 0 < len(sid) <= 200 and not verbose else ""
+    skey = hashlib.sha256(f"{sid}|{key}".encode("utf-8", "replace")).hexdigest()[:24] if sid else ""
+    sf = seen_file()
     cf = cache_file()
     cache = load_cache(cf) if digest and not verbose else {}
     if digest and cache.get(key, {}).get("sha") == digest:
         return 0                # this exact content was already checked and found clean
     try:
         p = subprocess.run(
-            [sys.executable, "-I", str(runner), str(target), "--mode", "quick", "--fail-on", "high"],
+            # -X utf8: with -I the PYTHONIOENCODING below is ignored, and on a cp1252 console a file with a non-Latin
+            # name made the gate crash while printing, before it listed a single finding
+            [sys.executable, "-I", "-X", "utf8", str(runner), str(target), "--mode", "quick", "--fail-on", "high"],
             cwd=str(root), text=True, encoding="utf-8", errors="replace", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=110, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         # Only clean results are remembered: a finding is reported every time its content is checked, so a report
@@ -139,16 +165,36 @@ def main():
         if digest and not verbose and p.returncode == 0:
             cache[key] = {"sha": digest, "t": int(time.time()), "rc": 0}
             save_cache(cf, cache)
+        seen = load_cache(sf) if skey else {}
         if p.returncode == 0 and not verbose:
+            if skey in seen:    # fixed: forget it, so the same finding coming back later is shown in full again
+                del seen[skey]
+                save_cache(sf, seen)
             return 0            # clean (nothing at or above High): silent, no tokens spent
+        intro = "Org AppSec quick gate on the changed file (advisory; fix High/Critical before you finish):\n"
+        mark = ""
         if p.returncode not in (0, 2) and not verbose:
+            # Said every time, never remembered: a file the gate can not check is a file with no check at all, and
+            # staying silent about it for the rest of the session hid every finding in it.
             text = f"The quick gate could not run on this file (exit {p.returncode}); it was not checked."
+        elif verbose:
+            text = p.stdout[-9000:].strip()
         else:
-            text = p.stdout[-9000:].strip() if verbose else serious_only(p.stdout)   # filter first, then cut
+            n = len(serious_lines(p.stdout))
+            mark = finding_set(p.stdout) if n else ""
+            if skey and mark and seen.get(skey, {}).get("h") == mark:
+                name = re.sub(r"[^\x20-\x7e]", "?", target.name)[:80]
+                intro, text = "", (f"Org AppSec quick gate: {n} High/Critical finding(s) still open in {name} "
+                                   "(shown earlier in this session).")
+            else:
+                text = serious_only(p.stdout, header=not skey)   # filter first, then cut
         if not text:
             return 0
-        payload = {"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                   "additionalContext": "Org AppSec quick gate on the changed file (advisory; fix High/Critical before you finish):\n" + text}}
+        if skey and mark and intro:
+            # Remembered only when it is about to be shown; if the save fails, the next edit shows the full lines again.
+            seen[skey] = {"h": mark, "t": int(time.time())}
+            save_cache(sf, seen)
+        payload = {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": intro + text}}
         print(json.dumps(payload))
         return 0
     except Exception as e:

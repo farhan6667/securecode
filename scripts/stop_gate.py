@@ -39,6 +39,10 @@ OFFER_LINES = 300               # changed lines (added + deleted; an untracked f
 OFFER_MARKER = "pentest-offer.json"
 SEEN_MARKER = "stop-gate-seen.json"   # in the app cache: High/Critical findings already shown in this session
 SEEN_HOURS = 12                 # a shown finding comes back after this, so an ignored one is not forgotten
+ANY_SESSION_HOURS = 2           # only with unattended mode set in the policy file: for this long a shown finding is not
+                                # shown again to another session of the project. A loop that starts a fresh session per
+                                # step paid one extra turn per step, for ever, for one false positive. An attended
+                                # session is always told, as before.
 MARKER_MAX = 1_000_000
 CODE_EXT = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".php", ".rb", ".go", ".java", ".kt",
             ".kts", ".scala", ".cs", ".fs", ".vb", ".rs", ".swift", ".m", ".mm", ".c", ".h", ".cc", ".cpp", ".hpp", ".dart",
@@ -183,14 +187,28 @@ def coding_mode(root: Path) -> bool:
     return m.get("mode") == "coding"
 
 
-def pentest_offer(root: Path, files: list, session: str = "") -> str | None:
-    """The one-time offer text, or None. Records the offer before returning it."""
+def nobody_there(event: dict | None = None, env: bool = True) -> bool:
+    """True when the developer switched unattended mode on (guard_switch.py unattended on, or SECURECODE_UNATTENDED=1
+    when env is True). The permission mode is not a sign of it: a developer who sits in auto or bypass mode is there,
+    and still gets the security test offer. env=False reads only the policy file, which a person at a terminal sets;
+    it is used for anything that makes this gate quieter about a finding, because the variable can be set by a
+    project's own settings or by the agent."""
+    try:
+        from agent_guard import held_switch
+        return held_switch(env=env)
+    except Exception:
+        return False
+
+
+def pentest_offer(root: Path, files: list, session: str = "", record: bool = True) -> str | None:
+    """The one-time offer text, or None. Records the offer before returning it. record=False only says whether an
+    offer is due (an unattended run keeps it for the developer instead of asking nobody)."""
     if coding_mode(root):
         return None
     marker = _read_marker(root / ".security" / OFFER_MARKER)
     if marker.get("_unusable") or marker.get("disabled") is True:
         return None                     # an unreadable marker must not turn into an offer on every stop
-    if session and marker.get("session") == session:
+    if record and session and marker.get("session") == session:
         return None                     # one offer per agent session at most
     snap = marker.get("snapshot") if isinstance(marker.get("snapshot"), dict) else {}
     code = []
@@ -214,6 +232,9 @@ def pentest_offer(root: Path, files: list, session: str = "") -> str | None:
     newest = max((root / rel).stat().st_mtime for rel in delta)
     if _security_test_since(root, newest):
         return None
+    if not record:
+        return (f"a full security test is due: {len(delta)} code file(s), about {delta_lines} lines changed since the "
+                "last one. Type \"Complete Security Test\" when you are back.")
     record = {"snapshot": current, "offered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               "files": len(delta), "lines": delta_lines, "session": session[:100],
               "note": "One offer per change set. Set \"disabled\": true to stop these offers in this project."}
@@ -221,8 +242,7 @@ def pentest_offer(root: Path, files: list, session: str = "") -> str | None:
         return None                     # if we cannot remember the offer, do not risk asking at every stop
     return ("Org AppSec: before you finish, offer the developer a full security test. This work changed "
             f"{len(delta)} code file(s) (about {delta_lines} lines) and no full security test has run since. Ask one "
-            "short question, for example: \"Do you want me to run a full security test now (Run Security Test)? It "
-            "reviews the changed code for access control, IDOR, injection and the other common pentest findings.\" "
+            "short question, for example: \"Do you want me to run a full security test now (Run Security Test)?\" "
             "If they say yes, run the org-appsec-security skill (Mode B). If they say no or later, accept it and "
             "finish; you will not be asked again for these changes. Do not start the test without their yes.")
 
@@ -247,10 +267,29 @@ def _fp(root: Path, f: dict) -> str:
     return hashlib.sha256(f"{f.get('rule', '')}|{rel}|{text}".encode("utf-8", "replace")).hexdigest()[:20]
 
 
+def held_offer(root: Path, event: dict, text: str, session: str = "") -> None:
+    """Nobody is there: the offer goes on the held list (guard_switch.py held), once per session and project, and the
+    offer marker is left alone so the developer is still asked in the next attended session. Best effort."""
+    from global_hook import cache_dir, load_cache, save_cache
+    from agent_guard import held_add
+    f = cache_dir() / SEEN_MARKER
+    seen = load_cache(f)
+    key = hashlib.sha256(f"offer|{root}|{session}".encode("utf-8", "replace")).hexdigest()[:20]
+    t = seen.get(key, {}).get("t")
+    if isinstance(t, (int, float)) and not isinstance(t, bool) and 0 <= time.time() - t < SEEN_HOURS * 3600:
+        return
+    ev = {"cwd": str(root), "tool_name": "Stop", "tool_input": {}}
+    if "agent" in event:
+        ev["agent"] = event["agent"]
+    if held_add(ev, text, "offer"):
+        seen[key] = {"t": int(time.time()), "s": session[:100]}
+        save_cache(f, seen, cap=4000)
+
+
 SHOWN_MAX = 15                          # findings printed per block; only these are remembered as shown
 
 
-def new_serious(root: Path, serious: list, session: str = "") -> list:
+def new_serious(root: Path, serious: list, session: str = "", alone: bool = False) -> list:
     """High/Critical findings to show now: the ones not shown in the last SEEN_HOURS. Shown once, the agent fixed
     them or explained them; sending it back again for the same lines at every stop was the costly loop.
 
@@ -265,8 +304,11 @@ def new_serious(root: Path, serious: list, session: str = "") -> list:
 
     def valid(e):
         t = e.get("t")
-        return isinstance(t, (int, float)) and not isinstance(t, bool) and now - SEEN_HOURS * 3600 < t <= now + 60 \
-            and (not session or e.get("s") == session)
+        if not isinstance(t, (int, float)) or isinstance(t, bool) or not t <= now + 60:
+            return False
+        if alone and session and 0 <= now - t < ANY_SESSION_HOURS * 3600:
+            return True                 # a loop that starts a new session per step is not sent back at every step
+        return now - SEEN_HOURS * 3600 < t and (not session or e.get("s") == session)
     fresh = [(x, proj + ":" + _fp(root, x)) for x in serious]
     fresh = [(x, k) for x, k in fresh if not (k in seen and valid(seen[k]))]
     shown = fresh[:SHOWN_MAX]
@@ -298,13 +340,21 @@ def main() -> int:
             findings += local_scan(fp) + agent_scan(fp) + library_scan(fp) + config_scan(fp)
     except Exception:
         return 0
+    # No suppressions here, on purpose. The project's suppression file is something the agent can write, commit,
+    # git-ignore or point elsewhere, and this gate is the last local check before the agent stops. A suppressed false
+    # positive costs one line once per session; a self-suppressed real finding would cost the check.
+    away = nobody_there(event)                  # the offer is a question: nobody there, so it waits on the held list
+    alone = nobody_there(event, env=False)      # quieter about a finding: only on the word of a person at a terminal
     try:
-        offer = pentest_offer(root, files, session)
+        offer = pentest_offer(root, files, session, record=not away)
+        if away and offer:
+            held_offer(root, event, offer, session)
+            offer = None
     except Exception:
         offer = None
     serious = [f for f in findings if SEV.get(f["severity"], 9) <= SEV["HIGH"]]
     try:
-        serious = new_serious(root, serious, session)
+        serious = new_serious(root, serious, session, alone)
     except Exception:
         pass                            # cannot remember: the old behaviour, every serious finding blocks
     parts = []

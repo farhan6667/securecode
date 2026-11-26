@@ -74,23 +74,30 @@ Never "fix" by commenting code out, hiding a button, or adding headers to one pa
 
 ## 7. "Run Security Test" and "Run Advisory QA"
 
-When the developer writes **Run Security Test** (or the Roman Urdu "Security Test Karo") (or asks for a security check before handover):
+When the developer writes **Run Security Test** or **Complete Security Test** (or the Roman Urdu "Security Test Karo")
+(or asks for a security check before handover), review the whole project, not only the latest changes:
 1. Threat-model the project: assets, users, entry points, trust boundaries.
 2. Run the org gate from the project root:
    `<PY> "%LOCALAPPDATA%\OrgAISecureAppSec\scripts\secgate.py" . --mode ci --fail-on high --run-tests`
    (macOS: `~/Library/Application Support/OrgAISecureAppSec`, Linux: `~/.local/share/OrgAISecureAppSec`).
    The installed copy of this file starts that command with the full path of the Python that installed
    SecureCode. If it still shows a placeholder in angle brackets, use `py -3 -I` on Windows or `python3 -I`.
-3. Review the code against `docs/SECURITY-TEST-MATRIX.md` and `docs/AI-AGENT-SECURITY.md` in that folder.
+3. Review the code entry point by entry point against `docs/SOURCE-CODE-REVIEW.md` and
+   `docs/SECURITY-TEST-MATRIX.md` in that folder (read the section for the class you are on). Read
+   `.security/findings-summary.txt` for the gate's findings. A bug you find by reading code goes into
+   `.security/review-findings.json` (`{"findings": [{"id": "R-01", "title", "class", "severity", "file", "line",
+   "route", "message", "evidence"}]}`), or it never reaches the report.
 4. Fix what is safe to fix (copy `.security/findings.json` to `.security/findings-before.json` first),
-   show vulnerable vs fixed code for the rest, run the gate and the project tests again.
+   show vulnerable vs fixed code for the rest, run the gate and the project tests again, at most three fix rounds.
 5. Optional local DAST: ask the developer once whether the app can run on this machine. If yes, run
    `scripts/local_dast.py --target http://127.0.0.1:<port>` from that folder, with `--start "<command>"` only when
    the developer typed the command. It scans loopback only and notes, not fails, when ZAP or Docker is missing.
-6. Retest every finding with an outcome label in `.security/retest.json`: Pass (only with the test or
+6. Retest every finding with an outcome label in `.security/retest.json`, naming its id and its fingerprint (run
+   `scripts/report.py` once; they are in `.security/report-state.json` under `fingerprints`): Pass (only with the test or
    command that proves it, after trying a variant), Fail, Partial, Compensating control, or Risk
    accepted (only with the developer's name and date). Check for the same bug elsewhere.
-7. Write the professional report with `scripts/report.py --pdf` and check it with `scripts/report_lint.py`.
+7. Let `scripts/report.py --pdf` write the report (a script, no tokens) and check it with `scripts/report_lint.py`.
+   Write no other document for the handover, and do not read the report back.
 8. Report: verdict (PASSED / FAILED / BLOCKED) with risk rating, a findings table
    (# | issue | severity | file | impact and root cause), the fixed code, the path to `.security/REPORT.html`,
    and the command the developer can run to confirm. Never call the project "100% secure"; list what was not checked.

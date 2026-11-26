@@ -1595,6 +1595,195 @@
       "check": "none yet",
       "status": "open",
       "fix": "open: planned for 7.3: treat an option value with whitespace, a semicolon, a pipe or a command substitution as a command string for any tool that can run programs, or deny unlisted options on those tools"
+    },
+    {
+      "id": "V72-36",
+      "severity": "high",
+      "where": "agent_guard.py run_style, apply_policy, decide",
+      "what": "An unwatched session in default, plan or accept-edits mode, and every other AI tool, was treated as attended: each question the guard asked (an unknown program, a loop, kill, a named install, a force push) waited all night for an answer. A managed install asked about installs even in auto mode.",
+      "check": "pytest tests/test_unattended_held.py -k never_asks",
+      "status": "fixed",
+      "fix": "unattended mode (SECURECODE_UNATTENDED=1 or guard_switch.py unattended on) turns every question into a refusal with the reason in owner and managed mode and in every permission mode; the tests hold that it never turns a question or a deny into an allow"
+    },
+    {
+      "id": "V72-37",
+      "severity": "medium",
+      "where": "agent_guard.py guard_mode, _state_note",
+      "what": "Auto and don't-ask runs were always strict, so everyday shell syntax that an attended session gets without a question (a substitution in echo, a here-document commit message) was refused all night. A question refused only because nobody could be asked was stored as a block, which made the session strict for two hours and renewed itself.",
+      "check": "pytest tests/test_unattended_held.py -k \"coding_reading or refused_question\" tests/test_guard_adaptive_mode.py -k unattended",
+      "status": "fixed",
+      "fix": "an owner-mode auto, don't-ask or held run gets the coding reading until a risk signal, and never without a session id; a refused question counts as a question; a parity test holds that nothing is allowed that the attended coding reading does not allow"
+    },
+    {
+      "id": "V72-38",
+      "severity": "medium",
+      "where": "stop_gate.py pentest_offer, new_serious, main",
+      "what": "In an unattended run the stop gate told the agent to ask the developer a question, so the run ended on a question to nobody. A finding already shown was sent back to every new session, so a loop that starts a session per step paid an extra turn per step.",
+      "check": "pytest tests/test_unattended_held.py -k \"stop or offer or suppression or shown_finding\"",
+      "status": "fixed",
+      "fix": "with the switch on the offer goes on the held list and is asked in the next attended session; only with the switch set in the policy file a shown finding is kept from other sessions for two hours; the stop gate honours no suppression file (see V72-47)"
+    },
+    {
+      "id": "V72-39",
+      "severity": "high",
+      "where": "report.py verdict, build",
+      "what": "The report said PASSED when the scanners ran and no High or Critical scanner finding was open, even if no code review was done at all. A bug the agent found by reading code (IDOR, logic) had no place in the report, no retest row and no effect on the verdict.",
+      "check": "pytest tests/test_handover_pack.py -k \"not_ready or review_finding or coverage\"",
+      "status": "fixed",
+      "fix": "review findings (.security/review-findings.json) count like scanner findings; a coverage table of 24 review classes and a handover readiness (READY FOR PENTEST REVIEW, CONDITIONALLY READY, NOT READY) are in the report, and a clean scan with no recorded review is NOT READY"
+    },
+    {
+      "id": "V72-40",
+      "severity": "medium",
+      "where": "report_lint.py, SKILL.md, global-CLAUDE.md",
+      "what": "The lint did not refuse 'pentest passed', 'production ready' or 'no issues found', and the skill and rules called the tool's own work a pentest and said code would pass one. Nothing checked that a report with a READY line had examined every class. The fix loop had no round limit.",
+      "check": "pytest tests/test_handover_pack.py -k lint",
+      "status": "fixed",
+      "fix": "the lint refuses those claims, requires the coverage table and refuses a READY claim over an unexamined class; the wording says pre-pentest review; the skill stops after three fix rounds"
+    },
+    {
+      "id": "V72-41",
+      "severity": "low",
+      "where": "scripts/handover_pack.py (new)",
+      "what": "There was no single pack for the security team: no tested commit, no hashes, no list of what was not tested. New code that reads agent-written files and builds a zip, so its own inputs are attacker-controlled.",
+      "check": "pytest tests/test_handover_pack.py -k \"pack or zip or link or secrets or stale\"",
+      "status": "fixed",
+      "fix": "handover_pack.py redacts every text and JSON string again, reads only plain files in .security, refuses a stale or lint-failing report, and --verify reads a pack in memory and refuses unexpected names"
+    },
+    {
+      "id": "V72-O9",
+      "severity": "medium",
+      "where": "handover_pack.py, coverage.json, held list",
+      "what": "The handover pack is not signed, and the coverage file and held list are written by the agent's own session. A person or agent who wants to mislead can write false coverage or rebuild a pack. The hashes show a change after the build, not the author, and nothing verifies that coverage evidence is good.",
+      "check": "none: accepted limit, stated in RELEASE-NOTES-V7.2.md and SECURITY-CONTEXT.md",
+      "status": "open",
+      "fix": "open: planned: sign the pack with a key the security team registers, and build it in CI from the tested commit instead of on the developer's machine"
+    },
+    {
+      "id": "V72-O10",
+      "severity": "medium",
+      "where": "scripts/local_dast.py",
+      "what": "Local DAST has no login option, so the scan sees only what an anonymous visitor sees. The report says DAST ran without saying it was unauthenticated.",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: planned for 7.3: a header or ZAP context for two test users, and an 'authenticated: yes or no' line in the report limits"
+    },
+    {
+      "id": "V72-42",
+      "severity": "high",
+      "where": "report.py build, apply_retests, norm_finding, findings_of, readiness",
+      "what": "Review round 1 of the new handover code. Readiness was too generous: an emptied findings-before.json hid a Critical the latest run reports; a Pass was accepted for a finding still in findings.json when no before file existed; a made-up R-01 closed a review finding that gave no id; a review severity such as 'high ' or 'P1' became informational; a compensating control on a Critical needed no evidence or name; the 2000-entry cap was applied before sorting so noise could push a Critical out; entry point counts such as 'all' or a missing reviewed count were ignored; evidence of 1 or 'x' counted; a DAST file that only said ran counted as a scan.",
+      "check": "pytest tests/test_handover_pack.py -k \"emptied_before or still_reports or made_up_id or odd_severity or own_say or two_thousand or loose_entry or not_real_text or only_says_ran\" tests/test_v7_pentest.py -k \"retest_outcome or verdicts\"",
+      "status": "fixed",
+      "fix": "the latest gate run is the truth: its findings are open whether or not an older file lists them, and a Pass is checked against it; review findings with an automatic id match a retest by fingerprint only; an odd review severity is High; evidence must be real text; counts must be plain numbers; an unfixed Critical or High that was accepted or compensated is NOT READY; sort before the cap and say when findings did not fit"
+    },
+    {
+      "id": "V72-43",
+      "severity": "high",
+      "where": "handover_pack.py build, verify, _clean_json",
+      "what": "Review round 1. The pack took verdict and readiness from report-state.json and copied REPORT.md and REPORT.html from disk, so an edited state file, or results changed after the report was written, gave a READY pack with exit 0, and a planted REPORT.html with a script and a token was copied as is. JSON redaction lost key context, so a value under a key named password and several token shapes (Slack webhook, SendGrid, npm, Google OAuth, Basic auth) survived. Verify said a pack 'was not changed after it was built' when the manifest had been edited with the file, and passed a pack that held only a manifest.",
+      "check": "pytest tests/test_handover_pack.py -k \"builds_its_own_report or changed_after_the_report or planted_html or only_a_manifest or secret_named_keys or verifies\"",
+      "status": "fixed",
+      "fix": "the pack builds the report and the state itself from the result files and never copies them; values under secret-named keys and the extra token shapes are redacted in report.py and in the pack; verify needs the core files and one readiness across manifest, state and report, says CONSISTENT without --expect-sha256 and PASS only when the pack hash equals the one sent separately"
+    },
+    {
+      "id": "V72-44",
+      "severity": "medium",
+      "where": "report_lint.py lint",
+      "what": "Review round 1. The READY check missed a claim dressed as HTML, a list item, emphasis or another label, and counted coverage rows without matching them to the review classes, so 24 copies of one row passed. One 120 KB line took 39 seconds because the negation search started at the line start for every match. The new overclaim patterns failed honest sentences and quoted code ('no issues found is never claimed', a TODO that says production-ready).",
+      "check": "pytest tests/test_handover_pack.py -k \"however_it_is_dressed or matches_coverage_rows or honest_sentences or very_long_line\"",
+      "status": "fixed",
+      "fix": "markup is stripped before the ready check and a readiness or handover label whose first word is READY counts; each coverage row must be one of the review classes, once; the negation search reads 80 characters; the test-claim patterns run on prose only and skip a sentence that denies or reports the claim"
+    },
+    {
+      "id": "V72-45",
+      "severity": "medium",
+      "where": "secgate.py unique_findings, compact_view, safe_text, previous_run",
+      "what": "Review round 1 of the new short listing. Different findings with the same rule, file and line were merged (two end-of-life libraries, one CVE in two packages); Critical lines could be cut to make room for Low count lines; U+2028 and U+2029 in finding text started a new line that the edit hook reads as a finding; a 9.5 MB planted previous findings.json took 57 seconds.",
+      "check": "pytest tests/test_token_cuts.py",
+      "status": "fixed",
+      "fix": "the message and code are part of the dedupe key; Critical and High are printed first and never cut for a lower one; every character splitlines() breaks on is replaced; the previous file is capped at 5 MB and 5000 entries and compared with string work only"
+    },
+    {
+      "id": "V72-46",
+      "severity": "medium",
+      "where": "agent_guard.py run_style, decide, _state_note; stop_gate.py nobody_there, main; guard_switch.py held",
+      "what": "Review round 1 of unattended mode. The permission mode was read before the switch, so with the switch on a bypass run still allowed a force push, an auto run still passed named installs on and a managed install still asked. The environment variable (which a project's settings can set) made the stop gate quieter about a finding, and auto or bypass mode alone removed the test offer for a developer who was there. The stop gate honoured a suppression file the agent had just written. 'Soft' was taken from the strict replay, so a secret read was stored as a question when the replay did not finish. Risk signals were per session only. The held report crashed on a piped Windows console and printed terminal escapes raw; a full list was silent.",
+      "check": "pytest tests/test_unattended_held.py -k \"every_permission_mode or replay_does_not_finish or timeout or follows_the_project or switch_not_the_permission or variable_alone or changed_in_this_working_tree or full_list or repaint\"",
+      "status": "fixed",
+      "fix": "the switch is read first; soft is decided from the refusal itself and a timeout is a block; a block with nobody there is also remembered per project for two hours; the stop gate diverts the offer only with the switch and is quieter about a finding only on the policy file's word; a suppression file among the changed files is not used; the held report is escaped ASCII and a full list says so once"
+    },
+    {
+      "id": "V72-O11",
+      "severity": "low",
+      "where": "agent_guard.py held_add, global_hook.py seen memory, handover_pack.py _read_plain",
+      "what": "Open from review round 1, not fixed: the held list is keyed by the event's working folder when the AI tool sends no project folder, so a refusal from a subfolder lands on another list; the edit hook's once-per-session memory hashes finding lines without line numbers, so a fixed finding replaced by a new one of the same rule and text is shown as 'still open' instead of in full; the lstat-then-open sequences have a race window on Windows, which has no O_NOFOLLOW; a project's trivy.yaml may shape the optional SBOM; and whether an AI tool passes a project's settings env to hooks was not verified.",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: planned for 7.3"
+    },
+    {
+      "id": "V72-47",
+      "severity": "medium",
+      "where": "stop_gate.py main (draft of 7.2 only, never released)",
+      "what": "Review round 2. A draft made the stop gate apply the project's suppression file unless that file was among the changed files. The agent controls that: it could commit the file, git-ignore it, make config a nested repository, point SECGATE_SUPPRESSIONS at another file, push it past the 300-file cap or mark it skip-worktree, and then stop clean with its own High finding suppressed. Also: a held list one long line past its cap went silent with no marker, blocks were never pruned by count while the scan read 700 entries, and secrets given as option values (-pSecret, -u user:pass, --cookie) were stored on the held list.",
+      "check": "pytest tests/test_unattended_held.py -k \"never_uses_a_suppression or full_list or many_blocks or option_values\"",
+      "status": "fixed",
+      "fix": "the stop gate honours no suppression file, as in 7.1; the full marker is written whatever the size; 200 blocks are kept per folder and the scan reads 5000 entries; option values are redacted in the audit and the held list"
+    },
+    {
+      "id": "V72-48",
+      "severity": "high",
+      "where": "report.py load_json, build, apply_retests, norm_finding, rel_path, clean; report_lint.py; handover_pack.py verify; global_hook.py",
+      "what": "Review round 2. A review-findings.json saved with a byte order mark, as UTF-16, with a trailing comma, as a list or with a wrong key was dropped silently and the result was READY. When findings.json was not an object, the older findings-before.json was taken as the latest run. A review finding with no severity key was informational. A retest entry matched by position moved to another finding when a new one appeared, and one Pass closed two findings with the same fingerprint. The lint refused reports the tool had written itself when the project folder, a code line or a file name held an overclaim word, which stopped every pack for that project. A quoted secret with a comma was written unredacted. A lone surrogate, an odd tool_status shape or line 1e999 gave a traceback. A UNC path from a result file was resolved (present since 7.0). Verify echoed manifest file names raw. The edit hook's new memory of 'could not run' hid every finding in a file the gate crashed on, which it did for a non-Latin file name on a cp1252 console. Inputs of 20 MB took minutes.",
+      "check": "pytest tests/test_handover_pack.py -k \"byte_order or unreadable or older_copy or no_severity or does_not_move or two_findings or project_name or quoted_secret or traceback or another_host or hostile_file_name or big_inputs\" tests/test_token_cuts.py -k \"every_time or non_latin\"",
+      "status": "fixed",
+      "fix": "result files are read as UTF-8 with or without a mark or as UTF-16, and a file that is there but unusable gives BLOCKED and is named; a missing severity on a review finding is High; ids are trusted only where they can not move and a shared fingerprint closes neither; the lint reads what the report says, not what it quotes; clean() withholds a cell the detector still flags; text is made encodable and main() answers with a message; paths are string work only; verify refuses unsafe listed names; the hook starts the gate with -X utf8 and never remembers 'could not run'; fields and entry counts are cut on the way in"
+    },
+    {
+      "id": "V72-O12",
+      "severity": "low",
+      "where": "report.py verdict, report_lint.py, handover_pack.py redaction",
+      "what": "Open from review round 2: a tool_status that names only one scanner still gives PASSED when that one ran; a hand-edited report can state readiness in words the lint does not know ('pentest-ready', 'passed all penetration tests'); some secret shapes are not redacted in pack members (a number or object under a secret-named key, DB_PASS=, Telegram tokens, the tail of a URL password that holds an @).",
+      "check": "none yet",
+      "status": "open",
+      "fix": "open: planned for 7.3. The pack rebuilds the report, so a hand-edited report does not reach the security team through the pack."
+    },
+    {
+      "id": "V72-49",
+      "severity": "high",
+      "where": "handover_pack.py build; report.py apply_retests, redact, unusable; report_lint.py lint; secgate.py unique_findings",
+      "what": "Review round 3. The pack skipped a result file that was present but not plain (a hard link, a folder, over 50 MB), so a hard-linked review-findings.json with an open High gave a READY pack while report.py said NOT READY. A DAST Pass moved to the next finding when the scan was run again after a fix, because DAST ids are positions in one file: an unfixed High became PASSED and READY in an honest flow. A finding matched by fingerprint could never be closed, because the fingerprint was printed nowhere and an ignored entry gave no note. 'Authorization: Bearer <token>' kept the token and redacted the word Bearer (pattern order, present since 7.0), and -u user:pass, Cookie, redis://:pass@, -pX, --password X, APP_KEY= and the body of a PEM block survived into pack members. Text from a result file that began with an escaped '**' borrowed the lint's exemption for the tool's own detail lines. A DAST file whose findings were not a list read as no findings. The short listing dropped a Critical whose informational twin came first.",
+      "check": "pytest tests/test_handover_pack.py -k \"hard_link or scan_is_run_again or matched_by_fingerprint or commands_and_headers or key_block or borrow or not_a_list\"",
+      "status": "fixed",
+      "fix": "a result file that is there but not plain stops the pack with its name; DAST findings are matched by fingerprint only; every finding's fingerprint is printed in the report and in report-state.json, and an entry that was not used says what to add; the key=value pattern no longer takes the scheme word, with patterns for the command and header shapes and whole PEM blocks; the lint decides quoted lines on the raw line and only for the tool's own detail shape; an optional findings or results key must be a list; severity is part of the listing's dedupe key"
+    },
+    {
+      "id": "V72-50",
+      "severity": "high",
+      "where": "report.py build, norm_finding, odd_entries; handover_pack.py build, _clean_json; report_lint.py",
+      "what": "Review round 4. A finding the latest gate run rates higher than the first run kept the first run's rating, because the fingerprint has no severity: a line listed as Low in findings-before.json and as Critical in findings.json gave PASSED and a pack with exit 0. An entry of a findings list that was not an object (one line of text where a finding should be, a nested list) vanished without a note. A scanner or DAST finding with a missing or unknown severity became informational, laxer than the gate, which maps unknown to Medium. The pack left out coverage, retest and review files saved as UTF-16 or with a byte order mark, which report.py had read, and its note called them invalid JSON. An honest observation note with words such as 'no issues found there after the fix' failed the lint, and two findings that share a fingerprint could take no retest entry without a note saying why.",
+      "check": "pytest tests/test_handover_pack.py -k \"rates_higher or not_an_object or unknown_severity or whatever_its_encoding or share_a_fingerprint or honest_wording or borrow\"",
+      "status": "fixed",
+      "fix": "the higher of the two ratings is used and the report says so; a list with an entry that is not an object makes the file unreadable (BLOCKED, named); an unknown severity is High and other tools' level words are mapped; the pack decodes result files exactly as the report does and stops when one it needs is not valid JSON; observations and tool notes are printed as quoted text; a shared fingerprint is explained in a note"
+    },
+    {
+      "id": "V72-51",
+      "severity": "high",
+      "where": "report.py redact, decode_json, build, apply_retests, main; handover_pack.py scrub, _clean_text; report_lint.py",
+      "what": "Review round 5, with a fuzzer of 4,240 mutations. A 200 KB string of 'eyJ-' repeated took 89 s in the report and 145 s in the pack: the JWT pattern (present since 7.0) restarted at every '-' because a word boundary sits there, and scrub() cut the text after the patterns ran. A text member saved as UTF-16 (PowerShell 5.1 Out-File) was read as UTF-8, so every secret in RUNBOOK.md or the authorization matrix went into the pack unredacted. Quoted option values (curl -u \"admin:pw\", --password 'pw', -b \"SID=...\", --cookie) survived. A long name or a leading space in accepted_by failed the lint and stopped an honest pack. A DAST file that ran but kept its findings under another key (alerts, Findings) read as no findings. A repeated findings key hid the list before it. With no first-run file, an acceptance written for F-01 passed to whatever became F-01 in the next run. A folder at REPORT.md gave a traceback. A finding message that says 'ready for pentest' failed the lint of an honest NOT READY report.",
+      "check": "pytest tests/test_handover_pack.py -k \"stall or utf16 or quoted_option or long_name or known_name or repeated_key or by_number or folder_where or says_ready\"",
+      "status": "fixed",
+      "fix": "the JWT pattern starts with a lookbehind and every field is cut to 20,000 characters before any pattern runs; text members are decoded like result files and refused when they still hold NULs, and a key block is removed in one pass over the lines; option patterns accept a quote; the name is trimmed and the lint allows its length; a DAST file that ran must hold a findings list; a repeated key makes the file unreadable; without a first-run file scanner findings are matched by fingerprint only; a write error gives a message; quoted lines are left out of the ready check"
+    },
+    {
+      "id": "V72-O13",
+      "severity": "medium",
+      "where": "report.py, report_lint.py, handover_pack.py (new in 7.2)",
+      "what": "The report coverage, readiness and handover pack are new code, and each of five review rounds by separate reviewers still found high or medium problems in them (V72-42 to V72-51), fewer and narrower each time. No round has yet come back clean for this part. The guard, unattended mode, held list and stop gate came back clean in round 3. Known and not fixed: severities written as 'Low/Medium' are read as their first word; some secret shapes in prose (see V72-O12); --pdf, --sbom, links and Linux were not covered by the round 5 fuzzer.",
+      "check": "none: a statement of what was and was not tested",
+      "status": "open",
+      "fix": "open: the handover pack is marked as a preview in the release notes. The security team's own test stays the approval; a READY line is a claim about the review, to be checked, not a result. Planned: another review round, and a property-based test for the rule that an open Critical, High or Medium in the result files never gives READY or exit 0."
     }
   ]
 }

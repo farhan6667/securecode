@@ -130,8 +130,21 @@ def test_an_event_without_a_session_id_is_coding_and_writes_no_state(env):
 
 
 @pytest.mark.parametrize("pm", ["auto", "dontAsk"])
-def test_unattended_runs_are_strict_and_refuse(env, pm):
+def test_unattended_runs_read_like_an_attended_one_and_go_strict_on_a_risk_signal(env, pm):
+    # 7.2 unattended: the coding reading asks nobody, so a person being there added no check. An auto run gets it too,
+    # and loses it on the same risk signals; with no session id (no signal could fire) it stays strict.
+    assert G.guard_mode(ev(SYNTAX, env.proj, pm=pm), "owner") == "coding"
+    assert verdict(ev(SYNTAX, env.proj, pm=pm)) == "allow"
+    assert G.guard_mode(ev(SYNTAX, env.proj, pm=pm, session=""), "owner") == "strict"
+    assert verdict(ev(SYNTAX, env.proj, pm=pm, session="")) == "deny"
+    assert verdict(ev("cat .env", env.proj, pm=pm)) == "deny"
     assert G.guard_mode(ev(SYNTAX, env.proj, pm=pm), "owner") == "strict"
+    assert verdict(ev(SYNTAX, env.proj, pm=pm)) == "deny"
+
+
+@pytest.mark.parametrize("pm", ["auto", "dontAsk"])
+def test_a_pinned_strict_policy_keeps_unattended_runs_strict(env, pm):
+    env.policy(adaptive="strict")
     assert verdict(ev(SYNTAX, env.proj, pm=pm)) == "deny"
 
 

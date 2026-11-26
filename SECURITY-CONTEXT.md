@@ -296,6 +296,58 @@ nudge, not a control: the agent can write that file or a fake report to silence 
   dated in the future are ignored. Accepted: the agent itself could write the app cache; it is a coding aid, and
   CI and "Run Security Test" report every finding.
 
+**Unattended mode and the held list (7.2).** For a task left running with nobody there.
+- `SECURECODE_UNATTENDED=1` or `"unattended": true` in the policy turns every question the guard would ask into a
+  refusal with the reason, in owner and managed mode. It can make a decision stricter and nothing else, which is why
+  an environment variable (which an agent could set) may switch it on. The tests hold this for every command list
+  the guard tests use: a question becomes a deny, a deny stays a deny, an allow stays an allow.
+- An owner-mode auto or don't-ask run now gets the coding reading for the "syntax" class until a risk signal, the
+  same as an attended session, and never without a session id. Accepted: this is wider than 7.1, where those runs
+  were always strict. The reason it is accepted: in coding mode nobody is asked about this class, so the person at
+  the keyboard was not a check. A parity test holds that nothing is allowed that attended coding mode refuses.
+- A question refused because nobody could be asked counts as a question for the risk signals, not as a block.
+  Three in ten minutes still make the session strict.
+- The held list (`<app>/cache/held/<hash of the project path>.jsonl`) records what was refused or blocked while
+  nobody was there, redacted, capped at 500 KB, never through a link. Accepted: the agent's own session writes it
+  and code the agent runs could edit it. It is a morning summary, not evidence.
+- The switch is read before the permission mode, so it holds in bypass, auto and don't-ask runs and in a managed
+  install. A real block in a run with nobody there is also remembered per project for two hours.
+- With the switch on, the stop gate does not ask the security test offer; it goes on the held list. The permission
+  mode alone does not do this: a developer who sits in auto or bypass mode still gets the offer.
+- Only with the switch set in the policy file (never by the environment variable, which a project's settings or the
+  agent can set) a finding that was shown is not shown again to another session of the project for two hours.
+  Accepted: a second session in that window is not sent back for it; the edit hook still reports it when that file
+  is edited, and the full gate reports everything.
+- The stop gate honours no suppression file (as in 7.1). A draft of 7.2 did, and review showed six ways an agent
+  could make it apply a suppression it had written itself (commit it, git-ignore it, a nested repository, the
+  environment variable, the file cap, skip-worktree). The edit hook still honours the project file; it is advisory.
+- Not covered: the AI tool's own permission prompts. Unattended mode stops the guard's questions only.
+
+**Review coverage, readiness and the handover pack (7.2).**
+- `.security/review-findings.json` and `.security/coverage.json` are written by the reviewing agent and read by
+  `report.py` as attacker-controlled text: capped, escaped, redacted, never executed. A review finding counts for
+  the verdict like a scanner finding. A missing class, an unknown status, "examined" with no evidence or "not
+  applicable" with no reason all count as not examined.
+- Handover readiness is a statement about the review, not about the application. A clean scan with no recorded
+  review is NOT READY. Accepted: nothing checks that the evidence named for a class is good, and an agent told to
+  lie can write false coverage. The security team's own test is the control.
+- A result file that exists but is not the JSON object it must be gives BLOCKED and is named in the report; it is
+  never read as "no findings". Files with a byte order mark or in UTF-16 are read. Paths taken from result files are
+  handled as text only, never resolved on the file system or the network. A retest id is trusted only where it can
+  not move, and a fingerprint that two findings share closes neither.
+- The report trusts the latest gate run over any older copy: a finding it reports is open even if
+  `findings-before.json` does not list it, a Pass for a finding it still reports is a Fail, and scan completeness is
+  read from it. An unknown severity on a review finding is High. Findings are sorted before the cap.
+- `handover_pack.py` reads only plain files in `.security`, redacts every text line and every JSON string again
+  (and every value under a secret-named key), and builds REPORT.md, REPORT.html and the state itself from the result
+  files: nothing written earlier is copied, so an edited report or state can not change the pack's verdict. It
+  refuses a report that fails its lint and writes a zip with a SHA-256 of every file. `--verify` reads members in
+  memory, never extracts, refuses names with a folder or odd characters, and requires the core files and one
+  readiness across manifest, state and report. Accepted: the pack is not signed. A file and the manifest edited
+  together are consistent again, so the check that counts is `--expect-sha256` with the hash sent separately, and
+  the tool says CONSISTENT, not PASS, without it. With `--sbom` it runs Trivy from PATH (never from the project
+  folder) on the project; a project's own `trivy.yaml` may shape the SBOM.
+
 **Deployment.** Per user (`%LOCALAPPDATA%\OrgAISecureAppSec`), managed (`%ProgramFiles%\OrgAISecureAppSec`),
 CI (pinned, hash-verified scanners). Updates from the public GitHub repo `farhan6667/securecode`
 (or an organization's own fork), signed with an offline ed25519 key.

@@ -4230,12 +4230,13 @@ POLICY_TABLE = {"owner": {"destructive": "ask", "exposure": "ask", "install": "a
                             "syntax": "deny"}}
 POLICY_NAME = "guard-policy.json"
 POLICY_MAX = 4096
-POLICY_KEYS = {"mode", "version", "note", "guard", "adaptive", "workspace_roots", "remote_wrappers"}
+POLICY_KEYS = {"mode", "version", "note", "guard", "adaptive", "workspace_roots", "remote_wrappers", "unattended"}
 # Guard mode (7.2). "adaptive" (default): coding while the session looks normal, strict after a risk signal. "coding" and
 # "strict" pin it (a managed policy can pin strict). Coding mode lets "syntax" results through and audits them; every hard
 # deny and every ask for an irreversible, exposing or unknown action is the same in both.
 GMODES = ("adaptive", "coding", "strict")
 ESC_ASKS, ESC_WINDOW, FETCH_WINDOW, STATE_KEEP = 3, 600, 900, 40
+BLOCK_KEEP = 200                        # blocks kept per session or project folder (the scan reads 700 entries)
 _LAST = {"fetch": False}
 # Downloads besides curl and wget (which the shell model flags itself): the MCP fetch, scrape and browser tools, and a few
 # commands that pull code or images from a remote. git pull and git fetch are everyday and do not count.
@@ -4340,6 +4341,10 @@ def run_style(event: dict) -> str:
     """How the agent is run, from the permission mode Claude Code puts in the hook input.
     "bypass" (bypassPermissions) and "unattended" (auto, dontAsk) mean nobody is there to answer a question.
     Anything missing, unknown or of the wrong type counts as "attended", the strict reading."""
+    if _AS_ATTENDED[0]:
+        return "attended"
+    if held_switch():
+        return "held"                   # before the permission mode: "unattended on" holds in bypass and auto too
     pm = event.get("permission_mode") if isinstance(event, dict) else None
     if pm == "bypassPermissions":
         return "bypass"
@@ -4350,15 +4355,43 @@ def run_style(event: dict) -> str:
 
 UNATTENDED_NOTE = (" The agent is running without anyone to ask (auto or don't-ask mode), so this is refused instead of"
                    " asked. Run it yourself, or work another way.")
+# Held (7.2): the developer said nobody will be there (an overnight run in any permission mode, any AI tool). Every
+# question the guard would ask becomes a refusal with the reason, so the session never waits on a prompt, and the
+# refusal is kept on a list for the morning. It only ever turns a question into a refusal, never into an allow, which
+# is why an environment variable may switch it on: setting it can not loosen anything.
+HELD_NOTE = (" Nobody is there to answer (unattended mode is on), so this is refused instead of asked and kept on the"
+             " held list for the developer. Do not retry it; carry on with the rest of the work.")
+HELD_ENV = "SECURECODE_UNATTENDED"
+_AS_ATTENDED = [False]                  # set while the guard works out what it would have asked a person
+
+
+def held_switch(path: Path | None = None, env: bool = True) -> bool:
+    """True when the developer switched unattended mode on: SECURECODE_UNATTENDED=1 in the environment, or
+    "unattended": true in the policy file (guard_switch.py unattended on). Anything unreadable is False, which is the
+    ordinary attended reading. env=False reads the policy file only: the file is set by a person at a terminal, the
+    variable can be set by anyone, so anything that is not strictly tighter must not follow the variable."""
+    if env and os.environ.get(HELD_ENV, "").strip().lower() in ("1", "true", "on", "yes"):
+        return True
+    try:
+        p = Path(path) if path is not None else policy_path()
+        st = os.lstat(p)
+        if not _plain_file(st) or st.st_size > POLICY_MAX:
+            return False
+        data = json.loads(p.read_bytes().decode("utf-8-sig"), object_pairs_hook=_no_dupes)
+        return isinstance(data, dict) and data.get("unattended") is True
+    except Exception:
+        return False
 
 
 def apply_policy(result, mode: str, cmd: str, style: str = "attended", gmode: str = "strict"):
     if not result or result[0] not in CLASSES:
         return result
     cls, why = result
-    if cls == "syntax" and mode == "owner" and style == "attended" and gmode == "coding":
+    if cls == "syntax" and mode == "owner" and style != "bypass" and gmode == "coding":
         return None                              # coding mode: allowed, and decide() writes it to the audit
     final = POLICY_TABLE.get(mode, POLICY_TABLE["managed"]).get(cls, "deny")
+    if final == "ask" and style == "held":
+        return "deny", f"{why}{HELD_NOTE}"       # owner and managed alike: a question nobody will answer is a refusal
     if final == "ask" and mode == "owner" and style != "attended":
         # Owner mode only. A managed install keeps its policy whatever mode the developer picked.
         # Bypass: the developer owns the result, nothing is asked. Auto and don't-ask: a named package install goes on
@@ -4387,10 +4420,19 @@ _REDACT_TOKEN = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_\w{16,}|
 _REDACT_URL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{1,20}://)[^/\s:@]+:[^/\s@]+@")
 _REDACT_BEARER = re.compile(r"(?i)\b(bearer|basic|token)\s+[^\s\"']+")
 _REDACT_LONG = re.compile(r"[A-Za-z0-9+=_-]{40,}")
+# 7.2: a secret given as the value of a command line option (mysql -pSecret, curl -u user:pass, docker login -p x,
+# sshpass -p x, --pass x, --cookie x). Only what the audit and the held list show is changed, never the decision, so
+# hiding a harmless value (-p 8080) costs nothing.
+_REDACT_FLAG = re.compile(r"((?:^|\s)(?:-p|--pass(?:word|wd)?|--token|--secret|--cookie|--header|-H)(?:[= ]\s*|(?=\S))|"
+                          r"(?:^|\s)-u\s*(?=\S+:\S))"
+                          r"(\"[^\"\n]*\"|'[^'\n]*'|\S+)")
+_REDACT_PEM = re.compile(r"-----BEGIN [A-Z0-9 ]{0,30}-----[\s\S]*")
 
 
 def redact(text: str, limit: int = AUDIT_TEXT) -> str:
     t = str(text)[:4 * limit]
+    t = _REDACT_PEM.sub("-----BEGIN ***", t)
+    t = _REDACT_FLAG.sub(lambda m: m.group(1) + "***", t)
     t = _REDACT_URL.sub(r"\1***@", t)
     t = _REDACT_BEARER.sub(lambda m: m.group(1) + " ***", t)
     t = _REDACT_KV.sub(lambda m: m.group(1) + "***", t)
@@ -4624,6 +4666,8 @@ def check(event: dict, mode: str | None = None, gmode: str | None = None):
     except GuardTimeout:
         r = ("unknown", "the guard could not finish checking this in time.")
         m = mode if mode is not None else load_policy()[0]
+        if run_style(event) == "held":
+            return "deny", "the guard could not finish checking this in time, so it is refused." + HELD_NOTE
         if m == "owner" and run_style(event) != "attended":
             # Never fail open: an action the guard ran out of time on is refused when nobody can be asked.
             return "deny", "the guard could not finish checking this in time, so it is refused." + UNATTENDED_NOTE
@@ -4689,6 +4733,8 @@ def _check(event: dict, mode: str | None, gmode: str | None = None):
             _LAST["fetch"] = True
         if worst and worst[0] == "deny":
             return worst
+        if sh.ask_seen[0] and run_style(event) == "held":
+            return "deny", sh.ask_seen[0].split(" Approve only")[0].rstrip(".") + "." + HELD_NOTE
         if sh.ask_seen[0] and run_style(event) == "unattended" and \
                 (mode if mode is not None else load_policy()[0]) == "owner":
             # a secret or credential file ask raised next to an install item must not be lost
@@ -4770,7 +4816,7 @@ def _state_entries(d: Path) -> list:
             return []
         now = time.time()
         with os.scandir(d) as it:
-            for _, e in zip(range(700), it):
+            for _, e in zip(range(5000), it):     # well above what _state_add keeps, so a fresh block is never outside the scan
                 m = _EV_RX.match(e.name)
                 if m and e.is_file(follow_symlinks=False) and int(m.group(1)) / 1e9 <= now + 60:
                     out.append((int(m.group(1)) / 1e9, m.group(2), e.name))
@@ -4784,11 +4830,20 @@ def _state_load(d: Path) -> list:
     return [[t, k] for t, k, _ in _state_entries(d)]
 
 
-def _state_add(event: dict, kind: str) -> None:
+def _project_state(event: dict) -> Path | None:
+    """The folder that holds the blocks of unattended runs in this project, whatever the session."""
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or (event.get("cwd") if isinstance(event, dict) else "") or ""
+    if not isinstance(project, str) or not project or len(project) > 4096:
+        return None
+    root = os.path.normcase(os.path.realpath(project))
+    return _state_dir() / ("guard-project-" + hashlib.sha256(root.encode("utf-8", "replace")).hexdigest()[:24])
+
+
+def _state_add(event: dict, kind: str, where: Path | None = None) -> None:
     """Remember a block, a question or a download of this session, in the app cache (never in the project). Best effort.
     One new file per event, so parallel hooks never overwrite each other, and when there are too many the oldest question
     or download goes first, never a block."""
-    d = _state_file(event)
+    d = where if where is not None else _state_file(event)
     if d is None:
         return
     try:
@@ -4806,6 +4861,11 @@ def _state_add(event: dict, kind: str) -> None:
             if now - t > 7200:
                 os.unlink(d / n)
         ents = [x for x in ents if now - x[0] <= 7200]
+        blocks = [x for x in ents if x[1] == "deny"]
+        for t, k, n in blocks[:-BLOCK_KEEP]:      # the newest blocks stay: one is enough to read the session strictly,
+            os.unlink(d / n)                      # and the folder must stay inside what _state_entries scans
+        ents = [x for x in ents if x[1] != "deny"] + blocks[-BLOCK_KEEP:]
+        ents.sort()
         extra = len(ents) - STATE_KEEP
         for t, k, n in ents:
             if extra <= 0:
@@ -4827,6 +4887,10 @@ def session_risk(event: dict, now: float | None = None) -> str | None:
     ev = [e for e in _state_load(f) if 0 <= now - e[0] < 7200]
     if any(k == "deny" for _, k in ev):
         return "a command was blocked earlier in this session"
+    if run_style(event) != "attended":
+        p = _project_state(event)
+        if p is not None and any(k == "deny" and 0 <= now - t < 7200 for t, k in _state_load(p)):
+            return "a command was blocked in an unattended run of this project in the last two hours"
     if sum(1 for t, k in ev if k == "ask" and now - t < ESC_WINDOW) >= ESC_ASKS:
         return "three questions in ten minutes"
     if any(k == "fetch" and now - t < FETCH_WINDOW for t, k in ev):
@@ -4839,13 +4903,19 @@ def guard_mode(event: dict, mode: str | None = None) -> str:
     "strict" (the 7.1 behaviour). Strict for a managed install, an auto, don't-ask or bypass run, a pinned strict policy and
     an adaptive session with a risk signal. Never looser than the policy file says."""
     try:
-        if (mode if mode is not None else load_policy()[0]) != "owner" or run_style(event) != "attended":
+        style = run_style(event)
+        if (mode if mode is not None else load_policy()[0]) != "owner" or style == "bypass":
             return "strict"
         pref = guard_pref()
         if pref == "strict":
             return "strict"
+        if style != "attended" and _state_file(event) is None:
+            return "strict"                      # nobody is there and no session id: no risk signal could ever fire
         if pref == "adaptive" and session_risk(event):
             return "strict"
+        # An auto, don't-ask or held run gets the same coding reading as a person at the keyboard: in coding mode
+        # nobody is asked about this syntax anyway, so a person being there added no check. Refusing it all night
+        # (a commit message from a here-document, a loop over test files) cost retries and stopped no attack.
         return "coding"
     except Exception:
         return "strict"
@@ -4860,17 +4930,134 @@ def decide(event: dict, mode: str | None = None, gmode: str | None = None):
     gm = gmode if gmode in ("coding", "strict") else guard_mode(event, mode)
     result = check(event, mode, gm)
     fetched = _LAST["fetch"]
+    _LAST["soft"] = False
     out = _decide_tail(event, mode, style, gm, result)
-    _state_note(event, out, fetched)
+    if style == "held" and out and out[0] == "ask":
+        # Any question that reached here (a managed install's own asks, a credential file, global settings) is a
+        # refusal when the developer said nobody is there. Never an allow.
+        audit_ask(event, out[1], mode, "unattended-refused", gm)
+        out = "deny", out[1].split(" Approve only")[0].split("; approve")[0].rstrip(".") + "." + HELD_NOTE
+    # Soft: a question that became a refusal because nobody could be asked. Decided from the refusal itself (both
+    # notes are only ever added where a question is converted), never from the strict replay: when the replay did not
+    # finish, a secret read was stored as a mere question. A guard timeout is not a question either.
+    _LAST["soft"] = bool(out and out[0] == "deny" and out[1].endswith((HELD_NOTE, UNATTENDED_NOTE))
+                         and "could not finish checking" not in out[1])
+    _state_note(event, out, fetched, style)
+    if style != "attended" and out and out[0] == "deny":
+        held_add(event, out[1], "refused" if _LAST["soft"] else "blocked")
     return out
 
 
-def _state_note(event, out, fetched):
-    """Feed the session's risk signals (see session_risk). A block and a question are remembered, and so is a download."""
+def _state_note(event, out, fetched, style="attended"):
+    """Feed the session's risk signals (see session_risk). A block and a question are remembered, and so is a download.
+    A question that was refused only because nobody was there to answer it counts as a question, not as a block: one
+    refused `kill` must not make the whole night strict for two hours the way a secret read does.
+    A real block in a run with nobody there is also remembered for the project, so the next session of a loop that
+    starts a new session per step does not begin with a clean record."""
     if out and out[0] in ("deny", "ask"):
-        _state_add(event, out[0])
+        kind = "ask" if out[0] == "deny" and _LAST.get("soft") else out[0]
+        _state_add(event, kind)
+        if kind == "deny" and style != "attended":
+            _state_add(event, kind, _project_state(event))
     elif fetched:
         _state_add(event, "fetch")
+
+
+def _asked_a_person(event, mode):
+    """What an attended developer would have been asked: the same check read the strict way, with nobody-is-there
+    mode (the permission mode and the held switch) left out."""
+    _AS_ATTENDED[0] = True
+    try:
+        return check({k: v for k, v in event.items() if k != "permission_mode"}, mode, "strict")
+    finally:
+        _AS_ATTENDED[0] = False
+
+
+HELD_DIR, HELD_MAX_BYTES, HELD_SHOW = "held", 500_000, 200
+
+
+def _held_file(project: str) -> Path | None:
+    if not isinstance(project, str) or not project or len(project) > 4096:
+        return None
+    root = os.path.normcase(os.path.realpath(project))
+    return _state_dir() / HELD_DIR / (hashlib.sha256(root.encode("utf-8", "replace")).hexdigest()[:24] + ".jsonl")
+
+
+def held_add(event: dict, reason: str, kind: str) -> bool:
+    """Keep one line about an action that was refused while nobody was there, for the developer to read in the
+    morning (guard_switch.py held). It lives in the app cache, keyed by the project's real path, never in the
+    project: a cloned repository can not plant or edit it. Best effort; refuses links; the command is redacted."""
+    try:
+        f = _held_file(os.environ.get("CLAUDE_PROJECT_DIR") or event.get("cwd") or "")
+        if f is None:
+            return False
+        d = f.parent
+        for part in (d.parent, d):
+            if os.path.lexists(part):
+                st = os.lstat(part)
+                if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
+                    return False
+            else:
+                os.mkdir(part)
+        full = False
+        if os.path.lexists(f):
+            st = os.lstat(f)
+            if not _plain_file(st) or st.st_nlink > 1:
+                return False
+            full = st.st_size > HELD_MAX_BYTES   # then one marker line (below) and nothing after it
+        ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+        what = ti.get("command") if isinstance(ti.get("command"), str) else \
+            next((v for k, v in ti.items() if isinstance(v, str) and re.search(r"path|file", str(k), re.I)), "")
+        why = reason.split(" Nobody is there")[0].split(" The agent is running")[0]
+        line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kind": kind if kind in ("refused", "blocked", "offer") else "refused",
+                "agent": audit_agent(event), "tool": redact(event.get("tool_name") or "", 80), "command": redact(what),
+                "reason": redact(why, 200)}
+        if full:                                 # one last line that says so, then nothing: a full list is not silent
+            with open(f, "rb") as fh:
+                fh.seek(max(0, st.st_size - 400))
+                if b'"kind": "full"' in fh.read():
+                    return False
+            line = {"ts": line["ts"], "kind": "full", "agent": "", "tool": "", "command": "",
+                    "reason": "the held list is full; later refusals were not recorded (guard_switch.py held clear)"}
+        fd = os.open(f, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(fd, "ab") as fh:
+            fh.write((json.dumps(line, ensure_ascii=True) + "\n").encode("ascii"))
+        return True
+    except Exception:
+        return False
+
+
+def held_read(project: str) -> list:
+    """The held list of a project, oldest first: [{ts, kind, agent, tool, command, reason}]. Never raises."""
+    out: list = []
+    try:
+        f = _held_file(project)
+        if f is None:
+            return []
+        st = os.lstat(f)
+        if not _plain_file(st) or st.st_size > HELD_MAX_BYTES * 2:
+            return []
+        for raw in f.read_bytes().decode("ascii", "replace").splitlines()[-5000:]:
+            try:
+                d = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(d, dict):
+                # cleaned again on the way out: the file is in the app cache, and code an agent runs could write to it
+                out.append({k: _SHOW_ESCAPE.sub(" ", str(d.get(k) or ""))[:400] for k in ("ts", "kind", "agent", "tool", "command", "reason")})
+    except Exception:
+        return []
+    return out
+
+
+def held_clear(project: str) -> bool:
+    try:
+        f = _held_file(project)
+        if f is not None and os.path.lexists(f) and _plain_file(os.lstat(f)):
+            os.unlink(f)
+        return True
+    except Exception:
+        return False
 
 
 def _decide_tail(event, mode, style, gm, result):
@@ -4881,7 +5068,7 @@ def _decide_tail(event, mode, style, gm, result):
     if mode == "owner" and style != "attended":
         # What the guard would have asked a person: the same check read the strict way. It is logged below with
         # what was done instead, so bypass and auto mode leave a trail of every ask they answered without you.
-        strict = check({k: v for k, v in event.items() if k != "permission_mode"}, mode, "strict")
+        strict = _asked_a_person(event, mode)
         if result and result[0] == "ask":
             # The direct asks (tool credential files, global Claude settings and rules) never reach apply_policy.
             if result[1] == GLOBAL_CFG_REASON:
@@ -4890,10 +5077,12 @@ def _decide_tail(event, mode, style, gm, result):
             elif style == "bypass":
                 result = None
             else:
-                result = "deny", result[1].split(" Approve only")[0].split("; approve")[0].rstrip(".") + "." + UNATTENDED_NOTE
+                result = "deny", result[1].split(" Approve only")[0].split("; approve")[0].rstrip(".") + "." + \
+                    (HELD_NOTE if style == "held" else UNATTENDED_NOTE)
         if strict and strict[0] == "ask":
+            syntax_only = result is None and style != "bypass" and gm == "coding" and f"({mode} mode, syntax)" in strict[1]
             audit_ask(event, strict[1], mode, "unattended-refused" if result else
-                      ("bypass-allowed" if style == "bypass" else "unattended-deferred"), gm)
+                      ("bypass-allowed" if style == "bypass" else ("coding-allowed" if syntax_only else "unattended-deferred")), gm)
         return result
     if result and result[0] == "ask":
         audit_ask(event, result[1], mode, "ask", gm)

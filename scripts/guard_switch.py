@@ -7,6 +7,14 @@
     py -I guard_switch.py mode adaptive|coding|strict
     py -I guard_switch.py workspace add <folder>
     py -I guard_switch.py workspace clear
+    py -I guard_switch.py unattended on|off
+    py -I guard_switch.py held
+    py -I guard_switch.py held clear
+
+unattended on: for a task you leave running (overnight, in any permission mode, any AI tool). Every question the guard
+would ask becomes a refusal with the reason, so the session never waits on a prompt nobody answers, and the agent
+carries on with the rest of the work. It never allows what a question would have stopped. SECURECODE_UNATTENDED=1 in
+the environment does the same for one run. held: what was refused while nobody was there, to read in the morning.
 
 Off switches off only the PreToolUse command guard (scripts/agent_guard.py): the questions about unknown commands,
 installs, force pushes and so on, and its hard denials. Everything else stays on: the secure-coding rules, the check
@@ -105,6 +113,41 @@ def write_workspace(op: str, folder: str | None = None, path: Path | None = None
     return out
 
 
+def write_unattended(on: bool, path: Path | None = None, markers: list[str] | None = None, need_terminal: bool = True) -> bool:
+    """Unattended mode: every question the guard would ask becomes a refusal with the reason, kept on the held list.
+    It never allows anything a question would have stopped."""
+    def mutate(data):
+        if on:
+            data["unattended"] = True
+        else:
+            data.pop("unattended", None)
+    _update(mutate, path, markers, need_terminal)
+    return on
+
+
+def held_report(project: str, limit: int = 40) -> str:
+    """The held list of a project as text: what was refused while nobody was there, grouped, newest groups last."""
+    rows = G.held_read(project)
+    if not rows:
+        return "Held list: empty. Nothing was refused in this project while nobody was there."
+    groups: dict = {}
+    for r in rows:
+        k = (r["kind"], r["tool"], r["command"], r["reason"])
+        g = groups.setdefault(k, {"n": 0, "first": r["ts"], "last": r["ts"]})
+        g["n"] += 1
+        g["last"] = r["ts"]
+    names = {"refused": "REFUSED (would have asked you)", "blocked": "BLOCKED (always refused)", "offer": "WAITING FOR YOU",
+             "full": "LIST FULL"}
+    out = [f"Held list: {len(rows)} event(s), {len(groups)} different, from {rows[0]['ts']} to {rows[-1]['ts']}."]
+    for (kind, tool, cmd, why), g in list(groups.items())[-limit:]:
+        out.append(f"- {names.get(kind, kind)} x{g['n']} [{tool or '-'}] {cmd or '-'}")
+        out.append(f"    why: {why}  (last {g['last']})")
+    if len(groups) > limit:
+        out.append(f"... {len(groups) - limit} older group(s) not shown.")
+    out.append("Run a refused command yourself if you want it. Clear the list with: guard_switch.py held clear")
+    return "\n".join(out)
+
+
 def _update(mutate, path: Path | None, markers: list[str] | None, need_terminal: bool) -> str:
     if need_terminal and not (sys.stdin.isatty() and sys.stdout.isatty()):
         raise SwitchRefused("changing the guard setting needs a person at a terminal")
@@ -141,17 +184,27 @@ def _update(mutate, path: Path | None, markers: list[str] | None, need_terminal:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    ok = (len(args) == 1 and args[0] in ("on", "off", "status")) or (len(args) == 2 and args[0] == "mode") or \
-        (args[:1] == ["workspace"] and (args[1:] == ["clear"] or (len(args) == 3 and args[1] == "add")))
+    ok = (len(args) == 1 and args[0] in ("on", "off", "status", "held")) or (len(args) == 2 and args[0] == "mode") or \
+        (args[:1] == ["workspace"] and (args[1:] == ["clear"] or (len(args) == 3 and args[1] == "add"))) or \
+        (len(args) == 2 and args[0] == "unattended" and args[1] in ("on", "off")) or args == ["held", "clear"]
     if not ok:
         print(__doc__)
         return 2
     cmd = args[0]
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    if args == ["held"]:
+        # ASCII with escapes: a recorded command can hold any character, and a piped Windows console (cp1252) or a
+        # terminal escape sequence must not break or repaint the output
+        sys.stdout.write(held_report(project).encode("ascii", "backslashreplace").decode("ascii") + "\n")
+        return 0
     if cmd == "status":
         st, why = state()
         print(f"command guard: {st.upper()} ({why})")
         print(f"guard mode: {G.guard_pref()} (adaptive = coding until a risk signal, then strict); "
               f"workspace folders: {G.policy_list('workspace_roots') or 'none'}")
+        held_on = G.held_switch()
+        print(f"unattended mode: {('ON, but the command guard is OFF, so nothing is refused' if st == 'off' else 'ON (questions become refusals, kept on the held list)') if held_on else 'off'}; "
+              f"held list for this folder: {len(G.held_read(project))} event(s) (guard_switch.py held)")
         if st == "off":
             print("Still on: secure-coding rules, edit check, stop gate, output shield, security tests, scanners, signed updates.")
         return 0
@@ -160,6 +213,15 @@ def main(argv: list[str] | None = None) -> int:
               "command there.", file=sys.stderr)
         return 3
     try:
+        if cmd == "held":
+            G.held_clear(project)
+            print("held list cleared for this folder.")
+            return 0
+        if cmd == "unattended":
+            on = write_unattended(args[1] == "on")
+            print("unattended mode is now ON: the guard refuses, with a reason, what it would have asked, and keeps it on "
+                  "the held list. Nothing is allowed that a question would have stopped." if on else "unattended mode is now OFF.")
+            return 0
         if cmd == "mode":
             print(f"guard mode is now {write_mode(args[1]).upper()}.")
             return 0

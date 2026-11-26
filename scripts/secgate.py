@@ -1923,11 +1923,130 @@ def project_commands(root,notes):
         else: notes.append(".NET project found but dotnet is not installed; .NET tests were not run")
     return cmds
 
-def write_reports(root,findings,mode,tool_status):
+PREV_MAX=5_000_000; PREV_ENTRIES=5000   # a previous findings.json bigger than this is not used for the delta line
+LIST_MAX=60; SUMMARY_MAX=80; GROUP_MAX=15; LINE_MAX=400
+SERIOUS_MAX=200                 # Critical and High lines are never cut to fit the list, only at this hard cap
+
+def _line_no(f):
+    try: return max(0,int(f.get("line") or 0))
+    except (TypeError,ValueError,OverflowError): return 0
+
+def rel_file(f,root):
+    """The finding's file relative to the scan root when it is inside it (shorter lines), otherwise as reported.
+    String work only, no filesystem call: it also runs on every entry of an untrusted previous findings.json."""
+    p=str(f.get("file","") or "")
+    if not p: return ""
+    try:
+        n=os.path.normpath(p); r=str(root)
+        if not os.path.isabs(n): return p if n.startswith("..") else n.replace("\\","/")
+        if os.path.normcase(n).startswith(os.path.normcase(r).rstrip("\\/")+os.sep): return n[len(r.rstrip("\\/"))+1:].replace("\\","/")
+    except Exception: pass
+    return p
+
+def unique_findings(findings,root):
+    """Findings sorted by severity (Critical first), then file, then line, with true repeats dropped: the same rule,
+    file, line, message and code. Two outdated libraries in one file or one CVE in two packages are two findings.
+    Each item is (finding, relative file, line)."""
+    seen=set(); out=[]
+    for f in findings:
+        if not isinstance(f,dict): continue
+        # the severity is part of it: an informational twin listed first must not hide the critical one
+        rel=rel_file(f,root); n=_line_no(f); k=(str(f.get("rule","")),rel,n,str(f.get("message","")),str(f.get("code","")),str(f.get("severity","")))
+        if k in seen: continue
+        seen.add(k); out.append((f,rel,n))
+    out.sort(key=lambda x:(SEV.get(x[0].get("severity"),9) if isinstance(x[0].get("severity"),str) else 9,x[1],x[2],str(x[0].get("rule",""))))
+    return out
+
+def compact_view(findings,root,budget=LIST_MAX,full="",width=0):
+    """The short listing an AI agent or a person reads: Critical, High and Medium as one line each, Low and Info as
+    one count per rule. The room is given out worst first: every Critical and High line (they are never cut to make
+    room for something lower, only at SERIOUS_MAX), then Medium up to `budget`, then the Low/Info counts if room is
+    left. One last line says what was cut and where the rest is. Every line goes through safe_text, so text from a
+    scanned repository cannot start a line of its own."""
+    serious=[]; medium=[]; groups={}
+    for f,rel,n in unique_findings(findings,root):
+        sev=f.get("severity") if isinstance(f.get("severity"),str) else "?"
+        if sev in ("LOW","INFO"):
+            g=groups.setdefault((sev,str(f.get("rule",""))),[0,set()]); g[0]+=1; g[1].add(rel)
+        else:
+            (serious if sev in ("CRITICAL","HIGH") else medium).append(safe_text(f"[{sev}] {f.get('rule','')} {rel}:{n} \u2014 {f.get('message','')}"))
+    glines=[safe_text(f"[{sev}] {rule}: {c} finding(s) in {len(files)} file(s)")
+            for (sev,rule),(c,files) in sorted(groups.items(),key=lambda kv:(SEV[kv[0][0]],-kv[1][0],kv[0][1]))]
+    keep_s=serious[:SERIOUS_MAX]; keep_m=medium[:max(0,budget-len(keep_s))]
+    keep_g=glines[:max(0,min(GROUP_MAX,budget-len(keep_s)-len(keep_m)))]
+    out=keep_s+keep_m+keep_g
+    if width: out=[l[:width] for l in out]
+    cut=[f"{len(a)-len(b)} more {name}" for a,b,name in ((serious,keep_s,"Critical/High line(s)"),(medium,keep_m,"Medium line(s)"),
+                                                           (glines,keep_g,"Low/Info rule(s)")) if len(a)>len(b)]
+    if cut: out.append("... not shown: "+" and ".join(cut)+". "+full)
+    return out
+
+def finding_ids(findings,root):
+    """How many findings there are per identity: rule + relative file + the code line with spaces squeezed (the
+    line number when there is no code), so a finding that only moved down a few lines still counts as the same one."""
+    from collections import Counter
+    c=Counter()
+    for f,rel,n in unique_findings(findings,root):
+        code=" ".join(str(f.get("code") or "").split())[:200]
+        c[(str(f.get("rule","")),rel,code or f"L{n}")]+=1
+    return c
+
+def previous_run(root):
+    """(mode, identities) of the last .security/findings.json, or None. It comes from the scanned project, so it is
+    untrusted: never read through a symlink, junction or hard link, never when it is big or has too many entries
+    (a planted 9.5 MB file once cost a minute), and garbage is no delta."""
+    try:
+        import stat as _stat
+        sec=root/".security"; fp=sec/"findings.json"
+        if is_link_dir(sec): return None
+        st=os.lstat(fp)
+        if not _stat.S_ISREG(st.st_mode) or (getattr(st,"st_file_attributes",0)&0x400) or st.st_nlink>1 or st.st_size>PREV_MAX: return None
+        fd=os.open(fp,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_BINARY",0))
+        with os.fdopen(fd,"rb") as fh: raw=fh.read(PREV_MAX+1)
+        if len(raw)>PREV_MAX: return None
+        d=json.loads(raw.decode("utf-8"))
+        if not isinstance(d,dict) or not isinstance(d.get("findings"),list) or len(d["findings"])>PREV_ENTRIES: return None
+        return (d.get("mode") if isinstance(d.get("mode"),str) else "?"),finding_ids(d["findings"],root)
+    except Exception:       # missing, unreadable, not JSON, nested too deep: there is simply no delta line
+        return None
+
+def delta_line(prev,findings,root,mode):
+    if not prev: return ""
+    pmode,old=prev; new=finding_ids(findings,root)
+    # The wording names the file: the numbers are only as good as the findings.json that was in the folder.
+    line=(f"Since the last run (compared with the previous findings.json in this folder): {sum((old-new).values())} fixed, "
+          f"{sum((new-old).values())} new, {sum((old&new).values())} remaining.")
+    # A quick run after a ci run scans less, so "fixed" would overstate; say so on the same line.
+    if pmode!=mode: line+=f" (The last run was in {safe_text(pmode)[:10]} mode, this one in {mode} mode, so the numbers are not like for like.)"
+    return line
+
+def write_summary(sec,findings,root,mode,counts,delta=""):
+    """.security/findings-summary.txt: what an AI agent reads instead of the full JSON. Written to a new file and
+    moved into place, so a link planted under that name in the project is replaced, never written through."""
+    import datetime
+    tmp=sec/f"findings-summary.txt.{os.getpid()}.tmp"
+    try:
+        if is_link_dir(sec): return False
+        head=f"SecureCode gate summary: mode {mode}, {datetime.date.today().isoformat()}, counts "+", ".join(f"{k} {v}" for k,v in counts.items())
+        tail="Full list with code lines: .security/findings.json"
+        body=compact_view(findings,root,SUMMARY_MAX-4,"See .security/findings.json for all of them.",LINE_MAX)
+        text="\n".join([head]+([delta] if delta else [])+(body or ["No findings."])+[tail])+"\n"
+        fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_BINARY",0),0o600)
+        with os.fdopen(fd,"wb") as fh: fh.write(text.encode("utf-8"))
+        os.replace(tmp,sec/"findings-summary.txt"); return True
+    except Exception:       # the summary is a convenience; the JSON and SARIF are the record
+        try: os.unlink(tmp)
+        except Exception: pass
+        return False
+
+def write_reports(root,findings,mode,tool_status,delta="",notes=None):
     sec=root/".security"; sec.mkdir(exist_ok=True)
     counts={s:sum(1 for f in findings if f["severity"]==s) for s in SEV}
     report={"mode":mode,"tool_status":tool_status,"counts":counts,"findings":findings}
     (sec/"findings.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
+    if not write_summary(sec,findings,root,mode,counts,delta) and notes is not None:
+        # Without this an agent would read a stale or planted summary and think it is this run's.
+        notes.append(".security/findings-summary.txt was not written (something else is at that name); read .security/findings.json instead")
     sarif={"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json",
            "runs":[{"tool":{"driver":{"name":"Org AI Secure AppSec Gate","version":GATE_VERSION}},
                      "results":[{"ruleId":f["rule"],"level":{"CRITICAL":"error","HIGH":"error","MEDIUM":"warning","LOW":"note"}.get(f["severity"],"note"),
@@ -1936,7 +2055,7 @@ def write_reports(root,findings,mode,tool_status):
     (sec/"findings.sarif").write_text(json.dumps(sarif,indent=2),encoding="utf-8")
     return counts
 
-CONTROL=re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+CONTROL=re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069\ufeff]")   # with every character str.splitlines() breaks a line on
 
 def safe_text(s):
     # A file name with a newline could print a fake "RESULT: PASS" line or a CI workflow command.
@@ -2052,8 +2171,10 @@ def main():
                         "message":f"Project command failed: {' '.join(cmd)}","code":(out+err)[-1000:],"engine":"project-tests"})
     findings=apply_suppressions(findings,root,args.mode,notes)
     # Quick mode runs on every edit through the hook; it must not litter every project with .security/.
-    if args.mode!="quick" or args.report:
-        counts=write_reports(root,findings,args.mode,{**status,"engines":engine_status,"errors":errors,"notes":notes,"project_tests":ran_tests})
+    delta=""; wrote=args.mode!="quick" or args.report
+    if wrote:
+        delta=delta_line(previous_run(root),findings,root,args.mode)     # read the last run before it is overwritten
+        counts=write_reports(root,findings,args.mode,{**status,"engines":engine_status,"errors":errors,"notes":notes,"project_tests":ran_tests},delta,notes)
     else:
         counts={s:sum(1 for f in findings if f["severity"]==s) for s in SEV}
     missing=[t for t,v in status.items() if not v]
@@ -2070,8 +2191,11 @@ def main():
     if missing and not ci_failed:
         print("WARNING: PARTIAL SCAN, scanners not available:",", ".join(missing),"(use --mode ci before handover)")
     print("Counts:",counts)
-    for f in findings[:100]:
-        print(safe_text(f"[{f['severity']}] {f['rule']} {f.get('file','')}:{f.get('line',0)} — {f['message']}"))
+    if delta: print(delta)
+    # Worst first and Low/Info as counts: 100 Low lines in scan order used to push a Critical off the list.
+    for line in compact_view(findings,root,LIST_MAX,"The full list is in .security/findings.json." if wrote else
+                             "Run the gate with --report (or --mode full) to get the full list in .security/findings.json."):
+        print(line)
     threshold={"critical":"CRITICAL","high":"HIGH","medium":"MEDIUM","low":"LOW","never":None}[args.fail_on]
     blocked=bool(threshold and any(SEV.get(f["severity"],9)<=SEV[threshold] for f in findings))
     if ci_failed:       # fail closed: a required scanner errored, so the scan is incomplete whatever the counts say
