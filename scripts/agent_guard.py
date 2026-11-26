@@ -4852,9 +4852,28 @@ def _state_add(event: dict, kind: str, where: Path | None = None) -> None:
             if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
                 return
         else:
-            d.mkdir(parents=True, exist_ok=True)
-        fd = os.open(d / f"{time.time_ns()}-{kind}-{os.getpid()}", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
-        os.close(fd)
+            for attempt in range(5):
+                # Several hooks can start at once and all find the folder missing; on Windows one of them can get a
+                # sharing error while another is creating the parent. That event must not be lost.
+                try:
+                    d.mkdir(parents=True, exist_ok=True)
+                    break
+                except OSError:
+                    if d.is_dir():
+                        break
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.02 * (attempt + 1))
+        stamp = time.time_ns()
+        for bump in range(50):
+            # Two hooks of one process in the same clock tick (Windows ticks are coarse) would pick the same name, and
+            # the second event was lost without a word. The next free nanosecond is as good a time for it.
+            try:
+                fd = os.open(d / f"{stamp + bump}-{kind}-{os.getpid()}", os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+            except FileExistsError:
+                continue
+            os.close(fd)
+            break
         ents = _state_entries(d)
         now = time.time()
         for t, k, n in ents:

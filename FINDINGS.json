@@ -1784,6 +1784,15 @@
       "check": "none: a statement of what was and was not tested",
       "status": "open",
       "fix": "open: the handover pack is marked as a preview in the release notes. The security team's own test stays the approval; a READY line is a claim about the review, to be checked, not a result. Planned: another review round, and a property-based test for the rule that an open Critical, High or Medium in the result files never gives READY or exit 0."
+    },
+    {
+      "id": "V72-52",
+      "severity": "medium",
+      "where": "report.py build (authorization matrix check), agent_guard.py _state_add, tests/test_handover_pack.py",
+      "what": "Found by the first CI run of the 7.2 branch (it had only been tested on one Windows machine). The check that an authorization matrix is not empty used a 40-byte limit: the same three-line matrix is 42 bytes with CRLF and 39 with LF, so on Linux a real matrix read as missing. A test for a linked file in .security was skipped on the developer's machine (no symlink right there) and still expected the old behaviour. On the Windows runners one of twelve parallel risk events was lost in tests/test_guard_review72.py; it did not reproduce locally, and the likely causes are a sharing error while several hooks create the same cache folder and two events in one clock tick taking the same file name.",
+      "check": "pytest tests/test_handover_pack.py -k \"line_endings or through_a_link\" tests/test_guard_review72.py -k parallel_events",
+      "status": "fixed",
+      "fix": "the limit no longer depends on line endings; the linked-file test expects the pack to stop and name the file; _state_add retries the folder creation and takes the next free nanosecond when a name is taken. The Windows cause is an inference: the CI run on the fixed commit is the check."
     }
   ]
 }

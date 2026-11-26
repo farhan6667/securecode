@@ -779,7 +779,8 @@ def build(root: Path, findings_path: Path, before_path: Path | None, dast_path: 
     try:
         mst = os.lstat(matrix)
         has_matrix = os.path.isfile(matrix) and not matrix.is_symlink() and not (getattr(mst, "st_file_attributes", 0) & 0x400) \
-            and mst.st_size > 40
+            and mst.st_size > 16        # more than an empty file or a bare header; not a byte count that changes with
+                                        # the line endings (a small real matrix is 39 bytes with LF, 42 with CRLF)
     except OSError:
         has_matrix = False
     # "ran" with no target is a label, not a scan

@@ -404,8 +404,25 @@ def test_the_pack_does_not_read_through_a_link(tmp_path):
         link.symlink_to(secret)
     except (OSError, NotImplementedError):
         pytest.skip("no symlink rights here")
-    _, _, z = build_pack(tmp_path)
-    assert "RUNBOOK.md" not in zipfile.ZipFile(z).namelist()
+    # A file that is there but is a link is not skipped (skipping a linked findings file gave a READY pack): the pack
+    # is not built, the file is named, and nothing of the link's target is read.
+    code, msg = H.build(tmp_path)
+    assert code == 3 and "RUNBOOK.md" in msg and "OUTSIDE-CONTENT" not in msg
+    assert not (tmp_path / ".security" / "handover").exists()
+
+
+def test_a_small_real_matrix_counts_whatever_the_line_endings(tmp_path):
+    # CI: the same three-line matrix is 39 bytes with LF and 42 with CRLF, and a 40-byte limit made Linux say
+    # "no authorization matrix was written".
+    project(tmp_path, matrix=False)
+    sec = tmp_path / ".security"
+    for ending in (b"\n", b"\r\n"):
+        (sec / "authz-matrix.md").write_bytes(ending.join([b"| route | verb |", b"|---|---|", b"| /a | GET |", b""]))
+        assert R.main(["--root", str(tmp_path)]) == 0
+        assert json.loads((sec / "report-state.json").read_text())["readiness"] == "READY FOR PENTEST REVIEW"
+    (sec / "authz-matrix.md").write_bytes(b"\n")
+    assert R.main(["--root", str(tmp_path)]) == 0
+    assert json.loads((sec / "report-state.json").read_text())["readiness"] == "CONDITIONALLY READY"
 
 
 def test_without_results_the_pack_says_what_to_run(tmp_path):
